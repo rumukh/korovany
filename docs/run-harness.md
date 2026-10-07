@@ -144,8 +144,8 @@ The committed file runs in about 20 s: its sweep takes three seeds per cell and 
 `HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on `main` at 29adca3, in the
 engine's streaming window. W1-6 added `commanders: 'shipped'` to the shipped arms. The same 360 runs with it are this
 baseline cell for cell: no friendly garrison fought beside a scripted player long enough to call a soldier. W1-6 also
-added `staging: 'friendly'`, and the 360 runs are this baseline with it too: on the nearest arm no contract was ever
-short of room, so no pack stepped back.
+added `staging: 'friendly'`, which changes no cell of it: on the nearest arm no contract was ever short of room, so no
+pack stepped back.
 
 | Policy · faction | Win / defeat / timeout | Won in p10–p50–p90 | Damage taken | Kills |
 | --- | --- | --- | ---: | ---: |
@@ -256,23 +256,24 @@ n = 0…39, all three policies, 120 runs a row.
 
 ### The player's own packs make room
 
-The same sweep with `commanders: 'shipped'`, and `staging` at `none` and then `friendly`.
+`HARNESS_SHIPPED_ARMS` as W2-1 left them (`escalation: 'progress'`), on both arms of the fork, with `staging` at
+`none` and then `friendly`; the same seeds and settings.
 
 | Arm · faction | Arrivals | Started / kept | `crowded` | Packs stepped back per run | Win / defeat / timeout |
 | --- | ---: | --- | --- | --- | --- |
-| nearest · elf | 120 | 120 / 118 | 0 → 0 | 0 → 0 | 61 / 45 / 14 |
-| nearest · guard | 120 | 120 / 108 | 0 → 0 | 0 → 0 | 60 / 44 / 16 |
-| nearest · villain | 120 | 120 / 120 | 0 → 0 | 0 → 0 | 80 / 30 / 10 |
-| contrary · elf | 120 | 120 / 118 | 0 → 0 | 0 → 0 | 55 / 50 / 15 |
-| contrary · guard | 120 | 117 / 94 → 120 / 97 | 3 → 0 | 0 → 0.025 | 63 / 37 / 20 → 63 / 36 / 21 |
-| contrary · villain | 120 | 120 / 120 | 0 → 0 | 0 → 0 | 77 / 35 / 8 |
+| nearest · elf | 120 | 120 / 118 | 0 → 0 | 0 → 0 | 57 / 44 / 19 |
+| nearest · guard | 120 | 120 / 108 | 0 → 0 | 0 → 0 | 64 / 44 / 12 |
+| nearest · villain | 120 | 120 / 120 | 0 → 0 | 0 → 0 | 75 / 34 / 11 |
+| contrary · elf | 120 | 120 / 118 | 0 → 0 | 0 → 0 | 48 / 54 / 18 |
+| contrary · guard | 120 | 117 / 94 → 120 / 97 | 3 → 0 | 0 → 0.025 | 61 / 40 / 19 → 61 / 39 / 20 |
+| contrary · villain | 120 | 120 / 120 | 0 → 0 | 0 → 0 | 77 / 36 / 7 |
 
 - Every row but the guard's contrary arm is identical cell for cell: no contract there was ever short of room once
   the game's own events made way, so no pack stepped back.
 - On the guard's contrary arm the three arrivals at «Зверьё у домиков» now start. In each run one pack of the
   palace's soldiers, out of sight behind the guard, steps back and comes home later, and all three contracts are
   kept. The cautious run that died at 142 s now lasts to the time limit, so one defeat becomes a timeout. Encounters
-  fielded per run move by 0.03, kills by 0.04 and the duelist's median win by 2.3 s.
+  fielded per run move by 0.02, kills by 0.04 and the duelist's median win by 1.0 s.
 - `tests/contractStaging.test.ts` arrives at every contract site of the same 40 seeds through the engine's own
   spawner, facing each of four ways. With nobody stepping back the guard's one site is crowded; with the staging no
   site is, for any faction or heading. No enemy and nothing in view ever stepped back.
