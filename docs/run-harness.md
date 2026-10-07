@@ -79,6 +79,13 @@ The 3x3 put 17.2 encounter bodies on the road at once against the plus's 11.1, a
 45 s a run, which is what refused the contract builders. With `regionWindow: 'square'`, the shipped arms give the
 first baseline back exactly, cell for cell.
 
+**Known engine behaviour, mirrored rather than fixed.** When a square streams back into the plus, the engine refields
+every encounter in it that was not cleared, at full health. Only uniques and cleared encounters are remembered, in the
+region's delta. A player who crosses back and forth over a square's edge meets the same encounter again each time,
+unhurt, and the damage they dealt is erased. The harness does the same, so its numbers include it: a `cautious` run,
+whose retreats cross edges, spawns 477 to 1 080 encounter bodies against about 70 for the other policies. It is
+logged for wave 3 as a streaming-hysteresis and encounter-persistence item.
+
 ## Metrics
 
 Every report carries a `balance` block, populated by the arms that feed it. Nothing in it draws from any stream.
