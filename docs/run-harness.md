@@ -1,7 +1,9 @@
 # The run harness as a balance instrument
 
 **Status:** W1-5, 2026-10-07. Tests-only: no game behaviour changed. The streaming window was corrected the same
-day, after W1-6 found the shipped arms simulating the whole 3x3; every number below is from the corrected window.
+day in #108, after W1-6 found the shipped arms simulating the whole 3x3. Every number below is from the corrected
+window and **supersedes the baseline published with #106**, which was measured in the 3x3. Its 239 `crowded`
+contract abandonments, and every figure derived from them, came from the harness rather than the game.
 
 `tests/runHarness.ts` drives whole campaigns headlessly through the real generator, terrain, collision, navigation,
 chronicle, campaign director, combat resolver and actor AI. The gameplay review of 2026-10-06 used it for 330 runs and
@@ -76,8 +78,8 @@ options. The fidelity test walks a real `GeneratedWorldRuntime` over every squar
 order, and the 3x3 is told apart from it on every square. The harness still lifts the fog on the visible 3x3.
 
 The 3x3 put 17.2 encounter bodies on the road at once against the plus's 11.1, and kept the actor budget full for
-45 s a run, which is what refused the contract builders. With `regionWindow: 'square'`, the shipped arms give the
-first baseline back exactly, cell for cell.
+45 s a run, which is what refused the contract builders. With `regionWindow: 'square'`, the shipped arms give #106's
+baseline back exactly, cell for cell.
 
 **Known engine behaviour, mirrored rather than fixed.** When a square streams back into the plus, the engine refields
 every encounter in it that was not cleared, at full health. Only uniques and cleared encounters are remembered, in the
@@ -156,8 +158,8 @@ Over all 360 runs:
   contract fights deal 3 801.
 - **Contracts.** Every run reached its contract and started it: 360 started, 346 kept, 12 failed and none abandoned;
   two were still running when their run ended. 51 random events stood down for a contract, and 47 located fights were
-  handed back to make room. In the 3x3 the same sweep started 120 and abandoned 239 as `crowded`. The starvation the
-  first baseline reported came from the harness's window, not from the game.
+  handed back to make room. In the 3x3 the same sweep started 120 and abandoned 239 as `crowded`. The starvation
+  #106's baseline reported came from the harness's window, not from the game.
 - **Encounters.** The generator fielded 18.5 encounters per run (20.8 in the 3x3), with 11.1 of its bodies on the
   road at once on average (17.2 in the 3x3). The actor budget never had to refuse one; the 3x3 kept it full for
   45 s a run. A `beeline` or `duelist` run spawns about 70 encounter bodies. A `cautious` run spawns 477 to 1 080,
