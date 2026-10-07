@@ -115,7 +115,7 @@
   }
 
   .game-screen[data-hud="compact"] .top-hud-side {
-    max-height: calc(100dvh - 7rem);
+    max-height: var(--hud-side-max-height);
     overflow-y: auto;
     overscroll-behavior: contain;
     pointer-events: auto;
@@ -127,6 +127,13 @@
   .game-screen[data-hud="compact"] .notice-stack {
     top: 4.7rem;
     width: min(26rem, 100%);
+  }
+}
+
+/* W1-4 — the same identity-clearing lane as the full HUD, measured inside the top HUD. */
+@media (min-width: 1001px) and (pointer: fine) {
+  .game-screen[data-hud="compact"] .notice-stack {
+    width: min(28rem, calc(100% - 50rem));
   }
 }
 

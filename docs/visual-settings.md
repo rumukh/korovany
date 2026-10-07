@@ -38,6 +38,14 @@ changing damage state or intentional injury-related vision loss. Full mode keeps
 the original panel arrangement. Browser layout/visual acceptance is separate from
 the CPU-tested DOM contract.
 
+On desktop layouts, both modes keep two lanes clear. The right-hand column ends
+above the bottom-right mouse-capture card and scrolls, so the card can no longer
+cover a rumour's «Взяться» while capture is off. Wider than 1000px, the notice
+lane starts past the widest zone header, capped at 31rem, instead of under its
+pause button. Finale notice lanes are unchanged. On narrow screens the Full HUD
+still lays notices over the vitals column; taps reach the controls beneath, and
+Compact mode moves notices into the right-hand flow.
+
 Interface preferences are stored as `{ version: 2, hudMode }` at
 `korovany-visual-preferences`. Version 1 records are also read, retaining only
 `hudMode` and discarding the retired graphics fields. Reads do not rewrite
