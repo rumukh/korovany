@@ -8,7 +8,7 @@ import {
   buildIllustratedTrim, buildIllustratedArm, buildIllustratedCompactLimb,
   buildIllustratedBowString, buildIllustratedNockedArrow,
   buildUpperArm, buildForearm, buildThigh, buildIllustratedShin, buildIllustratedBoot, buildCloak,
-  buildWeaponHead, buildWeaponGrip, buildOffhand, buildWristRope,
+  buildWeaponHead, buildWeaponGrip, buildOffhand, buildWristRope, elbowRotation, swivelElbowTowardPole,
   type CharacterPlan, type CharacterVisualLevel, type CharacterPhysicalSurface, type WeaponKind,
 } from './CharacterKit.ts'
 import { bakeOutlineNormals, mergeAll, transformed } from './GeometryKit.ts'
@@ -263,6 +263,7 @@ export class CharacterPresenter {
   private readonly normalMatrix = new THREE.Matrix3()
   private readonly armTarget = new THREE.Vector3()
   private readonly armLocal = new THREE.Vector3()
+  private readonly elbowPole = new THREE.Vector3()
   private readonly orientation = new THREE.Quaternion()
   private readonly groundPoint = new THREE.Vector3()
   private readonly footFrame = new TerrainFootFrame()
@@ -475,7 +476,7 @@ export class CharacterPresenter {
     PRESENTERS.set(this.root, this)
     for (let side = 0; side < 2; side++) {
       arms[side].rotation.z = (side === 0 ? -1 : 1) * p.armSplay
-      elbows[side].rotation.x = p.elbowRest
+      elbows[side].rotation.x = elbowRotation(p.elbowRest)
       legs[side].rotation.z = (side === 0 ? -1 : 1) * p.legSplay
     }
     weapon.rotation.set(0.34, 0, -this.rig.mainHand * 0.44)
@@ -615,7 +616,7 @@ export class CharacterPresenter {
     const progress = 1 - this.arrowRemaining / ARROW_PRESENTATION_SECONDS
     const recoil = Math.sin(progress * Math.PI)
     arm.rotation.set(-1.22 + recoil * 0.14, 0, this.rig.mainHand * 0.1, 'XYZ')
-    elbow.rotation.set(0.12 + recoil * 0.12, 0, 0, 'XYZ')
+    elbow.rotation.set(elbowRotation(0.12 + recoil * 0.12), 0, 0, 'XYZ')
     const weapon = this.rig.weapon!
     weapon.matrixAutoUpdate = true
     this.syncAttachments()
@@ -976,8 +977,11 @@ export class CharacterPresenter {
     }
   }
 
-  /** Fit a support arm to a real equipment-space handle; never move the shield or collider. */
-  private fitArm(side: number, target: THREE.Vector3): void {
+  /**
+   * Fit a support arm to a real equipment-space handle; never move the shield or collider.
+   * `drawing` swings the elbow out and back for a bowstring instead of down at the side.
+   */
+  private fitArm(side: number, target: THREE.Vector3, drawing = false): void {
     const arm = side < 0 ? this.rig.leftArm! : this.rig.rightArm!
     const elbow = side < 0 ? this.rig.leftElbow! : this.rig.rightElbow!
     if (!arm.visible) return
@@ -995,12 +999,16 @@ export class CharacterPresenter {
       else maximum = angle
     }
     const angle = (minimum + maximum) * 0.5
-    this.armLocal.set(0, -(upper + forearm * Math.cos(angle)) * scale, -forearm * Math.sin(angle)).normalize()
+    // The bend carries the hand forward of the upper arm, the way an elbow flexes.
+    this.armLocal.set(0, -(upper + forearm * Math.cos(angle)) * scale, forearm * Math.sin(angle)).normalize()
     if (reach < 1e-6) return
     this.armTarget.multiplyScalar(1 / reach)
     this.orientation.setFromUnitVectors(this.armLocal, this.armTarget)
+    if (drawing) this.elbowPole.set(side * 0.8, -0.1, -1)
+    else this.elbowPole.set(side * 0.5, -1, 0)
+    swivelElbowTowardPole(this.orientation, this.armTarget, this.elbowPole)
     arm.quaternion.copy(this.orientation)
-    elbow.rotation.set(angle, 0, 0, 'XYZ')
+    elbow.rotation.set(elbowRotation(angle), 0, 0, 'XYZ')
   }
 
   poseSupport(draw: number): void {
@@ -1018,7 +1026,7 @@ export class CharacterPresenter {
     } else if (SUPPORT_WEAPONS.has(kind) || kind === 'bow') {
       this.scratch.set(kind === 'bow' ? 0.02 : 0, kind === 'bow' ? 0 : -0.28, kind === 'bow' ? -0.23 - draw * 0.3 : 0)
         .applyMatrix4(weapon.matrixWorld).applyMatrix4(this.inverse)
-      this.fitArm(-this.rig.mainHand, this.scratch)
+      this.fitArm(-this.rig.mainHand, this.scratch, kind === 'bow')
     }
     const side = this.rig.mainHand > 0 ? 0 : 1
     const hand = this.hands[side]
