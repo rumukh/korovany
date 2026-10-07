@@ -2223,6 +2223,27 @@ button {
   gap: 0.65rem;
 }
 
+/* W1-4 — with mouse capture off, the bottom-right «Захватить мышь» card is where a click
+   lands. The right column therefore ends above that card and scrolls, instead of sliding
+   its rumour and bridge buttons underneath it. The card's lane is its own 8rem offset plus
+   one 44px control, its padding and its border. */
+@media (min-width: 721px) and (pointer: fine) {
+  .game-screen {
+    --camera-card-bottom: 8rem;
+    --camera-card-top: calc(var(--camera-card-bottom) + 44px + 0.7rem + 2px);
+    --hud-side-max-height: calc(100dvh - 1rem - var(--camera-card-top) - 0.65rem);
+  }
+
+  .top-hud-side {
+    max-height: var(--hud-side-max-height);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    pointer-events: auto;
+    scrollbar-width: thin;
+  }
+}
+
 .chronicle-card {
   padding: 0.65rem;
   width: 16rem;
@@ -3170,6 +3191,22 @@ button {
   z-index: 28;
 }
 
+/* W1-4 — the identity panel grows with the zone's subtitle (Зона людей reaches ~30rem), and
+   at 1366px a centred lane began under its pause button. Past 1000px the lane starts after
+   the widest panel and narrows before it would reach the right column. Finale lanes keep
+   their own, more specific placement. */
+@media (min-width: 1001px) and (pointer: fine) {
+  .identity-panel {
+    max-width: 31rem;
+  }
+
+  .notice-stack {
+    left: max(33rem, calc(50% - 14rem));
+    transform: none;
+    width: min(28rem, calc(100% - 52rem));
+  }
+}
+
 .notice {
   align-items: center;
   animation: notice-in 220ms ease-out;
@@ -3700,6 +3737,7 @@ kbd {
   border-radius: 0.625rem;
   color: var(--cp-warning);
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 1rem;
   padding: 0.7rem 0.8rem;
@@ -3713,6 +3751,14 @@ kbd {
 .shop-balance strong {
   font-family: Consolas, "Courier New", Courier, monospace;
   margin-left: auto;
+}
+
+/* W1-4 — what the purse is worth to the profile if it is not spent. */
+.shop-purse-reward {
+  color: var(--cp-text-muted);
+  flex-basis: 100%;
+  font-size: 0.72rem;
+  line-height: 1.35;
 }
 
 .shop-grid {
@@ -4037,6 +4083,7 @@ kbd {
   border-radius: 0.7rem;
   color: var(--cp-text);
   display: flex;
+  flex-wrap: wrap;
   gap: 0.7rem;
   justify-content: center;
   margin-top: 0.75rem;
@@ -4080,6 +4127,39 @@ kbd {
   display: block;
   font-size: 0.56rem;
   margin-top: 0.12rem;
+}
+
+/* W1-4 — the receipt under the total: one row per rule, label left, coins right. */
+.terminal-reward-lines {
+  border-top: 1px solid color-mix(in srgb, var(--cp-warning) 30%, var(--cp-border));
+  display: grid;
+  flex-basis: 100%;
+  gap: 0.25rem;
+  margin: 0;
+  padding-top: 0.5rem;
+  text-align: left;
+}
+
+.terminal-reward-lines > div {
+  align-items: baseline;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.terminal-reward-lines dt {
+  color: var(--cp-text-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.terminal-reward-lines dd {
+  color: var(--cp-text);
+  flex: 0 0 auto;
+  font-family: Consolas, "Courier New", Courier, monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin: 0;
 }
 
 .terminal-finalization-warning {

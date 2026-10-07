@@ -32,6 +32,7 @@ import { deriveSeed } from '../src/game/random/seed.ts'
 import { getThreatTier } from '../src/game/types.ts'
 import {
   BOON_CATALOGUE,
+  RUN_COMPLETION_REWARD,
   computeRunCompletionReward,
 } from '../src/game/run/profile.ts'
 import {
@@ -539,14 +540,32 @@ function currencySpentByRun(
 test('signal 1: profile currency has somewhere to go past run five, and used not to', () => {
   // Rewards from real runs rather than from a guess: the same scripted arm the second
   // signal is measured on, scored with the shipped reward function.
-  const rewards = sweep('seeded', FULL_POOL).map((report) =>
-    computeRunCompletionReward({
-      status: report.outcome === 'victory' ? 'victory' : 'defeat',
-      kills: report.kills,
-      objectivesCompleted: report.objectivesCompleted,
-    }),
-  )
+  //
+  // W1-4 — the harness has no economy, so the purse it ends with is unknown. Every run is
+  // scored as if it banked the full purse: the strongest case *against* this signal, since
+  // a richer run buys the shelf out sooner. On this sweep that moves the whole 465-coin
+  // shelf from empty at run 9 to empty at run 8, and the spend past run five from 205 to
+  // 110 — still the dearest doctrine, which is the floor asserted below.
+  const fullPurse = RUN_COMPLETION_REWARD.goldPerCoin * RUN_COMPLETION_REWARD.goldCap
+  const rewardsWithPurse = (endingGold: number): number[] =>
+    sweep('seeded', FULL_POOL).map((report) =>
+      computeRunCompletionReward({
+        status: report.outcome === 'victory' ? 'victory' : 'defeat',
+        kills: report.kills,
+        objectivesCompleted: report.objectivesCompleted,
+        endingGold,
+      }),
+    )
+  const rewards = rewardsWithPurse(fullPurse)
   assert.ok(rewards.length >= 12, 'the meta-loop needs more than five runs to be inert in')
+  // The control that the purse is in the sum at all: every run gains exactly the cap.
+  const sum = (values: readonly number[]): number =>
+    values.reduce((total, value) => total + value, 0)
+  assert.equal(
+    sum(rewards) - sum(rewardsWithPurse(0)),
+    RUN_COMPLETION_REWARD.goldCap * rewards.length,
+    'the reward function ignored the purse it was handed',
+  )
 
   const boonCosts: number[] = BOON_CATALOGUE.map((boon) => boon.unlockCost)
   const doctrineCosts: number[] = DOCTRINE_CATALOGUE.map((doctrine) => doctrine.unlockCost)
@@ -574,7 +593,7 @@ test('signal 1: profile currency has somewhere to go past run five, and used not
     'currency still has nowhere to go past run five',
   )
   assert.ok(
-    pastFive(after) >= 150,
+    pastFive(after) >= Math.max(...doctrineCosts),
     `only ${String(pastFive(after))} currency spent past run five`,
   )
   // Not a stat: what the currency buys is a wider table, and the control below is what
