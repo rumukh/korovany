@@ -25,8 +25,10 @@
  *    square.
  * 3. **How it comes back.** Once no staging has asked for room for
  *    {@link STAGING_PARK_HOLD_SECONDS}, when the whole pack fits and none of its stations is
- *    near the player or in sight (`canReturnPack`). If its square streams out first, it comes
- *    back with the square, once, like any pack.
+ *    near the player or in sight (`canReturnPack`). A player who walks up to its empty post
+ *    (within {@link STAGING_POST_RADIUS} of a station) calls it home: from then on only sight
+ *    keeps it away. If its square streams out first, it comes back with the square, once, like
+ *    any pack. Until it is back its post stands empty and the map shows none of it.
  *
  * The rule takes a budget category, so a caravan beat that materialises into `campaign` can
  * ask for room the same way a contract asks for `chronicle` room.
@@ -69,6 +71,16 @@ export const STAGING_VIEW_MARGIN = (10 * Math.PI) / 180
  * stand on — does not churn the same pack out and back in for twelve seconds.
  */
 export const STAGING_PARK_HOLD_SECONDS = 4
+/**
+ * The empty-post rule: a player this close to any station of a pack that stepped back has walked
+ * up to a post that stands empty. From then on the pack comes home as soon as none of its
+ * stations is in sight, however near the player stands ({@link canReturnPack}).
+ *
+ * Just inside `CONTRACT_TRIGGER_RADIUS` (26 m), the distance at which the game already counts a
+ * player as standing at a place. The camera orbits about 11 m behind the player, so a station
+ * nearer than that is always on screen; from there out to 25 m, looking away is what hides it.
+ */
+export const STAGING_POST_RADIUS = 25
 
 export interface StagingPoint {
   x: number
@@ -205,19 +217,29 @@ export function canParkPack(viewer: StagingViewer, pack: StagingPack): boolean {
 }
 
 /**
- * Whether a pack that stepped back may come back onto these stations right now: none of them
- * near the player, and none in sight.
+ * Whether a pack that stepped back may come back onto these stations right now: none of them in
+ * sight, and none of them near the player — unless the player has walked up to the post
+ * (`calledHome`, see {@link isAtPost}), after which sight alone keeps it away.
  */
 export function canReturnPack(
   viewer: StagingViewer,
   stations: readonly StagingPoint[],
+  calledHome: boolean,
 ): boolean {
   if (stations.length === 0) return false
   return stations.every(
     (station) =>
-      distanceFromPlayer(viewer, station) >= STAGING_PARK_MIN_DISTANCE &&
+      (calledHome || distanceFromPlayer(viewer, station) >= STAGING_PARK_MIN_DISTANCE) &&
       isHiddenFrom(viewer, station),
   )
+}
+
+/**
+ * Whether the player stands at the post of a pack that stepped back: within
+ * {@link STAGING_POST_RADIUS} of any of its stations. Once they have, the pack is called home.
+ */
+export function isAtPost(viewer: StagingViewer, stations: readonly StagingPoint[]): boolean {
+  return stations.some((station) => distanceFromPlayer(viewer, station) <= STAGING_POST_RADIUS)
 }
 
 /**

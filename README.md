@@ -144,10 +144,15 @@ their squares, farthest first and only as many as it needs. A pack steps back on
 hostile to you, at least 60 m away, outside the camera's view, unhurt and not fighting. Enemies
 never step back, and neither do the squad, a stronghold's garrison, a unique, an objective, the
 finale or anyone an event put down. Stepping back is not losing: the pack is not counted as
-beaten, and it drops and pays nothing. It comes home to its stations when nothing has asked for
-room for 4 seconds, the whole pack fits and none of its stations is near you or in view, or
-with its square when that streams back in. Seed 1's guard used to lose «Зверьё у домиков»,
-beside the palace's two strongholds, as crowded every time.
+beaten, and it drops and pays nothing. It comes home to its stations once nothing has asked for
+room for 4 seconds and the whole pack fits, at the first moment none of its stations is in view
+and all are at least 60 m from you, or with its square when that streams back in. Walk up to an
+empty post, within 25 m of one of its stations, and the pack is called home: from then on it
+only waits for you to look away. Seed 1's guard used to lose «Зверьё у домиков», beside the
+palace's two strongholds, as crowded every time.
+
+Known behaviour: until a pack is back, its post stands empty and the journal map shows none of
+its dots. Looking away at the post, or going 60 m off, ends that as soon as the field has room.
 
 ## Caravan beats
 

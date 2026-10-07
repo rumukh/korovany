@@ -67,10 +67,12 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
   the game's own events made way, `world/StagingRoom.ts` picks the generator's ordinary packs that are not hostile
   to the player, idle, unhurt, at least 60 m away and outside the camera's view. They step back into their squares,
   farthest first, as many as the contract is short. They come home when no staging has asked for 4 s, the whole
-  pack fits and none of its stations is near or in view, or with their square. The harness and the engine share the
-  module. The harness's camera is the engine's at rest: `cameraOrbitDistance` behind the heading at
-  `CAMERA_DEFAULT_PITCH`, `CAMERA_BASE_FOV` on 16:9. The fidelity test has the engine's own `updateCamera` pose
-  its camera and holds the harness's cone to what the engine's `stagingViewer` reads off it.
+  pack fits and none of its stations is in view or within 60 m, or with their square. A player who walks within
+  25 m of one of its stations calls the pack home, and from then on only sight keeps it away (the empty-post
+  rule). The harness and the engine share the module. The harness's camera is the engine's at rest:
+  `cameraOrbitDistance` behind the heading at `CAMERA_DEFAULT_PITCH`, `CAMERA_BASE_FOV` on 16:9. The fidelity test
+  has the engine's own `updateCamera` pose its camera and holds the harness's cone to what the engine's
+  `stagingViewer` reads off it.
 
 ### Walk speed: the harness's 6.4 m/s is not the engine's 8.2
 
@@ -128,8 +130,8 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   **system behind each death**.
 - **Encounters:** how many the generator fielded, the bodies it spawned, how many stood on the road at once on
   average, and the seconds in which the actor budget refused one. The report's `regionWindow` names the window. Also
-  the soldiers commanders called (W1-6), which count on the road once called, and the packs that stepped back to
-  make room for a contract and came home again (W1-6).
+  the soldiers commanders called (W1-6), which count on the road once called, the packs that stepped back to make
+  room for a contract and came home again, and how many of those the player called home from their posts (W1-6).
 - `sweepBalance` aggregates them per faction and policy, with the run-length distribution.
 
 ## Running it
@@ -279,6 +281,12 @@ arms of the fork, with `staging` at `none` and then `friendly`; the same seeds a
 - `tests/contractStaging.test.ts` arrives at every contract site of the same 40 seeds through the engine's own
   spawner, facing each of four ways. With nobody stepping back the guard's one site is crowded; with the staging no
   site is, for any faction or heading. No enemy and nothing in view ever stepped back.
+- **The empty-post rule** moves no cell of the table: no scripted player walks back to a post after its pack stepped
+  back, so none of the three packs was called home (`packsCalledHome` 0). It is measured in the engine tests.
+- **Known behaviour.** Until a pack is back, its post stands empty and the journal map shows none of its dots. The
+  empty-post rule shortens that: a player at the post who looks away has the pack back as soon as the field has
+  room for it. A player who keeps the post in view, or stays between 25 and 60 m without having walked up to it,
+  still sees it empty.
 
 ## W2-1: escalation by progress
 

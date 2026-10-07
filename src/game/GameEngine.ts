@@ -413,10 +413,12 @@ import {
   choosePacksToPark,
   gatherStagingPacks,
   horizontalHalfFov,
+  isAtPost,
   parkableBodies,
   stagingCapacity,
   type StagingBody,
   type StagingPack,
+  type StagingPoint,
   type StagingViewer,
 } from './world/StagingRoom'
 import {
@@ -2177,6 +2179,11 @@ export class GameEngine {
    * and the pack with it.
    */
   private readonly parkedGeneratedSpawns = new Map<string, Set<string>>()
+  /**
+   * W1-6 — the packs that stepped back whose empty post the player has walked up to, by square:
+   * from then on only sight keeps them away. Residency state, cleared with the pack.
+   */
+  private readonly parkedPacksCalledHome = new Map<string, Set<string>>()
   /** W1-6 — no pack that stepped back comes back before this, while a staging still asks. */
   private parkHoldUntil = 0
   private readonly simulatedGeneratedRegions = new Set<string>()
@@ -4950,6 +4957,7 @@ export class GameEngine {
       this.generatedActivationSpawns.delete(regionId)
       // W1-6 — a pack that stepped back leaves with its square, and comes back with it once.
       this.parkedGeneratedSpawns?.delete(regionId)
+      this.parkedPacksCalledHome?.delete(regionId)
     }
     this.simulatedGeneratedRegions.clear()
     const orderedRegions = [...nextRegions].sort((left, right) =>
@@ -6605,27 +6613,55 @@ export class GameEngine {
   /**
    * W1-6 — packs that stepped back come home, once no staging has asked for room for
    * `STAGING_PARK_HOLD_SECONDS`, when the whole pack fits without anyone yielding and none of
-   * its stations is near the player or in sight. Releasing the spawns is all it takes: the
-   * spawner puts them back on their stations this same frame, once each.
+   * its stations is near the player or in sight. A player who walks up to the empty post calls
+   * the pack home, and from then on only sight keeps it away (`stagingPostVisited`). Releasing
+   * the spawns is all it takes: the spawner puts them back on their stations this same frame,
+   * once each.
    */
   private returnParkedPacks(regionId: string): void {
     const parked = this.parkedGeneratedSpawns?.get(regionId)
-    if (!parked || parked.size === 0 || this.elapsed < this.parkHoldUntil) return
+    if (!parked || parked.size === 0) return
     const activation = this.generatedActivationSpawns.get(regionId)
     if (!activation) return
-    let viewer: StagingViewer | null = null
+    const viewer = this.stagingViewer()
     for (const plan of this.generatedEncounterPlans.get(regionId) ?? []) {
       const away = plan.spawns.filter((spawn) => parked.has(spawn.id))
       if (away.length === 0) continue
-      viewer ??= this.stagingViewer()
-      if (!canReturnPack(viewer, away.map((spawn) => ({ x: spawn.worldX, z: spawn.worldZ })))) continue
+      const stations = away.map((spawn) => ({ x: spawn.worldX, z: spawn.worldZ }))
+      // Noted even while the hold runs, so a visit during it still counts once it is over.
+      const calledHome = this.stagingPostVisited(regionId, plan.encounterId, viewer, stations)
+      if (this.elapsed < this.parkHoldUntil) continue
+      if (!canReturnPack(viewer, stations, calledHome)) continue
       this.actorBudget.sync(this.actorUsageByCategory())
       if (this.actorBudget.availableFor('campaign') < away.length) continue
       for (const spawn of away) {
         parked.delete(spawn.id)
         activation.delete(spawn.id)
       }
+      this.parkedPacksCalledHome?.get(regionId)?.delete(plan.encounterId)
     }
+  }
+
+  /**
+   * W1-6 — the empty-post rule: whether the player has walked up to the post of a pack that
+   * stepped back, within `STAGING_POST_RADIUS` of any of its stations, now or at any time since
+   * it stepped back.
+   */
+  private stagingPostVisited(
+    regionId: string,
+    encounterId: string,
+    viewer: StagingViewer,
+    stations: readonly StagingPoint[],
+  ): boolean {
+    let visited = this.parkedPacksCalledHome.get(regionId)
+    if (isAtPost(viewer, stations)) {
+      if (!visited) {
+        visited = new Set()
+        this.parkedPacksCalledHome.set(regionId, visited)
+      }
+      visited.add(encounterId)
+    }
+    return visited?.has(encounterId) ?? false
   }
 
   /** W1-6 — whether any of this encounter is away making room. Read defensively, for tests. */

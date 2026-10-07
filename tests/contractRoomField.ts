@@ -261,6 +261,7 @@ export function field(source: World, faction: Faction, options: FieldOptions = {
     generatedEncounterPlans: source.plans.get(faction),
     generatedActivationSpawns: new Map(),
     parkedGeneratedSpawns: new Map(),
+    parkedPacksCalledHome: new Map(),
     parkHoldUntil: 0,
     generatedNavigationCache: new Map(),
     actorSequence: 0,

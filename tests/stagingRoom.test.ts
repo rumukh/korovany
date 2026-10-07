@@ -19,12 +19,14 @@ import {
 } from '../src/game/world/ActorBudget.ts'
 import {
   STAGING_PARK_MIN_DISTANCE,
+  STAGING_POST_RADIUS,
   STAGING_VIEW_MARGIN,
   canParkPack,
   canReturnPack,
   choosePacksToPark,
   gatherStagingPacks,
   horizontalHalfFov,
+  isAtPost,
   isHiddenFrom,
   isParkableEncounterPlan,
   packDistance,
@@ -167,10 +169,28 @@ test('a pack steps back only when every member is far, unseen and the pack is id
   assert.equal(canParkPack(view, pack('a', behind(far, 3), true)), false)
   assert.equal(canParkPack(view, pack('a', [])), false)
   // Coming home answers to the same two rules, on the stations.
-  assert.equal(canReturnPack(view, behind(far, 3)), true)
-  assert.equal(canReturnPack(view, [...behind(far, 2), ...behind(far - 1, 1)]), false)
-  assert.equal(canReturnPack(view, [...behind(far, 2), offAxis(10, 90)]), false)
-  assert.equal(canReturnPack(view, []), false)
+  assert.equal(canReturnPack(view, behind(far, 3), false), true)
+  assert.equal(canReturnPack(view, [...behind(far, 2), ...behind(far - 1, 1)], false), false)
+  assert.equal(canReturnPack(view, [...behind(far, 2), offAxis(10, 90)], false), false)
+  assert.equal(canReturnPack(view, [], false), false)
+})
+
+test('the empty-post rule: walk up to the post, and only sight keeps its pack away', () => {
+  const view = viewer()
+  // 20 m behind the player is 8 m behind the camera: out of sight, but well inside 60 m.
+  const post = behind(20, 2)
+  assert.equal(isAtPost(view, post), true)
+  assert.equal(canReturnPack(view, post, true), true)
+  // Negative control: without the call home, the same stations are too near to come back to.
+  assert.equal(canReturnPack(view, post, false), false)
+  // Called home or not, a station in sight keeps the pack away: in front of the player, and
+  // just behind them, where it stands between the camera and the player.
+  assert.equal(canReturnPack(view, [...post, { x: 0, z: -15 }], true), false)
+  assert.equal(canReturnPack(view, [...post, { x: 0, z: 5 }], true), false)
+  // The post is any station within the radius, the edge included.
+  assert.equal(isAtPost(view, [{ x: 0, z: STAGING_POST_RADIUS }, { x: 0, z: 90 }]), true)
+  assert.equal(isAtPost(view, [{ x: 0, z: STAGING_POST_RADIUS + 0.5 }, { x: 0, z: 90 }]), false)
+  assert.equal(isAtPost(view, []), false)
 })
 
 test('the farthest packs step back first, and only as many as the staging is short', () => {

@@ -346,6 +346,121 @@ test('a pack that stepped back leaves with its square and comes back with it, on
   assert.ok(Reflect.get(probe.engine, 'elapsed') < Reflect.get(probe.engine, 'parkHoldUntil'))
 })
 
+/** The north pack steps back as a contract would ask, with the field's room left free. */
+function parkNorthPack(rule = true): Probe {
+  const probe = arrive({ staging: true })
+  // Without the rule: the player's visits to the post are never noted, as before it.
+  if (!rule) Reflect.set(probe.engine, 'stagingPostVisited', () => false)
+  assert.equal(invoke<boolean>(probe.engine, 'makeRoomForStaging', 'chronicle', 5), true)
+  assert.deepEqual(members(probe, NORTH_PACK), [])
+  return probe
+}
+
+/** Stands the player `away` metres south of the north pack's post, looking along `yaw`. */
+function standSouthOfPost(probe: Probe, away: number, yaw: number): void {
+  const stations = northStations(probe)
+  const x = stations.reduce((sum, station) => sum + station.x, 0) / stations.length
+  probe.player.position.set(x, 0, Math.max(...stations.map((station) => station.z)) + away)
+  probe.face(yaw)
+}
+
+function northStations(probe: Probe): Array<{ id: string; x: number; z: number }> {
+  const plans = Reflect.get(probe.engine, 'generatedEncounterPlans') as Map<string, GeneratedEncounterPlan[]>
+  return plans.get('region-4-1')!.find((plan) => plan.encounterId === NORTH_PACK)!.spawns
+    .map((spawn) => ({ id: spawn.id, x: spawn.worldX, z: spawn.worldZ }))
+}
+
+function overHold(probe: Probe): void {
+  Reflect.set(probe.engine, 'elapsed', Reflect.get(probe.engine, 'parkHoldUntil'))
+}
+
+test('the empty-post rule: a player at the post calls its pack home, and it comes back unseen', () => {
+  // The player walks up to the post, 18 m short of it, facing it: it stands empty, and while
+  // the player can see its stations it stays empty, though the hold is over and there is room.
+  const walkUp = (rule: boolean): Probe => {
+    const probe = parkNorthPack(rule)
+    overHold(probe)
+    standSouthOfPost(probe, 18, FACING_NORTH)
+    probe.streamIn()
+    assert.deepEqual(members(probe, NORTH_PACK), [], 'the pack came back in sight')
+    return probe
+  }
+  const probe = walkUp(true)
+  // The player turns away: every station is behind the camera now, and the pack is home, on
+  // its stations, though the player stands well inside 60 m of them.
+  probe.face(FROM_THE_START)
+  const viewer = sight(probe)
+  const stations = northStations(probe)
+  for (const station of stations) {
+    assert.ok(isHiddenFrom(viewer, station))
+    assert.ok(Math.hypot(station.x - viewer.player.x, station.z - viewer.player.z) < STAGING_PARK_MIN_DISTANCE)
+  }
+  probe.streamIn()
+  const home = members(probe, NORTH_PACK)
+  assert.deepEqual(home.map((actor) => actor.generatedSpawnId).sort(), stations.map((station) => station.id).sort())
+  for (const actor of home) {
+    const station = stations.find((entry) => entry.id === actor.generatedSpawnId)!
+    assert.ok(Math.hypot(actor.mesh.position.x - station.x, actor.mesh.position.z - station.z) < 1e-9)
+  }
+  assert.equal(probe.parked().get('region-4-1')?.size ?? 0, 0)
+
+  // Negative control: without the rule the same turn finds the pack still away, because the
+  // player stands too near for it to come back; walked 70 m off, it does.
+  const control = walkUp(false)
+  control.face(FROM_THE_START)
+  control.streamIn()
+  assert.deepEqual(members(control, NORTH_PACK), [], 'the control came back without the rule')
+  standSouthOfPost(control, 70, FROM_THE_START)
+  control.streamIn()
+  assert.equal(members(control, NORTH_PACK).length, 2)
+
+  // Called home, it does not wait for the player to go 60 m off: having seen the empty post
+  // and backed away to 40 m, the player looks away and it is back.
+  const backedOff = walkUp(true)
+  standSouthOfPost(backedOff, 40, FACING_NORTH)
+  backedOff.streamIn()
+  assert.deepEqual(members(backedOff, NORTH_PACK), [])
+  backedOff.face(FROM_THE_START)
+  backedOff.streamIn()
+  assert.equal(members(backedOff, NORTH_PACK).length, 2)
+  // Negative control: a pack whose post the player never walked up to stays away at 40 m.
+  const never = parkNorthPack()
+  overHold(never)
+  standSouthOfPost(never, 40, FROM_THE_START)
+  never.streamIn()
+  assert.deepEqual(members(never, NORTH_PACK), [])
+})
+
+test('a pack called home still waits for the hold, and for room on the field', () => {
+  const visit = (rule: boolean) => {
+    const probe = parkNorthPack(rule)
+    // At the post and looking away while the hold still runs: the visit counts, the hold holds.
+    standSouthOfPost(probe, 18, FROM_THE_START)
+    probe.streamIn()
+    assert.deepEqual(members(probe, NORTH_PACK), [], 'it came back during the hold')
+    // The player backs off to 40 m, still looking away, and the field fills meanwhile: an
+    // event puts five bodies down at the contract's site.
+    standSouthOfPost(probe, 40, FROM_THE_START)
+    const site = siteOf(probe.blueprint, cull())
+    const filler = Array.from({ length: 5 }, (_, index) =>
+      probe.spawn('guard', 'soldier', site.x + index, site.z, 'chronicle', {
+        eventOwnerId: 'test-event',
+        hostileToPlayer: false,
+      }))
+    overHold(probe)
+    probe.streamIn()
+    assert.deepEqual(members(probe, NORTH_PACK), [], 'it came back by evicting someone')
+    assert.ok(filler.every((actor) => probe.actors.includes(actor)))
+    // One of them goes: now the whole pack fits.
+    invoke(probe.engine, 'removeActorById', filler[0].id)
+    probe.streamIn()
+    return probe
+  }
+  assert.equal(members(visit(true), NORTH_PACK).length, 2)
+  // Negative control: the same visit without the rule leaves the post empty at 40 m.
+  assert.deepEqual(members(visit(false), NORTH_PACK), [])
+})
+
 // ---------------------------------------------------------------------------
 // 3. The same rule for a caravan beat
 // ---------------------------------------------------------------------------

@@ -323,6 +323,7 @@ import {
   choosePacksToPark,
   gatherStagingPacks,
   horizontalHalfFov,
+  isAtPost,
   parkableBodies,
   stagingCapacity,
   type StagingBody,
@@ -1336,6 +1337,8 @@ export interface EncounterMetrics {
   packsSteppedBack: number
   /** W1-6 — packs that stepped back and came back onto their stations before streaming out. */
   packsReturned: number
+  /** W1-6 — of those, the ones the player called home by walking up to their empty post. */
+  packsCalledHome: number
 }
 
 /**
@@ -2250,6 +2253,7 @@ export function runHarness(options: RunOptions): RunReport {
     reinforcementsCalled: 0,
     packsSteppedBack: 0,
     packsReturned: 0,
+    packsCalledHome: 0,
   }
   const fieldedEncounterIds = new Set<string>()
   /** Live encounter bodies times seconds, divided out into `meanOnField` at the end. */
@@ -4091,6 +4095,7 @@ export function runHarness(options: RunOptions): RunReport {
     encounterActivated.delete(regionId)
     // W1-6 — a pack that stepped back leaves with its square, and comes back with it once.
     parkedSpawns.delete(regionId)
+    calledHomePacks.delete(regionId)
   }
   /** `recordGeneratedActorDeath`: uniques stay dead, an emptied encounter stays cleared. */
   const recordEncounterDeath = (actor: HarnessActor): void => {
@@ -4128,6 +4133,8 @@ export function runHarness(options: RunOptions): RunReport {
 
   /** `parkedGeneratedSpawns`: spawns standing back from each square, still activated. */
   const parkedSpawns = new Map<string, Set<string>>()
+  /** `parkedPacksCalledHome`: packs whose empty post the player has walked up to. */
+  const calledHomePacks = new Map<string, Set<string>>()
   let parkHoldUntil = 0
   /** `stagingBody`: whether a body is idle, and whether it may go at all. */
   const stagingBody = (actor: HarnessActor): StagingBody => ({
@@ -4208,23 +4215,39 @@ export function runHarness(options: RunOptions): RunReport {
     for (const pack of chosen) parkPack(pack)
     return stagingRoom(category) >= count
   }
-  /** `returnParkedPacks`: home, once nobody asks, the pack fits and nobody would see it. */
+  /**
+   * `returnParkedPacks`: home, once nobody asks, the pack fits and nobody would see it, and
+   * nobody near it unless the player walked up to its empty post (`stagingPostVisited`).
+   */
   const returnParkedPacks = (regionId: string): void => {
     const parked = parkedSpawns.get(regionId)
-    if (!parked || parked.size === 0 || elapsed < parkHoldUntil) return
+    if (!parked || parked.size === 0) return
     const activated = encounterActivated.get(regionId)
     if (!activated) return
     const viewer = harnessStagingViewer(player)
     for (const plan of encounterPlansFor(regionId)) {
       const away = plan.spawns.filter((entry) => parked.has(entry.id))
       if (away.length === 0) continue
-      if (!canReturnPack(viewer, away.map((entry) => ({ x: entry.worldX, z: entry.worldZ })))) continue
+      const stations = away.map((entry) => ({ x: entry.worldX, z: entry.worldZ }))
+      let visited = calledHomePacks.get(regionId)
+      if (isAtPost(viewer, stations)) {
+        if (!visited) {
+          visited = new Set()
+          calledHomePacks.set(regionId, visited)
+        }
+        visited.add(plan.encounterId)
+      }
+      const calledHome = visited?.has(plan.encounterId) ?? false
+      if (elapsed < parkHoldUntil) continue
+      if (!canReturnPack(viewer, stations, calledHome)) continue
       if (availableSlots('campaign') < away.length) continue
       for (const entry of away) {
         parked.delete(entry.id)
         activated.delete(entry.id)
       }
+      visited?.delete(plan.encounterId)
       encounterMetrics.packsReturned += 1
+      if (calledHome) encounterMetrics.packsCalledHome += 1
     }
   }
 
