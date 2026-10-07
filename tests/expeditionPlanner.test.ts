@@ -852,6 +852,25 @@ function saveFixture(): { save: ActiveRunSaveV3; input: ExpeditionInput; bluepri
   return { save, input, blueprint }
 }
 
+/** W2-3 — the rumour cards as the launch path prices them for `saveFixture`'s save. */
+function pricedRumours(
+  blueprint: ReturnType<typeof generateWorld>,
+  input: ExpeditionInput,
+  commitments: ChronicleCommitmentState,
+  tick: number,
+  chronicle: ActiveRunSaveV3['chronicleState'],
+) {
+  const knowledge = buildExpeditionKnowledge({
+    faction: input.faction, discoveredRegionIds: input.discoveredRegionIds,
+    chronicleRegions: new Map(), contestedRegionIds: new Set(),
+  }, blueprint)
+  return buildChronicleRumourViews(blueprint, commitments, tick, {
+    faction: input.faction,
+    travel: (point) => estimateChoiceTravel(blueprint, input.player, point, knowledge, PLAYER_WALK_SPEED),
+    chronicle,
+  })
+}
+
 test('bounded destination/preference survives real save normalization and initial/live views agree', () => {
   const { blueprint, save, input } = saveFixture()
   const planner = new ExpeditionPlanner(blueprint)
@@ -943,7 +962,8 @@ test('a save in the middle of a taken rumour resumes on that rumour and falls ba
   assert.equal(first.target?.kind, 'rumour')
   assert.equal(first.target?.id, rumour.id)
   assert.deepEqual(first, new ExpeditionPlanner(blueprint).buildView({
-    ...input, rumours: buildChronicleRumourViews(blueprint, commitments, 0), chronicleRegions: new Map(),
+    ...input, rumours: pricedRumours(blueprint, input, commitments, 0, save.chronicleState),
+    chronicleRegions: new Map(),
   }), 'the first restored frame agrees with the live planner')
   assert.deepEqual(resume(), first, 'continuing again changes nothing')
 
@@ -972,7 +992,12 @@ test('restored live rumours share the same position and deadline builder, and ex
     sourceRegionId: null, siteId: null, caravanId: null, faction: null, raisedTick: 0, deadlineTick: 5,
     progress: 0, actioned: false }
   const commitments = { rumours: [rumour], pinnedRumourId: null, nextOfferTick: 10, verdict: null }
-  const rumours = buildChronicleRumourViews(blueprint, commitments, 0)
+  const rumours = pricedRumours(blueprint, input, commitments, 0, save.chronicleState)
+  // The launch path prices the restored card: the walk the compass charts, its verdict and
+  // the reward, exactly as the live board does.
+  assert.ok(rumours[0].travel && rumours[0].travel.seconds > 0)
+  assert.equal(rumours[0].reach, 'yes')
+  assert.equal(rumours[0].reward?.gold, 15)
   const planner = new ExpeditionPlanner(blueprint)
   planner.select({ kind: 'rumour', id: rumour.id }, { ...input, rumours })
   save.directorState.chronicleCommitments = { ...commitments, rumours: [{ ...rumour }] }

@@ -132,6 +132,20 @@ without losing patience while the first is still on the ground. A lost contract 
 forward: walk to its site and the node closes without the payout. The bridge ambush never
 takes a contract's fighters to make room for its own; on a crowded road it waits and retries.
 
+## Rumours
+
+The **Слухи** board offers a rumour only when you can meet it from where you stand. The walk along the itinerary the
+compass would chart, at walking pace on the legs you have, is stretched by half again plus eight seconds for fights
+and detours, and it still has to fit the rumour's clock. A defence or a sabotage then gets a clock fitted to that
+walk, between 48 and 96 seconds. An escort keeps its cart's clock, and is offered only when you can be in the cart's
+square at every check it needs, wherever the cart will have rolled by then. A new rumour comes at most every 32
+seconds, two at a time, and none while you have taken one.
+
+Each card reads **идти ~N с · осталось M с** and says whether you will make it: «успеешь», «впритык» (only with no
+margin left) or «не успеть». Keeping a rumour pays a little, once, when its verdict lands: the palace guard's
+commander and the villain's own purse pay 15 gold, and the elves' wooden houses share a ration. A broken or untaken
+rumour pays nothing, and it still happens without you.
+
 ## The bridge ambush
 
 New runs place an optional caravan encounter on a real generated bridge. It does not

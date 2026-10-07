@@ -166,6 +166,7 @@ import {
   type BodyPart,
   type BodyState,
   type ChronicleEntryView,
+  type ChoicePayoutView,
   type ChronicleRumourView,
   type Faction,
   type FinaleProfileId,
@@ -275,6 +276,7 @@ import {
   describeRumourDropped,
   describeRumourPinned,
   describeRumourVerdict,
+  describeRumourVerdictPaid,
   describeSabotagePrompt,
   describeSiteInspected,
   describeSquadOrder,
@@ -562,6 +564,7 @@ import {
   resolveActiveObjectiveNode,
   resolveContract,
   rollEventCooldown,
+  rumourKeptReward,
   selectChronicleAnnouncements,
   selectChronicleFeedEvents,
   selectWeightedEventKind,
@@ -587,6 +590,7 @@ import {
 } from './world/CampaignView'
 import {
   ExpeditionPlanner,
+  estimateWalkSeconds,
   type ExpeditionInput,
   type ExpeditionPreference,
   type ExpeditionTargetIdentity,
@@ -5740,7 +5744,7 @@ export class GameEngine {
         championDamageBonus: this.championDamageBonus,
         travel: (point) => this.expeditionPlanner.measureTravel(knowledge, player, point, walkSpeed),
       }),
-      rumours: this.buildRumourViews(),
+      rumours: this.buildRumourViews(knowledge, player, walkSpeed),
       discoveredRegionIds,
       chronicleRegions: this.chronicleRegions,
       contestedRegionIds: this.chronicleContestedRegionIds,
@@ -11138,9 +11142,36 @@ export class GameEngine {
       context,
       this.generatedRngStreams.rumour,
     )
-    for (const verdict of settlement.verdicts) this.announceRumourVerdict(verdict)
-    offerRumours(this.chronicleCommitments, context, this.generatedRngStreams.rumour)
+    for (const verdict of settlement.verdicts) {
+      this.announceRumourVerdict(verdict, verdict.outcome === 'kept' ? this.payKeptRumour() : null)
+    }
+    // W2-3 — only what the player can meet from where they stand, timed along the itinerary
+    // the compass would chart, on the legs they have now. Exact rather than the cards' memo,
+    // so the offer depends on the player's position and nothing else.
+    const from = { x: this.player.position.x, z: this.player.position.z }
+    const speed = PLAYER_WALK_SPEED * playerLegMobility(this.body)
+    offerRumours(
+      this.chronicleCommitments,
+      context,
+      this.generatedRngStreams.rumour,
+      (point) => estimateWalkSeconds(this.generatedBlueprint, from, point, speed),
+    )
     return settlement.events
+  }
+
+  /**
+   * W2-3 — a kept rumour's pay: the guard's commander and the villain's own purse pay gold,
+   * the elves' wooden houses a ration. Paid here and nowhere else, in the step that settles
+   * the rumour and takes it off the board, so no save and continue can see it twice.
+   */
+  private payKeptRumour(): ChoicePayoutView {
+    const reward = rumourKeptReward(this.faction)
+    if (reward.gold > 0) {
+      this.gold += reward.gold
+      this.achievements.recordGoldEarned(reward.gold)
+    }
+    this.generatedSupplyCount += reward.supplies
+    return reward
   }
 
   private rumourCopyContext(source: {
@@ -11169,14 +11200,15 @@ export class GameEngine {
    * record of events and this is a sentence about a decision. The HUD holds the verdict on
    * the rumour card for a couple of ticks alongside it.
    */
-  private announceRumourVerdict(verdict: RumourVerdict): void {
+  private announceRumourVerdict(verdict: RumourVerdict, paid: ChoicePayoutView | null): void {
+    const line = describeRumourVerdict(
+      verdict.kind,
+      verdict.outcome,
+      verdict.committed,
+      this.rumourCopyContext(verdict),
+    )
     this.callbacks.onNotice(
-      describeRumourVerdict(
-        verdict.kind,
-        verdict.outcome,
-        verdict.committed,
-        this.rumourCopyContext(verdict),
-      ),
+      paid ? describeRumourVerdictPaid(line, this.faction, paid) : line,
       verdict.outcome === 'kept' ? 'success' : verdict.committed ? 'danger' : 'warning',
     )
     this.playSound(verdict.outcome === 'kept' ? 'objective' : 'event')
@@ -11208,8 +11240,18 @@ export class GameEngine {
     return pinned.siteId === siteId ? pinned : null
   }
 
-  private buildRumourViews(): ChronicleRumourView[] {
-    return buildChronicleRumourViews(this.generatedBlueprint, this.chronicleCommitments, this.chronicleState.tick)
+  private buildRumourViews(
+    knowledge: Pick<ExpeditionInput, 'faction' | 'discoveredRegionIds' | 'chronicleRegions' | 'contestedRegionIds'>,
+    player: { x: number; z: number },
+    walkSpeed: number,
+  ): ChronicleRumourView[] {
+    // W2-3 — the cards quote the compass's walk and whether it still fits the clock.
+    return buildChronicleRumourViews(this.generatedBlueprint, this.chronicleCommitments, this.chronicleState.tick, {
+      faction: this.faction,
+      travel: (point) => this.expeditionPlanner.measureTravel(knowledge, player, point, walkSpeed),
+      chronicle: this.chronicleState,
+      sinceTick: this.chronicleAccumulator,
+    })
   }
 
   private handleChronicleEvents(events: readonly ChronicleEvent[]): void {

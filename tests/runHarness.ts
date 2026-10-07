@@ -219,6 +219,8 @@ import {
   ensureContractProgress,
   eventCooldownRange,
   findContractTemplate,
+  findRumourCandidates,
+  fitRumourOffer,
   getContractProgress,
   getContractStatus,
   getPinnedRumour,
@@ -238,6 +240,7 @@ import {
   resolveActiveObjectiveNode,
   resolveContract,
   rollEventCooldown,
+  rumourKeptReward,
   selectChronicleAnnouncements,
   selectWeightedEventKind,
   settleDueRumours,
@@ -245,6 +248,7 @@ import {
   skipExclusiveAlternatives,
   threatWaveInterval,
   EVENT_RETRY,
+  RUMOUR_LIMIT,
   type CampaignContractState,
   type ChronicleCommitmentState,
   type ChronicleRumour,
@@ -345,6 +349,7 @@ import {
   type FinalePoint,
 } from '../src/game/world/FinaleDirector.ts'
 import {
+  estimateWalkSeconds,
   getExpeditionGraph,
   planExpeditionRoute,
   type ExpeditionGraph,
@@ -931,6 +936,15 @@ export interface RumourMetrics {
   events: number
   /** Simulated seconds the player spent inside a pinned rumour's square. */
   embodiedSeconds: number
+  /**
+   * W2-3 — fresh candidates the board looked at while an offer was due, and how many of them
+   * the player could not have met from where they stood, so were never offered.
+   */
+  candidatesSeen: number
+  candidatesUnreachable: number
+  /** W2-3 — what kept rumours paid into the purse. Zero while the purse is not modelled. */
+  rewardGold: number
+  rewardRations: number
 }
 
 /**
@@ -1681,6 +1695,10 @@ export function runHarness(options: RunOptions): RunReport {
     brokenWhileCommitted: 0,
     events: 0,
     embodiedSeconds: 0,
+    candidatesSeen: 0,
+    candidatesUnreachable: 0,
+    rewardGold: 0,
+    rewardRations: 0,
   }
   const rumourContext = (): RumourWorldContext => ({
     blueprint,
@@ -4988,13 +5006,43 @@ export function runHarness(options: RunOptions): RunReport {
     rumours.events += settlement.events.length
     for (const verdict of settlement.verdicts) {
       rumours.resolved += 1
-      if (verdict.outcome === 'kept') rumours.kept += 1
-      else {
+      if (verdict.outcome === 'kept') {
+        rumours.kept += 1
+        // W2-3 — the engine's `payKeptRumour`, into this run's purse when it has one.
+        if (sustainOn) {
+          const reward = rumourKeptReward(options.faction)
+          earnGold(reward.gold, 'rumour')
+          player.supplies += reward.supplies
+          rumours.rewardGold += reward.gold
+          rumours.rewardRations += reward.supplies
+        }
+      } else {
         rumours.broken += 1
         if (verdict.committed) rumours.brokenWhileCommitted += 1
       }
     }
-    const offered = offerRumours(commitments, context, rumourRng)
+    // W2-3 — the engine's offer rule: a walk along the compass's itinerary from where the
+    // player stands, at this body's own pace on the legs it has. No forest stride, as in the
+    // engine, which leaves it out on purpose.
+    const from = { x: player.x, z: player.z }
+    const offerSpeed = (shippedKit ? HARNESS_SHIPPED_PLAYER_SPEED : HARNESS_PLAYER_SPEED) *
+      (sustainOn ? playerLegMobility(player.body) : 1)
+    const travel = (point: { x: number; z: number }): number =>
+      estimateWalkSeconds(blueprint, from, point, offerSpeed)
+    if (
+      chronicleState.tick >= commitments.nextOfferTick &&
+      commitments.rumours.length < RUMOUR_LIMIT &&
+      commitments.pinnedRumourId === null
+    ) {
+      const open = new Set(commitments.rumours.map((rumour) => rumour.id))
+      const openKinds = new Set(commitments.rumours.map((rumour) => rumour.kind))
+      for (const candidate of findRumourCandidates(context)) {
+        if (open.has(candidate.id) || openKinds.has(candidate.kind)) continue
+        rumours.candidatesSeen += 1
+        if (!fitRumourOffer(candidate, context, travel)) rumours.candidatesUnreachable += 1
+      }
+    }
+    const offered = offerRumours(commitments, context, rumourRng, travel)
     if (offered) {
       rumours.offered += 1
       rumours.offeredByKind[offered.kind] =

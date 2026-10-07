@@ -96,7 +96,9 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   `lostToEvents` counts W1-1's symptom, a contract abandoned while a random event was up. Also counted: seconds a
   contract waited on its site and why, located fights handed back to make room, and random events stood down.
 - **Rumour feasibility:** for every offer, the atlas's road ETA from where the player stood against the time to its
-  deadline, and the share beyond reach.
+  deadline, and the share beyond reach. W2-3 adds, per run, the candidates the board looked at while an offer was due
+  and how many it turned down as beyond reach (`candidatesSeen`, `candidatesUnreachable`), and what kept rumours paid
+  into the purse (`rewardGold`, `rewardRations`). The pay only lands while `sustain` models the purse.
 - **Companions:** started, recruited, lost and to whom, standing when the finale opened and at the end, their kills.
 - **Doctrine drafts reached** and the **maximum threat tier**, whatever the doctrine arm.
 - **Damage by system** (encounter, finale, random, contract or located event, threat wave, caravan, bleeding) and the
@@ -170,6 +172,49 @@ Over all 360 runs:
 - **Rumours.** 420 of 1 226 offers (34 %) were beyond the player's reach the moment they were offered.
 - **Economy.** About 334 gold earned and 9 spent per run. About 96 health healed per run: healers 17 263,
   rations 10 877, loot 3 505, medicine 2 489, events 283.
+
+### W2-3: rumours the player can meet
+
+The same 360 runs on W2-3, which offers a rumour only when the player can meet it from where they stand, and none
+while one is pinned. The board offers 545 rumours instead of 1 226. The road-only estimate above still calls 66 of
+them late (12 %), every one an escort: it times the walk to the square the cart is in when offered, while the board
+times it to the square where the player would meet the cart. Wins, run lengths and gold do not move: 200 wins against
+201, every cell's p10–p50–p90 within a second, about 334 gold a run.
+
+| Policy · faction | Win / defeat / timeout | Late rumours |
+| --- | --- | ---: |
+| beeline · elf | 14 / 26 / 0 | 8 % |
+| beeline · guard | 14 / 24 / 2 | 25 % |
+| beeline · villain | 22 / 18 / 0 | 0 % |
+| cautious · elf | 12 / 16 / 12 | 16 % |
+| cautious · guard | 10 / 16 / 14 | 25 % |
+| cautious · villain | 19 / 9 / 12 | 1 % |
+| duelist · elf | 35 / 5 / 0 | 5 % |
+| duelist · guard | 36 / 4 / 0 | 5 % |
+| duelist · villain | 38 / 2 / 0 | 0 % |
+
+The review's `commit` arm pins the first rumour within 110 m and walks to it. With honest melee, heavy defence, the
+nearest contract, seeded doctrines and a 1 200 s limit, in the engine's window (`regionWindow: 'engine'`), 40 seeds
+per faction:
+
+| Policy | Offers a run | Kept | Broken (while pinned) | Kept : broken | Wins | Median win |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| beeline before | 4.35 | 1.11 | 2.40 (0.68) | 0.46 | 111 / 120 | 156 s |
+| beeline after | 2.11 | 1.32 | 0.28 (0.09) | 4.8 | 113 / 120 | 117 s |
+| cautious before | 8.68 | 1.18 | 6.61 (1.24) | 0.18 | 96 / 120 | 151 s |
+| cautious after | 2.33 | 1.38 | 0.50 (0.19) | 2.8 | 104 / 120 | 118 s |
+
+After W2-3 every faction keeps at least 2.2 rumours for each one it breaks: beeline elf 4.3, guard 4.1, villain 6.1;
+cautious elf 2.2, guard 2.6, villain 3.4. More are kept because the arm no longer holds its one pin on a rumour it
+cannot meet, and a nearby rumour's clock is 48 s rather than 96 s. That is also why its winning runs are shorter.
+
+With every W1-5 arm on as well (`HARNESS_SHIPPED_ARMS` with `rumourPolicy: 'commit'`, 600 s), kept : broken goes
+from 0.36 to 1.39 for `beeline` and from 0.11 to 0.39 for `cautious`, on 52 % and 68 % fewer offers. The guard's and
+the villain's kept rumours paid 8 to 9 gold a run, 2.4 % to 2.9 % of what their runs earned, and the elf's 0.33 to
+0.57 rations a run against the 1.0 to 1.4 it ate. Here the scripted player's own goals take the wheel from a pinned
+rumour: a healer, a contract's fight, the road cart. It also chases a pinned escort from square to square, so 35 of
+the 41 rumours `beeline` broke were escorts. The `cautious` arm meets the same encounters again each time it retreats
+across a square's edge, as the window section above describes.
 
 ## What each arm is worth
 

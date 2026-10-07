@@ -51,7 +51,7 @@ import {
   FINALE_SUSPENDED_CUE,
   FINALE_DEFEATED_CUE,
 } from '../content/gameCopy.ts'
-import { getBlueprintRegionBounds, getFactionStartHeading, getFactionStartPosition2D, getSiteWorldPosition2D } from '../content/registry.ts'
+import { getFactionStartHeading, getFactionStartPosition2D, getSiteWorldPosition2D } from '../content/registry.ts'
 import {
   createAbilityView,
   createHealthyBody,
@@ -81,12 +81,19 @@ import {
   type ZoneId,
 } from '../types.ts'
 import type { ActiveRunSaveV3, RunConfig } from '../run/runTypes.ts'
-import { getContestedRegionIds, isRegionRazed, type RegionChronicleState } from './Chronicle.ts'
+import {
+  createChronicleState,
+  getContestedRegionIds,
+  isRegionRazed,
+  type ChronicleState,
+  type RegionChronicleState,
+} from './Chronicle.ts'
 import type { CaravanLootView } from './CaravanClaim.ts'
 import {
   CHAMPION_DAMAGE_CAP,
   contractPayout,
   createGeneratedObjectives,
+  estimateRumourReach,
   findContractTemplate,
   getContractProgress,
   getReadyObjectiveNodes,
@@ -94,8 +101,10 @@ import {
   normalizeCampaignContractState,
   normalizeChronicleCommitmentState,
   resolveActiveObjectiveNode,
+  rumourKeptReward,
   rumourProgressShare,
   rumourSecondsRemaining,
+  rumourTargetPoint,
   type CampaignContractState,
   type ChronicleCommitmentState,
   type ChronicleRumour,
@@ -502,11 +511,27 @@ export function buildCampaignContractViews(
   })
 }
 
+/**
+ * W2-3 — what the rumour cards are timed and priced with. Omitted, a card quotes neither,
+ * which is how a fixture with no player and no chronicle stays a plain card.
+ */
+export interface RumourViewOptions {
+  /** Whose board it is: prices the reward for keeping a rumour. */
+  faction?: Faction
+  /** The walk to a point from where the player stands, as the cards quote it. */
+  travel?: (point: { x: number; z: number }) => ChoiceTravelView | null
+  /** The chronicle the escorts' carts roll in, for the card's reach verdict. */
+  chronicle?: ChronicleState
+  /** Seconds since the last chronicle tick, so the verdict counts the next check right. */
+  sinceTick?: number
+}
+
 /** Shared by the live board and restored atlas; expired offers are never destinations. */
 export function buildChronicleRumourViews(
   blueprint: WorldBlueprint,
   commitments: ChronicleCommitmentState,
   tick: number,
+  options: RumourViewOptions = {},
 ): ChronicleRumourView[] {
   const gridLabel = (id: string) => {
     const region = blueprint.regions.find((entry) => entry.id === id)
@@ -519,20 +544,26 @@ export function buildChronicleRumourViews(
       siteLabel: site ? generatedSiteLabel(site.kind) : null, faction: source.faction,
     }
   }
+  const { travel, chronicle } = options
+  const reward = options.faction ? rumourKeptReward(options.faction) : null
   const views: ChronicleRumourView[] = commitments.rumours
     .filter((rumour) => rumourSecondsRemaining(rumour, tick) > 0)
     .map((rumour) => {
       const copy = copyFor(rumour)
-      const bounds = getBlueprintRegionBounds(blueprint, rumour.regionId)
-      const position = rumour.kind === 'sabotage' && rumour.siteId
-        ? getSiteWorldPosition2D(blueprint, rumour.siteId)
-        : bounds ? { x: (bounds.minX + bounds.maxX) / 2, z: (bounds.minZ + bounds.maxZ) / 2 } : undefined
+      const position = rumourTargetPoint(blueprint, rumour)
       return {
         id: rumour.id, kind: rumour.kind, title: describeRumourTitle(rumour.kind),
         task: describeRumourTask(rumour.kind, copy), stake: describeRumourStake(rumour.kind, copy),
         regionLabel: copy.regionLabel, timeRemaining: rumourSecondsRemaining(rumour, tick),
         pinned: commitments.pinnedRumourId === rumour.id, progress: rumourProgressShare(rumour),
         x: position?.x ?? null, z: position?.z ?? null, outcome: null, outcomeText: null,
+        travel: position && travel ? travel(position) : null,
+        // The same rules the offer used, so a card that said «успеешь» meant it.
+        reach: travel && chronicle
+          ? estimateRumourReach(rumour, { blueprint, state: chronicle },
+            (point) => travel(point)?.seconds ?? null, tick, options.sinceTick ?? 0)
+          : null,
+        reward: reward ? { ...reward } : null,
       }
     })
   const verdict = commitments.verdict
@@ -912,7 +943,12 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     heading, objectives, contracts,
     rumours: buildChronicleRumourViews(blueprint,
       normalizeChronicleCommitmentState(restored?.directorState.chronicleCommitments),
-      restored?.chronicleState.tick ?? 0),
+      restored?.chronicleState.tick ?? 0, {
+        faction: config.faction,
+        travel: (point) => estimateChoiceTravel(blueprint, { x: position[0], z: position[2] }, point,
+          travelKnowledge, walkSpeed),
+        chronicle: restored?.chronicleState ?? createChronicleState(),
+      }),
     activeObjectiveId: resolveActiveObjectiveNode(blueprint, config.faction, objectives,
       normalizeCampaignContractState(restored?.directorState.campaignContracts).pinnedNodeId)?.id ?? null,
     discoveredRegionIds: discovered, chronicleRegions, contestedRegionIds,

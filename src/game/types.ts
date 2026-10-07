@@ -287,6 +287,15 @@ export interface ChronicleRumourView {
   /** Set only on a resolved entry, never on a live one. */
   outcome: RumourOutcome | null
   outcomeText: string | null
+  /**
+   * W2-3 — the walk to where the compass points, as a contract card quotes it. Optional so a
+   * hand-built card stays valid; both view builders set it on a live rumour.
+   */
+  travel?: ChoiceTravelView | null
+  /** W2-3 — whether the player can still meet it from where they stand: `yes`, `tight` or `no`. */
+  reach?: 'yes' | 'tight' | 'no' | null
+  /** W2-3 — what keeping it pays. */
+  reward?: ChoicePayoutView | null
 }
 
 export interface WorldEventView {

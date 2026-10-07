@@ -69,6 +69,12 @@ import { runHarness, type RumourPolicy } from './runHarness.ts'
 
 const FACTIONS: readonly Faction[] = ['elf', 'guard', 'villain']
 const RUMOUR_KIND_LIST: readonly RumourKind[] = ['escort', 'defend', 'sabotage']
+/**
+ * W2-3 — a walk that always fits. The tests that use it are about the board's limit, its pin
+ * and its save, so every candidate is put in reach; what reach itself does is tested in
+ * `tests/rumourReach.test.ts`.
+ */
+const NEXT_DOOR = (): number => 0
 
 interface Situation {
   seed: number
@@ -225,7 +231,7 @@ test('at most two rumours are open, at most one is pinned, and the pin survives 
   let offers = 0
   for (let tick = 0; tick < 60; tick += 1) {
     advanceWorld(base, worldRng)
-    if (offerRumours(commitments, base.context, rng)) offers += 1
+    if (offerRumours(commitments, base.context, rng, NEXT_DOOR)) offers += 1
     assert.ok(
       commitments.rumours.length <= RUMOUR_LIMIT,
       `the board grew to ${String(commitments.rumours.length)}`,
@@ -252,7 +258,7 @@ test('pinning is a button: it touches no clock and no random stream', () => {
   const commitments = createChronicleCommitmentState()
   const rng = new RandomStream(deriveSeed(base.seed, 'gameplay:rumour'))
   base.state.tick += 8
-  assert.ok(offerRumours(commitments, base.context, rng), 'nothing was offered to pin')
+  assert.ok(offerRumours(commitments, base.context, rng, NEXT_DOOR), 'nothing was offered to pin')
   const stateAfterOffer = rng.getState()
 
   const realRandom = Math.random
@@ -698,7 +704,7 @@ test('the commitment survives a save, and refuses what it cannot read', () => {
   const worldRng = new RandomStream(deriveSeed(base.seed, 'gameplay:chronicle-save'))
   for (let tick = 0; tick < 24; tick += 1) {
     advanceWorld(base, worldRng)
-    offerRumours(commitments, base.context, rng)
+    offerRumours(commitments, base.context, rng, NEXT_DOOR)
   }
   assert.ok(commitments.rumours.length > 0, 'nothing was offered to save')
   pinRumour(commitments, commitments.rumours[0].id)
@@ -820,20 +826,27 @@ function controlKey(control: Record<string, string>): string {
 
 test('committing changes who holds the map, and the placebo says it was the commitment', () => {
   // **Roadmap 1.3's signal.** Measured with `KOROVANY_COMMITMENT_SEEDS=96`, beeline policy,
-  // 20 Hz, a 300 s limit, factions rotating: region control at the end of the run differed
-  // from the no-input baseline in **53.1 %** of runs — and, restricted to the 57 seeds
-  // where both arms actually reached victory, in **29.8 %**.
+  // 20 Hz, a 360 s limit, factions rotating: region control at the end of the run differed
+  // from the no-input baseline in **49.0 %** of runs — and, restricted to the 80 seeds
+  // where both arms actually reached victory, in **41.3 %**.
   //
   // The number that keeps it honest is the third one. Walking somewhere else is itself an
   // input: the placebo arm, which takes the same detours and pins nothing, already differs
-  // from the baseline in 58.3 % of runs. **Commit against placebo is 58.3 %** (25.5 % over
+  // from the baseline in 47.9 % of runs. **Commit against placebo is 43.8 %** (33.3 % over
   // shared victories), which is the share attributable to the commitment rather than to the
   // legs, and it is what fails if a commitment ever stops doing anything.
   //
-  // For scale, the same sweep counted 191 commitments pinned across 96 runs, 137 kept and
-  // 20 broken after being pinned — a stake the player can actually lose — and 10 083
+  // For scale, the same sweep counted 156 commitments pinned across 96 runs, 122 kept and
+  // 25 broken after being pinned — a stake the player can actually lose — and 5 120
   // simulated seconds spent standing in a square a rumour asked them to stand in. All three
-  // verbs are offered: 231 escorts, 113 sabotages, 103 defences.
+  // verbs are offered: 79 escorts, 75 sabotages, 58 defences.
+  //
+  // W2-3 offers only the rumours the player can meet from where they stand, and none while
+  // one is pinned. Before it, on 412dd0b, the same sweep offered 463 rumours to this arm
+  // (347 of them escorts) and 240 to the no-input arm, against 212 and 128 now. It pinned
+  // 217, kept 120 and broke 80 of them, and the commit arm won 69 runs against 80 now. The
+  // signal was 62.5 % and the attributable share 49.0 %; over shared victories the
+  // attributable share is unchanged, 32.8 % then and 33.3 % now, on as many kept rumours.
   //
   // The committed gate sweeps 18 seeds at a 360 s limit and asserts bands, because a sweep
   // aggregate is a fact about the design rather than a target. The limit was 240 s until
@@ -886,9 +899,11 @@ test('committing changes who holds the map, and the placebo says it was the comm
 
   // Non-vacuity, in three parts. The arms have to have been offered rumours, the treatment
   // has to have pinned and honoured some, and it has to have failed some — a commitment
-  // that could only ever be kept would not be a stake.
+  // that could only ever be kept would not be a stake. W2-3 offers only what the player can
+  // meet, so the no-input arm sees about one rumour in every run or two (128 in 96) rather
+  // than more than one in every run (240 in 96); half a rumour a run is the floor.
   assert.ok(
-    sum(baseline, (report) => report.rumours.offered) > seeds,
+    sum(baseline, (report) => report.rumours.offered) > seeds / 2,
     'the baseline arm was never offered a rumour',
   )
   assert.equal(

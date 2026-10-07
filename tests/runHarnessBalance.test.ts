@@ -55,7 +55,10 @@
  *   harness simulating the whole 3x3 where the engine simulates only the plus inside it
  *   (W1-6's finding): the 3x3 kept the actor budget full for 45 s a run. NPCs took 12
  *   carts, each after a full load, and the squad took none.
- * - **F3, measured.** 420 of 1 226 rumours (34 %) were beyond reach when offered.
+ * - **F3, measured.** 420 of 1 226 rumours (34 %) were beyond reach when offered. W2-3 then
+ *   offered only rumours the player can meet: 66 of 545 (12 %) on the same seeds, every one
+ *   an escort this road-only estimate times to the cart's square rather than to where the
+ *   player meets the cart. Wins, run lengths and gold are unchanged within a run or two.
  * - **F4.** At least one companion reached 343 of 351 finales; the finale is still the
  *   single largest killer (54 of 119 defeats).
  *
@@ -169,11 +172,15 @@ test('the shipped baseline: three factions, three policies, inside the measured 
   const loads = pooled(report.cells, (cell) => cell.caravans.lootsStarted)
   assert.ok(lostToNpcs <= loads, `${lostToNpcs} carts lost to NPCs after only ${loads} loads`)
 
-  // Rumours: offered, and a measurable share of them unreachable in time (F3).
+  // Rumours: offered, and only rarely beyond reach (F3). Before W2-3 a third of the offers
+  // could not be met when they were made (420 of 1 226 at forty seeds, 21 of 94 here); W2-3
+  // offers only what the player can meet, and this independent road-only estimate still
+  // calls a few escorts late (66 of 545, 2 of 44 here) because it times the walk to the
+  // cart's square now rather than to the square the player meets it in.
   const offered = pooled(report.cells, (cell) => cell.rumours.offered)
   const beyond = pooled(report.cells, (cell) => cell.rumours.beyondReach)
   assert.ok(offered > 0)
-  assert.ok(beyond > 0 && beyond < offered, `${beyond} of ${offered} rumours beyond reach`)
+  assert.ok(beyond * 5 < offered, `${beyond} of ${offered} rumours beyond reach`)
 })
 
 // ---------------------------------------------------------------------------
@@ -292,14 +299,19 @@ test('W1-1 in whole runs: a random event up at arrival stands down, and the cont
 })
 
 test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never to the squad', () => {
-  // Under `engage`, the elf on seed 31677 and the guard on seed 182138 each reach a chronicle
-  // ambush whose raiders load their cart. In the baseline's `ignore` arm no NPC ever starts a
-  // load, so these are the runs that show the channel working end to end. The pre-W1-2
-  // touch rule would lose a cart without a load (`lost > loads`), and the old squad rule
-  // would show up in `robbedBySquad`.
+  // Under `engage`, the elf on seed 31677, the guard on seed 190057 and the villain on seed
+  // 79191 each reach a chronicle ambush whose raiders load their cart. In the baseline's
+  // `ignore` arm no NPC ever starts a load, so these are the runs that show the channel
+  // working end to end. The pre-W1-2 touch rule would lose a cart without a load
+  // (`lost > loads`), and the old squad rule would show up in `robbedBySquad`.
+  //
+  // The guard was on seed 182138 until W2-3 changed which rumours the chronicle is offered:
+  // that moves the world's history, and its ambush no longer reaches a load. The three runs
+  // are chosen so that any one of them drifting the same way still leaves a load to see.
   const reports = ([
     [31677, 'elf'],
-    [182138, 'guard'],
+    [190057, 'guard'],
+    [79191, 'villain'],
   ] as const).map(([seed, faction]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,
