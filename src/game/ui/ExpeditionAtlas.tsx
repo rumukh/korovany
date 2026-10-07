@@ -1,9 +1,10 @@
 import { Compass, Map as MapIcon, Maximize, Navigation2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { lockDocumentScroll } from '../../documentScrollLock'
-import { EXPEDITION_COPY as copy, describeExpeditionNotice, formatRegionGridLabel } from '../content/gameCopy'
+import { EXPEDITION_COPY as copy, describeChoiceSummary, describeExpeditionNotice, formatRegionGridLabel } from '../content/gameCopy'
 import { FACTION_INFO, ZONE_INFO, type GameView } from '../types'
 import type { ExpeditionPreference, ExpeditionTargetIdentity, ExpeditionView } from '../world/ExpeditionPlanner'
+import { ChoicePrice } from './ChoicePrice'
 import './ExpeditionAtlas.css'
 
 function routeMessage(expedition: ExpeditionView): string {
@@ -308,6 +309,7 @@ export function ExpeditionAtlas({ view, onClose, onSelect, onPreference }: Exped
               {expedition.targets.map((target) => {
                 const selected = expedition.mode === 'selected' && target.key === expedition.target?.key
                 const followed = expedition.mode === 'campaign' && target.key === expedition.target?.key
+                const price = describeChoiceSummary(target.payout ?? null, target.travel ?? null)
                 return (
                   <button type="button" className="expedition-destination" key={target.key}
                     aria-pressed={selected} onClick={() => onSelect({ kind: target.kind, id: target.id })}>
@@ -316,6 +318,7 @@ export function ExpeditionAtlas({ view, onClose, onSelect, onPreference }: Exped
                       <span>{Math.ceil(target.directDistance)} {copy.straightMeters}</span>
                     </span>
                     <strong>{target.title}</strong>
+                    {price ? <span className="expedition-price">{price}</span> : null}
                     {target.timeRemaining !== null ? <span>{Math.ceil(target.timeRemaining)} {copy.seconds}</span> : null}
                     {target.exclusive ? <span className="expedition-exclusive">{copy.exclusive}</span> : null}
                     {target.committed ? <span>{copy.committed}</span> : null}
@@ -329,6 +332,8 @@ export function ExpeditionAtlas({ view, onClose, onSelect, onPreference }: Exped
                 <h3>{expedition.target.regionLabel} / {expedition.target.title}</h3>
                 {expedition.target.task ? <p>{expedition.target.task}</p> : null}
                 {expedition.target.stake ? <p>{expedition.target.stake}</p> : null}
+                <ChoicePrice payout={expedition.target.payout} timeLimit={expedition.target.timeLimit}
+                  travel={expedition.target.travel} />
               </section>
             ) : null}
           </div>

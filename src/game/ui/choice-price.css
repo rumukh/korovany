@@ -1,0 +1,48 @@
+/* W2-3 — the price under a choice card. The same small type as the stake line above it, and
+   never hidden on narrow screens: it is the half of the card a decision is made with. */
+.choice-price {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.choice-price p {
+  font-size: 0.6rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+/* The route line's parts wrap as whole phrases; inside each phrase the icon flows with the
+   text, so a narrow card never strands an icon on a line of its own. */
+.choice-price-route {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.5rem;
+}
+
+.choice-price svg {
+  display: inline-block;
+  height: 1em;
+  margin-right: 0.3em;
+  vertical-align: -0.15em;
+  width: 1em;
+}
+
+.choice-price-payout {
+  color: var(--cp-success);
+  font-weight: 600;
+}
+
+.choice-price-route {
+  color: var(--cp-text-muted);
+}
+
+.choice-price-danger {
+  color: var(--cp-danger);
+}
+
+/* The journal reads the same cards at its own prose size, so the price does too. */
+.campaign-journal .choice-price p {
+  font-size: 1rem;
+  line-height: 1.5;
+}

@@ -268,6 +268,7 @@ import {
   describeContractWaitsForEvent,
   describeEventHandbackForContract,
   describeRandomEventStoodDown,
+  describeRandomEventSuccess,
   describeRationEaten,
   describeRazedSite,
   describeRout,
@@ -295,7 +296,6 @@ import {
   SHIELD_DROPPED_NOTICE,
   TREASURE_ALREADY_LOOTED_NOTICE,
   WORLD_EVENT_FAILURE_MESSAGES,
-  WORLD_EVENT_SUCCESS_MESSAGES,
   FINALE_COPY,
   describeFinaleDefeat,
   FINALE_RESTORE_WARNING,
@@ -498,6 +498,7 @@ import {
   createCombatMasteryState,
   missingPlayerLegs,
   normalizeCombatMastery,
+  PLAYER_WALK_SPEED,
   playerLegMobility,
   raisePerfectGuard,
   resolveCombatMasteryContact,
@@ -521,7 +522,9 @@ import {
   type CaravanRobber,
 } from './world/CaravanClaim.ts'
 import {
+  CHAMPION_DAMAGE_CAP,
   EVENT_RETRY,
+  WORLD_EVENT_REWARDS,
   advanceContract,
   advanceEventTimer,
   advanceRumourProgress,
@@ -537,6 +540,7 @@ import {
   enemyHealthMultiplier,
   ensureContractProgress,
   eventCooldownRange,
+  eventDamageGain,
   findContractTemplate,
   getContractNodes,
   getContractProgress,
@@ -1447,7 +1451,6 @@ const OUTLINE_PLAYER_HIDE_DISTANCE_SQ = 2.4 * 2.4
 const FIRST_EVENT_AT = 30
 const THREAT_WAVE_FIRST_AT = 240
 const CORPSE_LIFETIME = 12
-const CHAMPION_DAMAGE_CAP = 18
 const DEFEND_HOME_MAX_DISTANCE = 95
 /**
  * Roadmap 1.4 — how close the player has to get before a signature contract goes live.
@@ -1801,14 +1804,6 @@ const LOCATED_EVENT_TIMEOUT = 150
 const MATERIALIZE_INTERVAL = 6
 /** A located fight this close to the player counts as "the player's problem". */
 const THREAT_WAVE_EVENT_RADIUS = 45
-
-const LOCATED_EVENT_REWARDS: Record<ChronicleWorldEventKind, number> = {
-  factionRaid: 110,
-  caravanAmbush: 140,
-  warband: 80,
-  aftermath: 45,
-  beastRaid: 95,
-}
 
 /** Layer 3 — how many of a beast raid's slots go to the settlement's own garrison. */
 const BEAST_RAID_DEFENDERS = 2
@@ -5725,9 +5720,17 @@ export class GameEngine {
   }
 
   private buildExpeditionInput(): ExpeditionInput {
+    const discoveredRegionIds = new Set(this.generatedWorld.discoveredRegionIds.map(String))
+    const player = { x: this.player.position.x, z: this.player.position.z }
+    // W2-3 — the cards time a walk as the compass would chart it, on the legs the player has now.
+    const knowledge = {
+      faction: this.faction, discoveredRegionIds,
+      chronicleRegions: this.chronicleRegions, contestedRegionIds: this.chronicleContestedRegionIds,
+    }
+    const walkSpeed = PLAYER_WALK_SPEED * playerLegMobility(this.body)
     return {
       faction: this.faction,
-      player: { x: this.player.position.x, z: this.player.position.z },
+      player,
       heading: this.cameraYaw,
       objectives: this.objectives,
       activeObjectiveId: this.getActiveGeneratedObjective()?.id ?? null,
@@ -5735,9 +5738,11 @@ export class GameEngine {
         blueprint: this.generatedBlueprint, faction: this.faction,
         objectives: this.objectives, contracts: this.campaignContracts,
         sitePosition: (id) => this.generatedWorld.getSitePosition(id) ?? null,
+        championDamageBonus: this.championDamageBonus,
+        travel: (point) => this.expeditionPlanner.measureTravel(knowledge, player, point, walkSpeed),
       }),
       rumours: this.buildRumourViews(),
-      discoveredRegionIds: new Set(this.generatedWorld.discoveredRegionIds.map(String)),
+      discoveredRegionIds,
       chronicleRegions: this.chronicleRegions,
       contestedRegionIds: this.chronicleContestedRegionIds,
       bridgeAmbush: this.bridgeAmbushExpeditionTarget(),
@@ -6789,7 +6794,7 @@ export class GameEngine {
     this.isSprinting = sprinting
     if (sprinting) this.cancelBowAim()
     const speed =
-      8.2 *
+      PLAYER_WALK_SPEED *
       mobility *
       (sprinting ? 1.65 : 1) *
       (this.shieldActive ? SHIELD_SPEED_MULTIPLIER : 1)
@@ -6839,7 +6844,7 @@ export class GameEngine {
         ? Math.atan2(forward.x, forward.z)
         : Math.atan2(move.x, move.z)
       const travelled = Math.hypot(this.player.position.x - startX, this.player.position.z - startZ)
-      const gaitSpeed = 8.2 * (sprinting ? 1.65 : 1)
+      const gaitSpeed = PLAYER_WALK_SPEED * (sprinting ? 1.65 : 1)
       this.playerGaitPhase = (this.playerGaitPhase + travelled * (sprinting ? 15 : 10) / gaitSpeed) % (Math.PI * 2)
       const motion = delta > 0 ? Math.min(1, travelled / (speed * delta)) : 0
       const stride = this.onGround ? Math.sin(this.playerGaitPhase) * 0.62 * motion : 0
@@ -11929,33 +11934,21 @@ export class GameEngine {
     succeeded: boolean,
   ): string {
     if (!succeeded) return WORLD_EVENT_FAILURE_MESSAGES[kind]
-    if (kind === 'richCaravan') {
-      this.gold += 180
-      this.achievements.recordGoldEarned(180)
-      this.achievements.recordCaravanRobbed(true)
-      return WORLD_EVENT_SUCCESS_MESSAGES.richCaravan
+    // W2-3 — every amount comes from the table the contract cards price from.
+    const reward = WORLD_EVENT_REWARDS[kind]
+    if (reward.gold > 0) {
+      this.gold += reward.gold
+      this.achievements.recordGoldEarned(reward.gold)
     }
-    if (kind === 'defendHome') {
-      this.gold += 90
-      this.achievements.recordGoldEarned(90)
-      this.health = Math.min(this.maxHealth, this.health + 8)
-      return WORLD_EVENT_SUCCESS_MESSAGES.defendHome
-    }
+    if (kind === 'richCaravan') this.achievements.recordCaravanRobbed(true)
+    if (reward.heal > 0) this.health = Math.min(this.maxHealth, this.health + reward.heal)
     if (kind === 'champion') {
-      this.gold += 120
-      this.achievements.recordGoldEarned(120)
-      const damageBonus = Math.min(
-        6,
-        Math.max(0, CHAMPION_DAMAGE_CAP - this.championDamageBonus),
-      )
+      const damageBonus = eventDamageGain(reward, this.championDamageBonus)
       this.championDamageBonus += damageBonus
       this.damage += damageBonus
-      return describeChampionDefeated(damageBonus)
+      return describeChampionDefeated(reward.gold, damageBonus)
     }
-    if (kind === 'rescue') return WORLD_EVENT_SUCCESS_MESSAGES.rescue
-    this.gold += 70
-    this.achievements.recordGoldEarned(70)
-    return WORLD_EVENT_SUCCESS_MESSAGES.bounty
+    return describeRandomEventSuccess(kind, reward)
   }
 
   /**
@@ -11968,7 +11961,7 @@ export class GameEngine {
   ): string {
     const chronicleEvents = event.handBack?.() ?? []
     if (succeeded) {
-      const reward = LOCATED_EVENT_REWARDS[event.kind as ChronicleWorldEventKind]
+      const reward = WORLD_EVENT_REWARDS[event.kind].gold
       this.gold += reward
       this.achievements.recordGoldEarned(reward)
       // W1-2 — taking a chronicle cart's cargo is robbing a caravan. Counted here, where an
@@ -14776,14 +14769,11 @@ export class GameEngine {
   }
 
   private spawnEventLoot(event: WorldEvent): void {
-    const legendary = event.kind === 'champion'
+    const tier = WORLD_EVENT_REWARDS[event.kind].loot
     // A located event was won where it stood, so its spoils stay there.
     const position =
-      legendary || event.anchor === 'located' ? event.markerPos : this.player.position
-    this.spawnLoot(
-      this.rollLootReward(legendary ? 'legendary' : 'uncommon'),
-      position,
-    )
+      tier === 'legendary' || event.anchor === 'located' ? event.markerPos : this.player.position
+    this.spawnLoot(this.rollLootReward(tier), position)
   }
 
   private rollLootReward(minimumRarity: LootRarity): LootReward {
