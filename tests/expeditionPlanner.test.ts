@@ -14,6 +14,7 @@ import {
   validateExpeditionRoute,
   buildExpeditionGuidance,
   buildExpeditionKnowledge,
+  estimateChoiceTravel,
   ExpeditionPlanner,
   normalizeExpeditionState,
   DIRECT_APPROACH_DETOUR_METERS,
@@ -26,6 +27,7 @@ import {
   type ExpeditionRoute,
   type ExpeditionView,
 } from '../src/game/world/ExpeditionPlanner.ts'
+import { PLAYER_WALK_SPEED } from '../src/game/world/CombatMastery.ts'
 import { WORLD_FACTIONS } from '../src/game/world/worldTypes.ts'
 import type { Faction } from '../src/game/types.ts'
 import { formatRegionGridLabel } from '../src/game/content/gameCopy.ts'
@@ -55,14 +57,19 @@ function fixture(faction: Faction = 'villain', seed = 20_260_905, blueprint = ge
   const finalId = blueprint.objectives[faction].finalNodeId
   const objectives = createGeneratedObjectives(blueprint, faction)
     .map((objective) => ({ ...objective, done: objective.id !== finalId }))
+  const discoveredRegionIds = new Set([blueprint.criticalPaths[faction].regionIds[0]])
+  const chronicleRegions = createChronicleRegions(blueprint)
+  const contestedRegionIds = new Set<string>()
+  // W2-3 — the cards are priced the way both view builders price them, on healthy legs.
+  const knowledge = buildExpeditionKnowledge({ faction, discoveredRegionIds, chronicleRegions, contestedRegionIds }, blueprint)
   const input: ExpeditionInput = {
     faction, player, heading: 0, objectives, activeObjectiveId: finalId,
     contracts: buildCampaignContractViews({
       blueprint, faction, objectives, contracts: createCampaignContractState(),
       sitePosition: (id) => getSiteWorldPosition2D(blueprint, id) ?? null,
+      travel: (point) => estimateChoiceTravel(blueprint, player, point, knowledge, PLAYER_WALK_SPEED),
     }),
-    rumours: [], discoveredRegionIds: new Set([blueprint.criticalPaths[faction].regionIds[0]]),
-    chronicleRegions: createChronicleRegions(blueprint), contestedRegionIds: new Set(),
+    rumours: [], discoveredRegionIds, chronicleRegions, contestedRegionIds,
   }
   return { blueprint, input, finalId }
 }
