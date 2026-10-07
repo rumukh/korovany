@@ -190,6 +190,7 @@ import {
   getMaxHealth,
   getMaxStamina,
   getShopItemPrice,
+  getEnemyScalingTier,
   getThreatTier,
   actorGaitCadence,
   actorSpeedForRole,
@@ -243,6 +244,7 @@ import {
   describeCivilianDeath,
   describeDoctrineDraftOpened,
   describeDoctrineTaken,
+  describeEnemiesStronger,
   describeEventHandback,
   describeEventStarted,
   describeExpeditionNotice,
@@ -2368,7 +2370,10 @@ export class GameEngine {
   private upgrades: UpgradeLevels
   private elapsed = 0
   private campaignCompleted = false
+  /** W2-1 — the pacing tier: the HUD's «Угроза», drafts, event cadence and waves. */
   private threatTier = 1
+  /** W2-1 — the clock's tier last announced; derived from `elapsed`, never saved. */
+  private announcedScalingTier = 1
   private nextThreatWaveAt = THREAT_WAVE_FIRST_AT
   private paused = false
   private ended = false
@@ -2879,6 +2884,8 @@ export class GameEngine {
       this.elapsed,
       this.campaignProgressSteps(),
     )
+    // The clock's tier is a function of `elapsed`, so a continue knows what was announced.
+    this.announcedScalingTier = getEnemyScalingTier(this.elapsed)
     this.eventCooldown =
       Math.min(
         this.eventCooldownRange().max,
@@ -10071,24 +10078,41 @@ export class GameEngine {
     })
   }
 
-  /** W2-1 — the tier the rules owe the run right now: the clock or the progress, whichever is further. */
+  /** W2-1 — the pacing tier the rules owe the run right now: the clock or the progress, whichever is further. */
   private threatTierTarget(): number {
     return getThreatTier(this.elapsed, this.campaignProgressSteps())
   }
 
+  /** W2-1 — the tier enemy health and damage follow: the clock's alone. */
+  private enemyScalingTier(): number {
+    return getEnemyScalingTier(this.elapsed)
+  }
+
   private updateThreat(): void {
     const nextTier = this.threatTierTarget()
+    const scalingTier = this.enemyScalingTier()
+    // W2-1 — two rises, each said for what it is. The HUD's tier is pacing and rises with
+    // the clock or with progress; enemies get tougher with the clock alone. A rise the clock
+    // paid for keeps the «сильнее» line, a rise the run earned says so and promises guests
+    // rather than stats, and a clock tick under an already-earned tier still says the
+    // enemies grew, because that is the change the player would otherwise never be told.
+    const enemiesGrew = scalingTier > this.announcedScalingTier
+    this.announcedScalingTier = Math.max(this.announcedScalingTier, scalingTier)
     if (nextTier > this.threatTier) {
       this.threatTier = nextTier
-      // W2-1 — a tier the clock has not reached yet was earned, and the line says so, so
-      // the player learns that finishing things is what brings the guests.
-      const cause = nextTier > getThreatTier(this.elapsed) ? 'progress' : 'time'
+      const cause = nextTier > scalingTier ? 'progress' : 'time'
       this.callbacks.onNotice(
         describeThreatTier(this.threatTier, MAX_THREAT_TIER, cause),
         'warning',
       )
+      if (enemiesGrew && cause === 'progress') {
+        this.callbacks.onNotice(describeEnemiesStronger(scalingTier, MAX_THREAT_TIER), 'warning')
+      }
       this.playSound('event')
       this.emitView(true)
+    } else if (enemiesGrew) {
+      this.callbacks.onNotice(describeEnemiesStronger(scalingTier, MAX_THREAT_TIER), 'warning')
+      this.playSound('event')
     }
     this.updateDoctrineDraft()
 
@@ -11422,12 +11446,13 @@ export class GameEngine {
     return eventCooldownRange(this.threatTier)
   }
 
+  // W2-1 — enemy stats follow the clock's tier only; `this.threatTier` is pacing.
   private enemyHealthMultiplier(allegiance: Allegiance): number {
-    return enemyHealthMultiplier(this.threatTier, hostile(this.faction, allegiance))
+    return enemyHealthMultiplier(this.enemyScalingTier(), hostile(this.faction, allegiance))
   }
 
   private enemyDamageMultiplier(actor: Actor): number {
-    return enemyDamageMultiplier(this.threatTier, actor.hostileToPlayer)
+    return enemyDamageMultiplier(this.enemyScalingTier(), actor.hostileToPlayer)
   }
 
   private spawnThreatWave(scheduledAt: number): number {

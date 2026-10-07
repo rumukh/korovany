@@ -133,6 +133,7 @@ import {
   areAllegiancesHostile,
   createHealthyBody,
   getShopItemPrice,
+  getEnemyScalingTier,
   getThreatTier,
   isBeastRole,
   isRandomWorldEventKind,
@@ -155,6 +156,7 @@ import {
   createDoctrineRunState,
   equipDoctrine,
   getDoctrineOffer,
+  isDoctrineDraftMomentCalm,
   pendingDoctrineDraftIndex,
   resolveDoctrineEffects,
   type DoctrineEffects,
@@ -203,6 +205,7 @@ import {
   campaignObjectivesComplete,
   commitChronicleTicks,
   completeObjectiveEntry,
+  countProgressSteps,
   countRewardedObjectives,
   createCampaignContractState,
   createChronicleCommitmentState,
@@ -768,6 +771,28 @@ export type PlayerKit = 'harness' | 'shipped'
  */
 export type EncounterModel = 'harness' | 'shipped'
 
+/**
+ * W2-1 — what sets the threat tier.
+ *
+ * - `time` is **the default and stays the default**: the clock alone, one tier every three
+ *   minutes, which is the rule every pinned number in this suite was measured under and the
+ *   rule the game had before W2-1. A draft opens on the frame its tier is crossed.
+ * - `progress` is the shipped rule: the pacing tier is the clock or the run's progress,
+ *   whichever is further (`getThreatTier(elapsed, countProgressSteps(...))`), and drives the
+ *   drafts, the director's cadence and the threat waves; a draft waits for a calm moment
+ *   (`isDoctrineDraftMomentCalm`). Enemy health and damage stay on the clock's tier
+ *   (`getEnemyScalingTier`) in both arms. `HARNESS_SHIPPED_ARMS` carries `progress`.
+ *
+ * Both run on one build, so "progress raised the tier" is a comparison against a matched
+ * control rather than against a different checkout of the game.
+ *
+ * `progressAll` is the rejected design, kept as the negative control: progress raises the
+ * enemies' health and damage too. With it, "the earned tier leaves enemy stats alone" is a
+ * comparison rather than a claim — and the gap it measured (beeline 47 % → 30 % wins over
+ * 120 runs per policy) is why the shipped rule keeps stats on the clock.
+ */
+export type Escalation = 'time' | 'progress' | 'progressAll'
+
 /** How close the scripted player has to be for a contract to be counted as under way. */
 export const HARNESS_CONTRACT_RANGE = 6
 /**
@@ -1124,6 +1149,19 @@ export interface BalanceMetrics {
   maxThreatTier: number
   /** `DOCTRINE_DRAFT_TIERS` crossed, whatever the doctrine arm took from them. */
   draftsReached: number
+  /**
+   * W2-1 — every rise of the threat tier: when, to what, and whether the clock had reached
+   * it yet (`time`) or the run's progress got there first (`progress`).
+   */
+  tierRises: Array<{ at: number; tier: number; cause: 'time' | 'progress' }>
+  /** W2-1 — when each doctrine draft actually opened. Empty while the doctrine arm is `off`. */
+  draftsOpenedAt: number[]
+  /** W2-1 — the pacing tier when the finale boss was put on the field, or null if it never was. */
+  finaleTier: number | null
+  /** W2-1 — the clock's tier at the same moment: what the boss's health was scaled by. */
+  finaleScalingTier: number | null
+  /** W2-1 — threat waves by what threw them: the clock, or a closed objective under «Устав дозора». */
+  wavesBy: { clock: number; objective: number }
   /** Damage taken, by the system that spawned the hand that dealt it. */
   damageBySystem: Record<string, number>
   /** The system whose actor landed the last blow, or `bleeding`. */
@@ -1161,6 +1199,8 @@ export interface RunReport {
   eventDirector: EventDirector
   playerKit: PlayerKit
   encounterModel: EncounterModel
+  /** W2-1 — which rule set the threat tier. */
+  escalation: Escalation
   /** Frames per simulated second the run was driven at. */
   hz: number
   outcome: RunOutcome
@@ -1307,13 +1347,16 @@ export interface RunOptions {
   playerKit?: PlayerKit
   /** W1-5 — defaults to `harness`, this file's original encounter stand-in. */
   encounterModel?: EncounterModel
+  /** W2-1 — defaults to `time`, the clock-only tier every pinned number describes. */
+  escalation?: Escalation
 }
 
 /**
  * W1-5 — every shipped arm at once: the configuration the balance baseline is measured in.
  *
  * Honest melee answering heavies, the nearest arm of the fork and seeded drafts are the
- * gameplay review's sweep; the seven W1-5 arms are what that sweep lacked. Rumours are
+ * gameplay review's sweep; the seven W1-5 arms are what that sweep lacked, and W2-1's
+ * `progress` escalation is the tier the game ships with since. Rumours are
  * offered, measured for feasibility and resolved, but not chased: the review's `commit`
  * arm pins every rumour within reach and, with the shipped arms on, measured as a player
  * standing in one square for minutes at a time while the campaign waits, which is a fact
@@ -1333,6 +1376,7 @@ export const HARNESS_SHIPPED_ARMS = {
   eventDirector: 'shipped',
   playerKit: 'shipped',
   encounterModel: 'shipped',
+  escalation: 'progress',
 } as const satisfies Partial<RunOptions>
 
 // ---------------------------------------------------------------------------
@@ -1554,6 +1598,7 @@ export function runHarness(options: RunOptions): RunReport {
   const eventDirector = options.eventDirector ?? 'shipped'
   const playerKit = options.playerKit ?? 'harness'
   const encounterModel = options.encounterModel ?? 'harness'
+  const escalation = options.escalation ?? 'time'
   const squadOn = squadPolicy !== 'off'
   const sustainOn = sustainPolicy !== 'off'
   const healingOn = sustainPolicy === 'shipped'
@@ -1703,11 +1748,19 @@ export function runHarness(options: RunOptions): RunReport {
    * The functions are the shipped ones. `capBreaches` counts a refusal that should be
    * impossible — the policy never asks for a fourth card, so anything but zero means the
    * ledger and the cap disagree.
+   *
+   * W2-1 — under `progress` the anchors follow the run's tier (set by `w15FrameStart`, which
+   * runs first, as `updateThreat` runs before `updateDoctrineDraft`) and wait for a calm
+   * moment: the engine's own predicate, fed this file's bodies. Under `time` it is the
+   * clock-only rule it always was, called where it always was.
    */
   const advanceDoctrines = (): void => {
     if (doctrinePolicy === 'off') return
-    if (advanceDoctrineAnchors(doctrineState, getThreatTier(elapsed))) {
+    const reached = escalation === 'time' ? getThreatTier(elapsed) : threatTier
+    const calm = escalation === 'time' || draftMomentCalm()
+    if (calm && advanceDoctrineAnchors(doctrineState, reached)) {
       doctrineMetrics.draftsOpened = doctrineState.anchors
+      draftsOpenedAt.push(elapsed)
     }
     const index = pendingDoctrineDraftIndex(doctrineState)
     if (index === null) return
@@ -1947,6 +2000,28 @@ export function runHarness(options: RunOptions): RunReport {
   let bledOut = false
   let threatTier = getThreatTier(0)
   let maxThreatTier = threatTier
+  /**
+   * W2-1 — `getEnemyScalingTier`: the clock's tier, which enemy health and damage follow.
+   * `threatTier` above is pacing — events, waves and drafts. Under `time` the two agree;
+   * `progressAll`, the negative control, scales enemies by the pacing tier instead.
+   */
+  const scalingTier = (): number =>
+    escalation === 'progressAll' ? threatTier : getEnemyScalingTier(elapsed)
+  // W2-1 — what the escalation arms report.
+  const tierRises: BalanceMetrics['tierRises'] = []
+  const draftsOpenedAt: number[] = []
+  const wavesBy: BalanceMetrics['wavesBy'] = { clock: 0, objective: 0 }
+  let finaleTier: number | null = null
+  let finaleScalingTier: number | null = null
+  /** `isDraftMomentCalm`: nothing chasing or swinging at the player close by, no finale on. */
+  const draftMomentCalm = (): boolean =>
+    isDoctrineDraftMomentCalm({
+      engagedHostileDistances: actors
+        .filter((actor) =>
+          actor.alive && actor.hostileToPlayer && (actor.playerAggro || actor.actionTargetIsPlayer))
+        .map((actor) => Math.hypot(actor.x - player.x, actor.z - player.z)),
+      finaleEngaged: finaleState.introduced && !finaleState.suspended && finaleWithinArena(),
+    })
   let championDamageBonus = 0
   let interactCooldown = 0
 
@@ -2053,7 +2128,7 @@ export function runHarness(options: RunOptions): RunReport {
       input.maxHp ??
       Math.round(
         actorBaseHealth(input.role) *
-          enemyHealthMultiplier(threatTier, areAllegiancesHostile(options.faction, input.allegiance)) *
+          enemyHealthMultiplier(scalingTier(), areAllegiancesHostile(options.faction, input.allegiance)) *
           Math.max(0.1, input.healthScale ?? 1),
       )
     actorSequence += 1
@@ -3269,7 +3344,7 @@ export function runHarness(options: RunOptions): RunReport {
       return
     }
     nextThreatWaveAt = elapsed + threatWaveInterval(threatTier)
-    spawnThreatWave()
+    if (spawnThreatWave() > 0) wavesBy.clock += 1
   }
 
   /** `updateEvents`: the builders' updates and clocks, materialization, then the director. */
@@ -3678,7 +3753,7 @@ export function runHarness(options: RunOptions): RunReport {
                 maxHp: Math.round(
                   profile.health *
                     enemyHealthMultiplier(
-                      threatTier,
+                      scalingTier(),
                       areAllegiancesHostile(options.faction, entry.faction),
                     ),
                 ),
@@ -3689,6 +3764,10 @@ export function runHarness(options: RunOptions): RunReport {
         actor.id = `generated:${entry.id}`
         actor.playerAggro = plan.hostileToPlayer
         activated.add(entry.id)
+        if (boss && finaleTier === null) {
+          finaleTier = threatTier
+          finaleScalingTier = scalingTier()
+        }
       }
     }
   }
@@ -4119,7 +4198,7 @@ export function runHarness(options: RunOptions): RunReport {
       life: HARNESS_ARROW_LIFE,
       damage:
         (HARNESS_ARROW_DAMAGE + (actor.rageTimer > 0 ? HARNESS_RAGE_DAMAGE : 0)) *
-        enemyDamageMultiplier(threatTier, actor.hostileToPlayer),
+        enemyDamageMultiplier(scalingTier(), actor.hostileToPlayer),
       allegiance: actor.allegiance,
       sourceId: actor.id,
       finale: false,
@@ -4270,7 +4349,7 @@ export function runHarness(options: RunOptions): RunReport {
       if (connected && playerCommitted) melee.hitsWhileCommitted += 1
       if (connected) {
         const base = rollMeleeDamage(actor.role, 'player', () => combatRng.next())
-        strikePlayer(actor, (base + rage) * enemyDamageMultiplier(threatTier, actor.hostileToPlayer), true)
+        strikePlayer(actor, (base + rage) * enemyDamageMultiplier(scalingTier(), actor.hostileToPlayer), true)
       }
       return
     }
@@ -4415,7 +4494,7 @@ export function runHarness(options: RunOptions): RunReport {
   ): void => {
     if (!actor.alive || finaleState.defeated || !finaleWithinArena()) return
     const spec = FINALE_ATTACKS[action.id]
-    const scale = enemyDamageMultiplier(threatTier, actor.hostileToPlayer)
+    const scale = enemyDamageMultiplier(scalingTier(), actor.hostileToPlayer)
     if (spec.speed > 0 && spec.shape !== 'charge') {
       for (const angle of spec.angles) {
         const dx = action.direction.x * Math.cos(angle) + action.direction.z * Math.sin(angle)
@@ -4789,7 +4868,17 @@ export function runHarness(options: RunOptions): RunReport {
 
   /** The frame's opening: the tier, the loot on the ground, the clock's threat waves. */
   const w15FrameStart = (): void => {
-    threatTier = getThreatTier(elapsed)
+    // W2-1 — `updateThreat`'s target: the clock, or under `progress` the clock or the run's
+    // settled steps, whichever is further. The tier never falls, as in the engine; under
+    // `time` this is exactly the old assignment, since the clock only rises.
+    const clockTier = getThreatTier(elapsed)
+    const target = escalation !== 'time'
+      ? getThreatTier(elapsed, countProgressSteps({ graph, objectives }))
+      : clockTier
+    if (target > threatTier) {
+      tierRises.push({ at: elapsed, tier: target, cause: target > clockTier ? 'progress' : 'time' })
+      threatTier = target
+    }
     if (threatTier > maxThreatTier) maxThreatTier = threatTier
     interactCooldown = Math.max(0, interactCooldown - delta)
     if (sustainOn) updateLoot()
@@ -5048,8 +5137,11 @@ export function runHarness(options: RunOptions): RunReport {
   while (elapsed < timeLimit) {
     frames += 1
     elapsed += delta
-    advanceDoctrines()
+    // W2-1 — the engine settles the tier before the draft. `time` keeps this file's
+    // original order, so every pinned run is the run it was.
+    if (escalation === 'time') advanceDoctrines()
     w15FrameStart()
+    if (escalation !== 'time') advanceDoctrines()
 
     // 1. Chronicle, against the weather mix as it stood before the player moved. This is
     //    the engine's order, and it is what the 30/60/144 Hz arms are testing.
@@ -5742,7 +5834,7 @@ export function runHarness(options: RunOptions): RunReport {
       threatTier >= 2 &&
       !objectiveReports.get(id)?.completedAt
     ) {
-      spawnThreatWave()
+      if (spawnThreatWave() > 0) wavesBy.objective += 1
     }
     if (middleNodeIds.has(id) && !contractMetrics.middleOrder.includes(id)) {
       contractMetrics.middleOrder.push(id)
@@ -5820,6 +5912,11 @@ export function runHarness(options: RunOptions): RunReport {
   const balance: BalanceMetrics = {
     maxThreatTier,
     draftsReached: DOCTRINE_DRAFT_TIERS.filter((tier) => maxThreatTier >= tier).length,
+    tierRises,
+    draftsOpenedAt,
+    finaleTier,
+    finaleScalingTier,
+    wavesBy,
     damageBySystem,
     deathSystem: outcome === 'defeat' ? (bledOut ? 'bleeding' : lastAttackerSystem) : null,
     companions: companionMetrics,
@@ -5848,6 +5945,7 @@ export function runHarness(options: RunOptions): RunReport {
     eventDirector,
     playerKit,
     encounterModel,
+    escalation,
     hz,
     outcome,
     elapsed,

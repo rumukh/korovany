@@ -22,6 +22,7 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `eventDirector` | `shipped` | `shipped` | `silent`: no random events, everything else kept |
 | `playerKit` | `harness` | `shipped`: 8.2 m/s, faction damage, the engine's spawn | `harness` |
 | `encounterModel` | `harness` | `shipped`: `createGeneratedEncounterPlans` and the finale | `harness` |
+| `escalation` (W2-1) | `time` | `progress`: pacing follows progress, enemy stats the clock | `time`; `progressAll` |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
   through `selectSquadIntent` and `getSquadFollowSpeed`, fight through the squad's own `selectThreat` pass and the
@@ -72,6 +73,8 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   deadline, and the share beyond reach.
 - **Companions:** started, recruited, lost and to whom, standing when the finale opened and at the end, their kills.
 - **Doctrine drafts reached** and the **maximum threat tier**, whatever the doctrine arm.
+- **W2-1:** every tier rise with its cause (`time` or `progress`), when each draft actually opened, the finale's
+  pacing tier and the clock's tier its boss was scaled by, and threat waves by trigger (clock or closed objective).
 - **Damage by system** (encounter, finale, random, contract or located event, threat wave, caravan, bleeding) and the
   **system behind each death**.
 - `sweepBalance` aggregates them per faction and policy, with the run-length distribution.
@@ -164,6 +167,35 @@ the review's 88 % against 0 %.
 - The generator's own encounters, not the stand-in's, are what make walking past everything dangerous.
 - Events change little, because the shared actor budget is usually already full of encounters when the director
   tries to place one.
+
+## W2-1: escalation by progress
+
+Since W2-1 the shipped arms carry `escalation: 'progress'`: the pacing tier (the HUD's «Угроза», the drafts, the
+director's cadence and the threat waves) is the clock or the run's progress, whichever is further, and enemy health
+and damage stay on the clock's tier. `time` is the rule before it, and `progressAll` is the design that was measured
+and rejected: progress scaling enemy stats as well. Same seeds, 30 Hz, 600 s, 40 seeds per cell:
+
+| Policy · faction | `time` wins | `progress` wins | Drafts per win | `progressAll` wins |
+| --- | ---: | ---: | ---: | ---: |
+| beeline · elf | 15/40 | 13/40 | 2 | 6/40 |
+| beeline · guard | 16/40 | 17/40 | 2 | 13/40 |
+| beeline · villain | 25/40 | 25/40 | 2 | 17/40 |
+| cautious · elf | 12/40 | 11/40 | 2 | 4/40 |
+| cautious · guard | 14/40 | 16/40 | 2 | 9/40 |
+| cautious · villain | 21/40 | 21/40 | 2 | 13/40 |
+| duelist · elf | 38/40 | 36/40 | 2 | 30/40 |
+| duelist · guard | 38/40 | 36/40 | 2 | 29/40 |
+| duelist · villain | 36/40 | 36/40 | 2 | 34/40 |
+
+- Under `time` the median win opened no draft. Under `progress`, 198 of 211 wins opened two or more before the end.
+  Drafts wait for calm: the median delay after the tier that dealt them is 0 s, the p90 6.9 s.
+- The finale is fought at pacing tier 3 with its boss scaled at the clock's tier 1. Under `progressAll` the same boss
+  had a quarter more health, and the finale's defeats are most of the gap in that column.
+- Run length moved by less than ten percent in every cell.
+- «Устав дозора» stays distinct. Runs that held it threw 217 waves on closures and none on the clock; runs without it
+  threw none on closures.
+- `tests/runHarnessEscalation.test.ts` holds these in whole runs. With no card taken and the director silent, a
+  `progress` run is the `time` run to the frame, and a `progressAll` run is not.
 
 ## What it still does not model
 

@@ -48,7 +48,9 @@
  *   healing roughly doubles the fighter's wins — `docs/run-harness.md` has the ablation.
  * - **F1, unchanged.** 306 of 360 runs end inside three minutes and the median doctrine
  *   drafts reached is zero in every cell but cautious elf, where four runs in ten stall to
- *   the time limit.
+ *   the time limit. **W2-1 has since fixed the drafts half:** the tier follows the run's
+ *   progress as well as the clock, so the same runs reach two drafts, while enemy stats stay
+ *   on the clock and the win counts barely move (`tests/runHarnessEscalation.test.ts`).
  * - **F2, measured.** 239 contracts abandoned against 120 started and 115 kept, every one
  *   of them `crowded`: W1-1 took random events out of the cause (11 stood down; the 18 that
  *   were still up could not have made room), but the 3×3 window's own encounters hold the
@@ -116,15 +118,18 @@ test('the shipped baseline: three factions, three policies, inside the measured 
   assert.ok(beeline >= 0.1 && beeline <= 0.9, `beeline won ${beeline}`)
   assert.ok(duelist >= beeline, `duelist ${duelist} should win at least as often as beeline ${beeline}`)
 
-  // Runs are short: a winning run is still the review's two-to-three-minute errand, so the
-  // tier and draft clocks barely start (F1).
+  // Runs are short: a winning run is still the review's two-to-three-minute errand (F1).
+  // W2-1 fixed F1's other half: the tier now follows the run's progress as well as the
+  // clock, so the errand and the contract arm deal the first two drafts on the way to the
+  // finale. Enemy health and damage stay on the clock, which is why the win bands above
+  // did not have to move.
   for (const cell of [...byPolicy('beeline'), ...byPolicy('duelist')]) {
     if (cell.outcomes.victory === 0) continue
     assert.ok(
       cell.victoryLength.p50 >= 45 && cell.victoryLength.p50 <= 240,
       `${cell.policy}/${cell.faction} median win ${cell.victoryLength.p50}`,
     )
-    assert.ok(cell.draftsReached.median <= 1, `${cell.policy}/${cell.faction} drafts`)
+    assert.ok(cell.draftsReached.median >= 2, `${cell.policy}/${cell.faction} drafts`)
   }
 
   // Both ends of a run kill: the road's encounters and the finale's director.

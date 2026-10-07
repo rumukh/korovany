@@ -19,6 +19,7 @@ import test from 'node:test'
 import * as THREE from 'three'
 import {
   describeDoctrineDraftOpened,
+  describeEnemiesStronger,
   describeObjectiveCompleted,
   describeThreatTier,
 } from '../src/game/content/gameCopy.ts'
@@ -36,6 +37,7 @@ import {
   MAX_PROGRESS_THREAT_TIER,
   MAX_THREAT_TIER,
   THREAT_TIER_SECONDS,
+  getEnemyScalingTier,
   getProgressThreatTier,
   getThreatTier,
   type Faction,
@@ -46,6 +48,7 @@ import {
   countProgressSteps,
   createCampaignContractState,
   createGeneratedObjectives,
+  eventCooldownRange,
   restoreThreatTier,
   skipExclusiveAlternatives,
 } from '../src/game/world/CampaignDirector.ts'
@@ -283,6 +286,7 @@ function engineFixture(faction: Faction, options: { elapsed?: number; doctrines?
     objectives,
     elapsed: options.elapsed ?? 30,
     threatTier: 1,
+    announcedScalingTier: getEnemyScalingTier(options.elapsed ?? 30),
     nextThreatWaveAt: 240,
     ended: false,
     actors: [] as FixtureActor[],
@@ -503,4 +507,124 @@ test('the base game keeps its waves on the clock and «Устав дозора»
   vanguard.engine.elapsed = 239.95
   for (let index = 0; index < 600; index += 1) frame(vanguard.engine)
   assert.equal(vanguard.waves.length, 1, 'vanguard was thrown a clock wave')
+})
+
+// ---------------------------------------------------------------------------
+// Pacing and scaling: one tier for attention, the clock's for enemy stats
+// ---------------------------------------------------------------------------
+
+const near = (actual: number, expected: number) => Math.abs(actual - expected) < 1e-9
+
+test('the enemy scaling tier is the clock alone, and the pacing tier never falls below it', () => {
+  for (let elapsed = 0; elapsed <= 1_200; elapsed += 0.5) {
+    assert.equal(getEnemyScalingTier(elapsed), legacyThreatTier(elapsed), `t=${elapsed}`)
+    for (const progress of [0, 1, 2, 3, 9]) {
+      assert.ok(getThreatTier(elapsed, progress) >= getEnemyScalingTier(elapsed))
+    }
+  }
+  // Progress moves the pacing tier and leaves the scaling tier where the clock put it.
+  assert.equal(getThreatTier(60, 2), 3)
+  assert.equal(getEnemyScalingTier(60), 1)
+})
+
+test('enemy health and damage follow the clock even when the run has earned a higher tier', () => {
+  const { engine } = engineFixture('elf', { elapsed: 60 })
+  engine.completeObjective(nodeId('elf', 'start'))
+  engine.completeObjective(nodeId('elf', 'branch'))
+  engine.completeObjective(nodeId('elf', 'contract'))
+  frame(engine)
+  assert.equal(engine.threatTier, 3, 'the run earned tier 3')
+  // The elf's enemies spawn and hit as at tier 1, because the clock is at tier 1.
+  assert.ok(near(engine.enemyHealthMultiplier('guard'), 1))
+  assert.ok(near(engine.enemyDamageMultiplier({ hostileToPlayer: true }), 1))
+  assert.ok(near(engine.enemyHealthMultiplier('elf'), 1), 'friends never scale')
+
+  // Three minutes in, the clock's tier 2 does make them tougher, under the same tier 3.
+  engine.elapsed = THREAT_TIER_SECONDS + 1
+  frame(engine)
+  assert.equal(engine.threatTier, 3)
+  assert.ok(near(engine.enemyHealthMultiplier('guard'), 1.12))
+  assert.ok(near(engine.enemyDamageMultiplier({ hostileToPlayer: true }), 1.09))
+
+  // Negative control: scale by the tier on the HUD and the earned tier inflates their stats.
+  Reflect.set(engine, 'enemyScalingTier', function (this: { threatTier: number }) {
+    return this.threatTier
+  })
+  assert.ok(near(engine.enemyHealthMultiplier('guard'), 1.24))
+  assert.ok(near(engine.enemyDamageMultiplier({ hostileToPlayer: true }), 1.18))
+})
+
+test('event cadence and threat waves follow the tier the run earned', () => {
+  const { engine } = engineFixture('villain', { elapsed: 60 })
+  engine.completeObjective(nodeId('villain', 'start'))
+  engine.completeObjective(nodeId('villain', 'branch'))
+  engine.completeObjective(nodeId('villain', 'alt'))
+  frame(engine)
+  assert.equal(engine.threatTier, 3)
+  // The director's cooldown reads the earned tier: events come sooner after progress.
+  assert.deepEqual(engine.eventCooldownRange(), eventCooldownRange(3))
+  // Control: the clock's tier would have kept the slow tier-1 cadence.
+  assert.notDeepEqual(eventCooldownRange(getEnemyScalingTier(engine.elapsed)), eventCooldownRange(3))
+
+  // A wave is sized by the earned tier too: the production method asks the budget for three.
+  const requests: number[] = []
+  Reflect.set(engine, 'reserveActorSlotsUpTo', (_category: string, count: number) => {
+    requests.push(count)
+    return 0
+  })
+  Reflect.set(engine, 'spawnThreatWave', Reflect.get(GameEngine.prototype, 'spawnThreatWave'))
+  assert.equal(engine.spawnThreatWave(engine.elapsed), 0)
+  assert.deepEqual(requests, [3])
+})
+
+test('each line says what rose: attention for an earned tier, stronger enemies for the clock', () => {
+  const { engine, notices } = engineFixture('guard', { elapsed: 60 })
+  const said = (line: string) => notices.filter((notice) => notice.message === line).length
+  engine.completeObjective(nodeId('guard', 'start'))
+  engine.completeObjective(nodeId('guard', 'branch'))
+  frame(engine)
+  engine.completeObjective(nodeId('guard', 'contract'))
+  frame(engine)
+  assert.equal(said(describeThreatTier(2, MAX_THREAT_TIER, 'progress')), 1)
+  assert.equal(said(describeThreatTier(3, MAX_THREAT_TIER, 'progress')), 1)
+  assert.equal(
+    notices.some((notice) => notice.message.includes('сильнее') || notice.message.includes('крепче')),
+    false,
+    'an earned tier claimed stronger enemies',
+  )
+
+  // The clock passes three minutes under the earned tier 3: the HUD does not move, the
+  // enemies do, and the player is told so once. Non-vacuity: this tick is the one that
+  // changed their stats, so a silent tick here would be a stat change nobody announced.
+  const toughnessBefore = engine.enemyHealthMultiplier('villain')
+  engine.elapsed = THREAT_TIER_SECONDS - 0.05
+  for (let index = 0; index < 20; index += 1) frame(engine)
+  assert.equal(engine.threatTier, 3)
+  assert.ok(engine.enemyHealthMultiplier('villain') > toughnessBefore, 'the clock tick changed nothing')
+  assert.equal(said(describeEnemiesStronger(2, MAX_THREAT_TIER)), 1)
+  engine.elapsed = 2 * THREAT_TIER_SECONDS - 0.05
+  for (let index = 0; index < 20; index += 1) frame(engine)
+  assert.equal(said(describeEnemiesStronger(3, MAX_THREAT_TIER)), 1)
+
+  // At nine minutes the clock overtakes the earned tier: both rise together, and the one
+  // line that says so is the clock's, «сильнее» included — no second line for the same rise.
+  engine.elapsed = 3 * THREAT_TIER_SECONDS - 0.05
+  for (let index = 0; index < 20; index += 1) frame(engine)
+  assert.equal(engine.threatTier, 4)
+  assert.equal(said(describeThreatTier(4, MAX_THREAT_TIER, 'time')), 1)
+  assert.equal(said(describeEnemiesStronger(4, MAX_THREAT_TIER)), 0)
+  assert.ok(describeThreatTier(4, MAX_THREAT_TIER, 'time').includes('сильнее'))
+
+  // Negative control: a continue derives what the clock already announced from `elapsed`,
+  // so restoring at seven minutes says nothing; restoring with the field left at the launch
+  // value would announce two tiers the player had already been told about.
+  const continued = engineFixture('guard', { elapsed: 420 })
+  continued.engine.threatTier = 3
+  for (let index = 0; index < 20; index += 1) frame(continued.engine)
+  assert.equal(continued.notices.filter((notice) => notice.message.startsWith('Время берёт своё')).length, 0)
+  const stale = engineFixture('guard', { elapsed: 420 })
+  stale.engine.threatTier = 3
+  stale.engine.announcedScalingTier = 1
+  for (let index = 0; index < 20; index += 1) frame(stale.engine)
+  assert.equal(stale.notices.filter((notice) => notice.message.startsWith('Время берёт своё')).length, 1)
 })

@@ -1189,8 +1189,11 @@ export const NIGHT_FALL_NOTICE =
   'Смеркается: деревни садятся у костров, зверьё выходит на охоту. До рассвета пара минут.'
 
 /**
- * The threat-tier line. W2-1 — a tier the run *earned* says so, because the rule to learn
- * is that closing objectives is what brings the guests; the clock's own rise keeps its line.
+ * The threat-tier line, for a rise of the tier on the HUD.
+ *
+ * W2-1 — that tier is pacing: events, waves and drafts. Enemies only get tougher with the
+ * clock (`getEnemyScalingTier`), so only a rise the clock paid for says «Враги сильнее». A
+ * rise the run's progress earned says so, and promises attention rather than stats.
  */
 export function describeThreatTier(
   tier: number,
@@ -1198,9 +1201,17 @@ export function describeThreatTier(
   cause: 'time' | 'progress' = 'time',
 ): string {
   if (cause === 'progress') {
-    return `Про пользователя прослышали: угроза ${tier}/${maxTier}. Враги сильнее, событий и набегов больше.`
+    return `Про пользователя прослышали: угроза ${tier}/${maxTier}. Гостей и событий больше, и раздают уставы.`
   }
   return `Угроза растёт: уровень ${tier}/${maxTier}. Враги сильнее, событий и набегов больше.`
+}
+
+/**
+ * W2-1 — the clock's tier rose under one the run had already earned: the HUD does not move,
+ * but the enemies did, and that is the one change a player has to be told about.
+ */
+export function describeEnemiesStronger(clockTier: number, maxTier: number): string {
+  return `Время берёт своё: враги крепче и бьют больнее — по часам угроза уже ${clockTier}/${maxTier}.`
 }
 
 export function describeThreatWave(spawned: number, tier: number): string {
@@ -1681,6 +1692,7 @@ export type HintId =
   | 'doctrines'
   | 'squad'
   | 'threat'
+  | 'threatEarned'
   | 'ability'
   | 'melee'
   | 'evade'
@@ -1781,7 +1793,13 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'success',
   },
   threat: {
-    text: 'Угроза в углу растёт за каждый закрытый пункт, а если тянуть — и по часам, раз в три минуты. Чем она выше, тем злее гости, зато с ней приходят уставы.',
+    text: 'Угроза в углу растёт по часам, раз в три минуты, и тогда враги крепчают. Закрытые пункты поднимают её раньше, но это гости и события, а не сила врагов.',
+    tone: 'warning',
+  },
+  // W2-1 — for every profile, including the ones that learned the old rule: the first time
+  // the tier on the HUD is one the run earned rather than one the clock paid for.
+  threatEarned: {
+    text: 'Угрозу ты заработал: за закрытый пункт гостей и событий больше и раздают уставы. А крепчают враги только по часам — раз в три минуты.',
     tone: 'warning',
   },
   ability: {

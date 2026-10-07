@@ -181,8 +181,11 @@ The threat tier in the corner rises with whichever comes first: the clock, one t
 three minutes, or the run's progress. The required errand and the contract arm you settle,
 kept or failed forward, are a step each, and each step raises the tier by one, up to 4;
 only the clock reaches 5. The camp, the arm you chose past and the finale are not steps. A
-higher tier means tougher, harder-hitting enemies, more frequent events and faster threat
-waves once those start at four minutes. A tier you earned says so: «Про пользователя прослышали…».
+higher tier means more frequent events, bigger and faster threat waves once those start at
+four minutes, and the doctrine drafts below. Enemy health and damage follow the clock's
+tier alone, so a tier you earned brings attention, not tougher enemies, and its notice says
+so: «Про пользователя прослышали…». Every three-minute mark still makes enemies tougher
+and says that too, even when the tier in the corner is already higher: «Время берёт своё…».
 
 Doctrine drafts open at tiers 2, 3 and 4, so a winning run meets two of them on the way to
 its finale. A draft waits for a calm moment, with nothing chasing or swinging at you within

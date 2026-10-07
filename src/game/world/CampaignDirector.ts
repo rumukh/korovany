@@ -429,11 +429,17 @@ export function threatWaveInterval(threatTier: number): number {
   return Math.max(THREAT_WAVE_MIN_INTERVAL, 130 - threatTier * 12)
 }
 
-/** Enemies of the player's faction get tougher with the tier; friends never do. */
+/**
+ * Enemies of the player's faction get tougher with the tier; friends never do.
+ *
+ * W2-1 — the tier passed here is `getEnemyScalingTier`, the clock's, never the pacing tier a
+ * run's progress raises: finishing objectives brings more attention, not tougher enemies.
+ */
 export function enemyHealthMultiplier(threatTier: number, isHostile: boolean): number {
   return isHostile ? 1 + (threatTier - 1) * 0.12 : 1
 }
 
+/** As `enemyHealthMultiplier`, for the damage a hostile deals; the same clock-only tier. */
 export function enemyDamageMultiplier(
   threatTier: number,
   hostileToPlayer: boolean,
