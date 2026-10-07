@@ -54,6 +54,10 @@
  *   off the cargo, the looter holding still and the ambush raiders walking to the cart.
  * - `createGeneratedEncounterPlans` and `FinaleDirector.advanceFinale` — the generator's
  *   own encounters and the finale boss's authored attacks.
+ * - `RegionManager`, built with `GeneratedWorldRuntime`'s options, for the squares the
+ *   engine simulates. That is the five-square plus around the player's square, not the 3x3
+ *   it shows. This follows W1-6's finding, and the fidelity test walks a real runtime over
+ *   the whole map to hold it.
  *
  * ---
  *
@@ -100,9 +104,11 @@
  * 10. **The pinned arms keep what every pinned number was measured with.**
  *    `HARNESS_PLAYER_SPEED` is 6.4 m/s where `updatePlayer` walks at 8.2; the legacy
  *    encounter stand-in senses at 22 m and hunts at 24 m where the engine's soldiers sense
- *    at 15 and hunt at 6.5; and the contract stand-in spends start grace on whichever site
- *    the player stands on, as the engine did before W1-1. The `shipped` kit, the shipped
- *    encounters and the fought contracts are the engine's.
+ *    at 15 and hunt at 6.5; the contract stand-in spends start grace on whichever site
+ *    the player stands on, as the engine did before W1-1; and they simulate the whole 3x3
+ *    visible window, where the engine simulates only the plus inside it (`RegionWindow`).
+ *    The `shipped` kit, the shipped encounters and the fought contracts are the engine's,
+ *    and so is the window they run in.
  *
  * So: a number from this harness describes **the shape of a run** — pacing, exposure,
  * attrition — not the experience of playing one. With the W1-5 arms on it is a shape with
@@ -164,6 +170,7 @@ import {
 } from '../src/game/run/doctrine.ts'
 import { CollisionWorld } from '../src/game/systems/CollisionWorld.ts'
 import { NavigationSystem } from '../src/game/systems/NavigationSystem.ts'
+import { RegionManager } from '../src/game/world/RegionManager.ts'
 import { TerrainSystem } from '../src/game/world/TerrainSystem.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import {
@@ -444,7 +451,11 @@ export const HARNESS_PLAYER_ATTACK_COOLDOWN = 0.42
 export const HARNESS_PLAYER_REACH = 2.6
 /** How far the player can see an event resolve. Governs the exposure metric. */
 export const HARNESS_WITNESS_RADIUS = 60
-/** How far the streaming window reaches, in regions. Matches the engine's 3x3. */
+/**
+ * How far the 3x3 window reaches, in regions. The engine's *visible* set has this radius.
+ * In the pinned arms it is also the *simulated* set, which is not the engine's: see
+ * `RegionWindow`.
+ */
 export const HARNESS_STREAM_RADIUS = 1
 /** Encounter actors spawn when the player comes this close. */
 export const HARNESS_ENCOUNTER_TRIGGER = 34
@@ -788,10 +799,37 @@ export type EncounterModel = 'harness' | 'shipped'
  *
  * `progressAll` is the rejected design, kept as the negative control: progress raises the
  * enemies' health and damage too. With it, "the earned tier leaves enemy stats alone" is a
- * comparison rather than a claim — and the gap it measured (beeline 47 % → 30 % wins over
- * 120 runs per policy) is why the shipped rule keeps stats on the clock.
+ * comparison rather than a claim — and the gap it measured is why the shipped rule keeps
+ * stats on the clock (`tests/runHarnessEscalation.test.ts` has the numbers).
  */
 export type Escalation = 'time' | 'progress' | 'progressAll'
+
+/**
+ * Which squares a run simulates (a follow-up to W1-5, found by W1-6).
+ *
+ * `GeneratedWorldRuntime` builds its `RegionManager` with `visibleRadius: 1` and
+ * `simulationRadius: 1`, and the two sets have different shapes. The visible set is the
+ * 3x3 Chebyshev block around the player's square. The simulated set is only the
+ * five-square plus inside it, Manhattan distance 1. The engine spawns encounters,
+ * materializes situations, freezes the chronicle and routes navigation in the simulated
+ * plus alone: `syncGeneratedRegions`, `updateMaterialization`, `tickChronicle`'s
+ * `frozenRegionIds` and `GeneratedWorldRuntime.update`.
+ *
+ * `square` (the pinned arms) is this file's original window, which simulates the whole
+ * 3x3. Every pinned number was measured in it, so it stays. It is wrong in the same way
+ * the 6.4 m/s walk is: four corner squares of encounters, located fights and frozen
+ * chronicle that the engine does not have. `engine` reads both sets off a real
+ * `RegionManager` built with the runtime's options, and it is the default whenever the
+ * shipped encounters or the fought events are on.
+ */
+export type RegionWindow = 'engine' | 'square'
+
+/** `GeneratedWorldRuntime`'s `RegionManager` options. The fidelity test holds them to it. */
+export const HARNESS_ENGINE_REGION_STREAMING = {
+  visibleRadius: 1,
+  simulationRadius: 1,
+  discoverVisibleRegions: false,
+} as const
 
 /** How close the scripted player has to be for a contract to be counted as under way. */
 export const HARNESS_CONTRACT_RANGE = 6
@@ -1140,6 +1178,22 @@ export interface RumourFeasibility {
 }
 
 /**
+ * How much of the road the generator put in the player's way (a follow-up to W1-5). The
+ * pinned arms count their encounter stand-in here, the shipped arms count
+ * `createGeneratedEncounterPlans`. The finale's own encounter is not counted.
+ */
+export interface EncounterMetrics {
+  /** Encounters that put at least one body on the field, each counted once. */
+  fielded: number
+  /** Bodies the encounters spawned. A square that streams back in fields them again. */
+  actorsSpawned: number
+  /** Live encounter bodies on the field, averaged over the run: how crowded the road was. */
+  meanOnField: number
+  /** Seconds in which the actor budget turned away at least one encounter body. */
+  refusedSeconds: number
+}
+
+/**
  * W1-5 — the balance block. Present on every report, populated by the arms that feed it,
  * and computed without a single draw from any stream, so its presence changes nothing the
  * pinned reports describe.
@@ -1172,6 +1226,7 @@ export interface BalanceMetrics {
   caravans: CaravanMetrics
   contracts: ContractBalanceMetrics
   rumourFeasibility: RumourFeasibility
+  encounters: EncounterMetrics
 }
 
 export interface RunReport {
@@ -1201,6 +1256,8 @@ export interface RunReport {
   encounterModel: EncounterModel
   /** W2-1 — which rule set the threat tier. */
   escalation: Escalation
+  /** The window the run simulated in: `engine` under the shipped encounters or events. */
+  regionWindow: RegionWindow
   /** Frames per simulated second the run was driven at. */
   hz: number
   outcome: RunOutcome
@@ -1349,6 +1406,13 @@ export interface RunOptions {
   encounterModel?: EncounterModel
   /** W2-1 — defaults to `time`, the clock-only tier every pinned number describes. */
   escalation?: Escalation
+  /**
+   * The streaming window (W1-6's finding). Defaults to `engine`, the plus the engine
+   * simulates, whenever `encounterModel` is `shipped` or `eventModel` is `fought`.
+   * Otherwise it defaults to `square`, the 3x3 every pinned number was measured in.
+   * Setting it to `square` under the shipped arms is the control.
+   */
+  regionWindow?: RegionWindow
 }
 
 /**
@@ -1362,6 +1426,11 @@ export interface RunOptions {
  * standing in one square for minutes at a time while the campaign waits, which is a fact
  * about that policy and would swamp the run-length distribution the baseline exists to
  * report. Spread this under a run's own seed, faction and policy.
+ *
+ * The shipped encounters and fought events also switch the run to the engine's streaming
+ * window, `regionWindow: 'engine'`. It is derived rather than listed here, so a run that
+ * turns either of them on by hand gets the engine's window too. Pass `regionWindow:
+ * 'square'` to measure what the pinned window does to these arms.
  */
 export const HARNESS_SHIPPED_ARMS = {
   meleeModel: 'honest',
@@ -1605,6 +1674,9 @@ export function runHarness(options: RunOptions): RunReport {
   const eventsFought = eventModel === 'fought'
   const shippedKit = playerKit === 'shipped'
   const shippedEncounters = encounterModel === 'shipped'
+  // W1-6 — the engine's window whenever its encounters or its fights are on.
+  const regionWindow: RegionWindow =
+    options.regionWindow ?? (shippedEncounters || eventsFought ? 'engine' : 'square')
 
   const blueprint = options.blueprint ?? generateWorld(options.seed)
   // The two placebos. Both leave every site, encounter, road and chronicle seed identical
@@ -1892,22 +1964,11 @@ export function runHarness(options: RunOptions): RunReport {
   let weatherTarget: WeatherKind = weatherKindForBiome(weatherZone)
   const weatherMix: WeatherMix = createWeatherMix(weatherTarget)
 
-  const activeRegionIds = (): string[] => {
-    const current = terrain.getRegionAt(player.x, player.z)
-    if (!current) return []
-    const ids: string[] = []
-    for (const region of terrain.layout.regions) {
-      if (
-        Math.abs(region.coordinate.x - current.coordinate.x) <= HARNESS_STREAM_RADIUS &&
-        Math.abs(region.coordinate.z - current.coordinate.z) <= HARNESS_STREAM_RADIUS
-      ) {
-        ids.push(String(region.id))
-      }
-    }
-    return ids
-  }
-
-  let simulatedRegionIds = new Set(activeRegionIds())
+  // The streaming window. `simulatedRegionIds` is what the engine would be simulating:
+  // encounters, materialization, the chronicle's freeze and navigation all read it. The
+  // pinned `square` window simulates its whole visible block, so there the two are one.
+  const windowAt = createRegionWindow(blueprint, terrain, regionWindow)
+  let simulatedRegionIds = new Set(windowAt(player.x, player.z).simulated)
   navigation.setActiveRegions(simulatedRegionIds)
   discoveredRegionIds.add(regionIdAt(player.x, player.z))
 
@@ -1995,6 +2056,17 @@ export function runHarness(options: RunOptions): RunReport {
     beyondReachShare: 0,
     slack: [],
   }
+  const encounterMetrics: EncounterMetrics = {
+    fielded: 0,
+    actorsSpawned: 0,
+    meanOnField: 0,
+    refusedSeconds: 0,
+  }
+  const fieldedEncounterIds = new Set<string>()
+  /** Live encounter bodies times seconds, divided out into `meanOnField` at the end. */
+  let encounterBodySeconds = 0
+  /** The budget turned an encounter body away on this frame. */
+  let encounterRefusedThisFrame = false
   const damageBySystem: Record<string, number> = {}
   let lastAttackerSystem: string | null = null
   let bledOut = false
@@ -3734,7 +3806,10 @@ export function runHarness(options: RunOptions): RunReport {
           activated.add(entry.id)
           continue
         }
-        if (!reserveSlots('campaign', 1)) return
+        if (!reserveSlots('campaign', 1)) {
+          if (!isFinal) encounterRefusedThisFrame = true
+          return
+        }
         const boss = isFinal && entry.id === finaleIdentity.bossId
         const profile = FINALE_PROFILES[options.faction]
         const actor = spawnEngineActor({
@@ -3767,6 +3842,13 @@ export function runHarness(options: RunOptions): RunReport {
         if (boss && finaleTier === null) {
           finaleTier = threatTier
           finaleScalingTier = scalingTier()
+        }
+        if (!isFinal) {
+          encounterMetrics.actorsSpawned += 1
+          if (!fieldedEncounterIds.has(plan.encounterId)) {
+            fieldedEncounterIds.add(plan.encounterId)
+            encounterMetrics.fielded += 1
+          }
         }
       }
     }
@@ -5063,11 +5145,15 @@ export function runHarness(options: RunOptions): RunReport {
         continue
       }
       triggeredEncounterIds.add(slot.id)
+      encounterMetrics.fielded += 1
       const chronicle = chronicleRegions.get(regionId)
       const beastLed = (chronicle?.beastPressure ?? 0) > 0.55
       const count = Math.min(4, 2 + Math.floor(eventRng.next() * 3))
       for (let index = 0; index < count; index += 1) {
-        if (actors.filter((actor) => actor.alive).length >= HARNESS_MAX_ACTORS) break
+        if (actors.filter((actor) => actor.alive).length >= HARNESS_MAX_ACTORS) {
+          encounterRefusedThisFrame = true
+          break
+        }
         const role: ActorRole = beastLed
           ? (['wolf', 'wolf', 'boar', 'bear'] as ActorRole[])[eventRng.integer(0, 4)]
           : (['soldier', 'soldier', 'scout', 'brute'] as ActorRole[])[
@@ -5128,6 +5214,7 @@ export function runHarness(options: RunOptions): RunReport {
           clearAttempted: false,
           ...legacyActorDefaults(anchorX, anchorZ),
         })
+        encounterMetrics.actorsSpawned += 1
       }
     }
   }
@@ -5462,7 +5549,8 @@ export function runHarness(options: RunOptions): RunReport {
         }
       }
     }
-    const nextActive = new Set(activeRegionIds())
+    const streamWindow = windowAt(player.x, player.z)
+    const nextActive = new Set(streamWindow.simulated)
     if (!sameSet(nextActive, simulatedRegionIds)) {
       const previous = simulatedRegionIds
       simulatedRegionIds = nextActive
@@ -5479,8 +5567,9 @@ export function runHarness(options: RunOptions): RunReport {
     // discovery order starts at the square the player starts on (line above, and it is
     // added first) and then admits whole streamed blocks in layout order, so it is a
     // slightly *wider* and slightly *flatter* path than the engine's. It is a proxy, and
-    // the numbers this module reports about routes are proxy numbers.
-    for (const regionId of simulatedRegionIds) discoveredRegionIds.add(regionId)
+    // the numbers this module reports about routes are proxy numbers. The 3x3 is the
+    // *visible* window in both streaming arms, so the engine window leaves this alone.
+    for (const regionId of streamWindow.visible) discoveredRegionIds.add(regionId)
     if (shippedEncounters) {
       // W1-5 — the generator's own plans, every frame, as `syncGeneratedRegions` does: the
       // finale's square first, so its boss is never the one the budget turns away.
@@ -5496,6 +5585,14 @@ export function runHarness(options: RunOptions): RunReport {
         for (const regionId of simulatedRegionIds) spawnEncounter(regionId)
       }
     }
+    // How crowded the road is, read where the encounters are spawned. Counting only.
+    let encounterBodies = 0
+    for (const actor of actors) {
+      if (actor.alive && actor.system === 'encounter') encounterBodies += 1
+    }
+    encounterBodySeconds += encounterBodies * delta
+    if (encounterRefusedThisFrame) encounterMetrics.refusedSeconds += delta
+    encounterRefusedThisFrame = false
 
     // W1-5 — the road cart and the arrows in flight, ahead of the actors as in `update`.
     if (eventsFought) updateRoadCart()
@@ -5909,6 +6006,7 @@ export function runHarness(options: RunOptions): RunReport {
   feasibility.beyondReachShare =
     feasibility.offered > 0 ? feasibility.beyondReach / feasibility.offered : 0
   if (damageTaken.bleeding > 0) damageBySystem.bleeding = damageTaken.bleeding
+  encounterMetrics.meanOnField = elapsed > 0 ? encounterBodySeconds / elapsed : 0
   const balance: BalanceMetrics = {
     maxThreatTier,
     draftsReached: DOCTRINE_DRAFT_TIERS.filter((tier) => maxThreatTier >= tier).length,
@@ -5925,6 +6023,7 @@ export function runHarness(options: RunOptions): RunReport {
     caravans: caravanMetrics,
     contracts: contractBalance,
     rumourFeasibility: feasibility,
+    encounters: encounterMetrics,
   }
 
   return {
@@ -5946,6 +6045,7 @@ export function runHarness(options: RunOptions): RunReport {
     playerKit,
     encounterModel,
     escalation,
+    regionWindow,
     hz,
     outcome,
     elapsed,
@@ -5985,6 +6085,59 @@ export function runHarness(options: RunOptions): RunReport {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** The squares a run sees and the squares it simulates, for one position of the player. */
+export interface RegionWindowSets {
+  visible: readonly string[]
+  simulated: readonly string[]
+}
+
+/**
+ * The streaming window, as a function of where the player stands.
+ *
+ * `square` is the pinned window, computed exactly as it always was: every square within
+ * Chebyshev distance `HARNESS_STREAM_RADIUS`, in layout order, both seen and simulated,
+ * and nothing at all off the map. `engine` asks a real `RegionManager` built with
+ * `HARNESS_ENGINE_REGION_STREAMING`, and returns the squares in the order its getters
+ * return them, which is the order `syncGeneratedRegions` spawns in. When the player
+ * stands on no square it keeps the last sets, as `GeneratedWorldRuntime.update` does.
+ */
+export function createRegionWindow(
+  blueprint: WorldBlueprint,
+  terrain: TerrainSystem,
+  window: RegionWindow,
+): (x: number, z: number) => RegionWindowSets {
+  if (window === 'square') {
+    return (x, z) => {
+      const current = terrain.getRegionAt(x, z)
+      if (!current) return { visible: [], simulated: [] }
+      const ids: string[] = []
+      for (const region of terrain.layout.regions) {
+        if (
+          Math.abs(region.coordinate.x - current.coordinate.x) <= HARNESS_STREAM_RADIUS &&
+          Math.abs(region.coordinate.z - current.coordinate.z) <= HARNESS_STREAM_RADIUS
+        ) {
+          ids.push(String(region.id))
+        }
+      }
+      return { visible: ids, simulated: ids }
+    }
+  }
+  const manager = new RegionManager(blueprint, undefined, HARNESS_ENGINE_REGION_STREAMING)
+  let currentId: string | null = null
+  let sets: RegionWindowSets = { visible: [], simulated: [] }
+  return (x, z) => {
+    const regionId = terrain.getRegionIdAt(x, z)
+    if (regionId === undefined || String(regionId) === currentId) return sets
+    manager.update(regionId)
+    currentId = String(regionId)
+    sets = {
+      visible: manager.getVisibleRegionIds().map(String),
+      simulated: manager.getSimulatedRegionIds().map(String),
+    }
+    return sets
+  }
+}
 
 /**
  * Roadmap 1.4's placebo: the same campaign, with the fork taken out.
@@ -6564,6 +6717,13 @@ export interface BalanceCell {
     stoodDown: number
   }
   rumours: { offered: number; beyondReach: number; beyondReachShare: number }
+  /** Per-run means of the encounter block. */
+  encounters: {
+    meanFielded: number
+    meanActorsSpawned: number
+    meanOnField: number
+    meanRefusedSeconds: number
+  }
   meanGoldEarned: number
   meanGoldSpent: number
   meanHealed: number
@@ -6661,6 +6821,7 @@ function summarizeCell(
   }
   const events = { random: 0, located: 0, threatWaves: 0, wonWithoutPlayer: 0, stoodDown: 0 }
   const rumours = { offered: 0, beyondReach: 0, beyondReachShare: 0 }
+  const encounters = { meanFielded: 0, meanActorsSpawned: 0, meanOnField: 0, meanRefusedSeconds: 0 }
   let damage = 0
   let kills = 0
   let companionsAtEnd = 0
@@ -6708,6 +6869,10 @@ function summarizeCell(
     events.stoodDown += balance.events.randomStoodDown
     rumours.offered += balance.rumourFeasibility.offered
     rumours.beyondReach += balance.rumourFeasibility.beyondReach
+    encounters.meanFielded += balance.encounters.fielded / runs
+    encounters.meanActorsSpawned += balance.encounters.actorsSpawned / runs
+    encounters.meanOnField += balance.encounters.meanOnField / runs
+    encounters.meanRefusedSeconds += balance.encounters.refusedSeconds / runs
     goldEarned += balance.sustain.goldEarned
     goldSpent += balance.sustain.goldSpent
     healed += balance.sustain.healed
@@ -6744,6 +6909,7 @@ function summarizeCell(
     contracts,
     events,
     rumours,
+    encounters,
     meanGoldEarned: goldEarned / runs,
     meanGoldSpent: goldSpent / runs,
     meanHealed: healed / runs,
