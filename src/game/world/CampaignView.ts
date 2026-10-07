@@ -81,6 +81,7 @@ import {
 } from '../types.ts'
 import type { ActiveRunSaveV3, RunConfig } from '../run/runTypes.ts'
 import { getContestedRegionIds, isRegionRazed, type RegionChronicleState } from './Chronicle.ts'
+import type { CaravanLootView } from './CaravanClaim.ts'
 import {
   createGeneratedObjectives,
   findContractTemplate,
@@ -253,6 +254,8 @@ export interface LiveViewInput {
   bridgeAmbush: BridgeAmbushView | null
   bridgeAmbushX: number | null
   bridgeAmbushZ: number | null
+  /** The nearest cart somebody else is loading within sight; absent means none. */
+  caravanLoot?: CaravanLootView | null
   finale: FinaleView | null
   shopPriceMultiplier: number
   squad: number
@@ -689,6 +692,7 @@ export function buildGameView(input: LiveViewInput): GameView {
     },
     expedition: input.expedition,
     bridgeAmbush: input.bridgeAmbush ? { ...input.bridgeAmbush } : null,
+    caravanLoot: input.caravanLoot ? { ...input.caravanLoot } : null,
     finale: input.finale ? { ...input.finale } : null,
     shopPriceMultiplier: input.shopPriceMultiplier,
     squad: input.squad,
@@ -956,6 +960,9 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     doctrines,
     expedition,
     bridgeAmbush,
+    // Nobody is loading a cart before the engine's first frame, restored run or not: the
+    // channel is bound to live looters and is never saved.
+    caravanLoot: null,
     finale,
     shopPriceMultiplier: 1,
     squad: squadCommand.roster.length,
