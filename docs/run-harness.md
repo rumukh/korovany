@@ -48,6 +48,17 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 - **The finale** is driven by `FinaleDirector.advanceFinale` and `resolveFinaleContactTargets`: tells, footprints,
   charges and volleys, not an ordinary swing.
 
+### Walk speed: the harness's 6.4 m/s is not the engine's 8.2
+
+The engine's `updatePlayer` walks at 8.2 m/s, ×1.65 when sprinting, ×1.14 for an elf in the forest, and slower with
+a lost leg. The harness's own kit, `playerKit: 'harness'`, walks at 6.4 m/s (`HARNESS_PLAYER_SPEED`). That is the
+default and every pinned arm, so every pinned travel time and run length in the suite was walked at 6.4. The number
+was never the engine's; it stays because changing it would move every pinned number. `playerKit: 'shipped'`
+(`HARNESS_SHIPPED_PLAYER_SPEED`) walks at the engine's 8.2 with its multipliers, and so does the baseline below,
+because `HARNESS_SHIPPED_ARMS` carries the shipped kit. A path walked at 6.4 takes 8.2 / 6.4 ≈ 1.28 times as long as
+the engine's walk; fights and waits do not scale. In the ablation the harness kit, which also hits for 28 and spawns
+on the start site, wins as often and takes about 20 s longer per win: a beeline p50 of 128 s against 106 s.
+
 ## Metrics
 
 Every report carries a `balance` block, populated by the arms that feed it. Nothing in it draws from any stream.
