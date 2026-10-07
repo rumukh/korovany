@@ -1,7 +1,9 @@
 # The run harness as a balance instrument
 
 **Status:** W1-5, 2026-10-07. Tests-only: no game behaviour changed. The streaming window was corrected the same
-day, after W1-6 found the shipped arms simulating the whole 3x3; every number below is from the corrected window.
+day in #108, after W1-6 found the shipped arms simulating the whole 3x3. Every number below is from the corrected
+window and **supersedes the baseline published with #106**, which was measured in the 3x3. Its 239 `crowded`
+contract abandonments, and every figure derived from them, came from the harness rather than the game.
 
 `tests/runHarness.ts` drives whole campaigns headlessly through the real generator, terrain, collision, navigation,
 chronicle, campaign director, combat resolver and actor AI. The gameplay review of 2026-10-06 used it for 330 runs and
@@ -24,6 +26,7 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `playerKit` | `harness` | `shipped`: 8.2 m/s, faction damage, the engine's spawn | `harness` |
 | `encounterModel` | `harness` | `shipped`: `createGeneratedEncounterPlans` and the finale | `harness` |
 | `regionWindow` | `square`; `engine` with shipped encounters or fought events | `engine`: the plus | `square` |
+| `commanders` | `inert`: a body and a swing | `shipped`: W1-6's call for men | `legacy`: the call before W1-6 |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
   through `selectSquadIntent` and `getSquadFollowSpeed`, fight through the squad's own `selectThreat` pass and the
@@ -49,6 +52,13 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
   12 s grace. Seed 95029 shows the stand-down in a whole run.
 - **The finale** is driven by `FinaleDirector.advanceFinale` and `resolveFinaleContactTargets`: tells, footprints,
   charges and volleys, not an ordinary swing.
+- **Commanders' call for men (W1-6).** `updateCommander` calls a soldier every 25 s, four per commander each time he
+  is fielded. `legacy` is the rule before W1-6: every commander, all the time, each call borrowing room the budget
+  lends. `shipped` is the rule now: a commander who is not hostile to the player calls only while his own people are
+  fighting, and every call takes a slot out of `campaign`'s own share or waits. The clock, the gate and the admission
+  are exported (`advanceCommanderClock`, `commanderGathers`), and the fidelity test steps them beside the engine's own
+  `updateCommander` frame for frame. Only the guard meets such a commander: the boss slots of the elf's and the
+  villain's finales are the guard's own strongholds, so for the guard they field friendly garrisons, each led by one.
 
 ### Walk speed: the harness's 6.4 m/s is not the engine's 8.2
 
@@ -76,8 +86,8 @@ options. The fidelity test walks a real `GeneratedWorldRuntime` over every squar
 order, and the 3x3 is told apart from it on every square. The harness still lifts the fog on the visible 3x3.
 
 The 3x3 put 17.2 encounter bodies on the road at once against the plus's 11.1, and kept the actor budget full for
-45 s a run, which is what refused the contract builders. With `regionWindow: 'square'`, the shipped arms give the
-first baseline back exactly, cell for cell.
+45 s a run, which is what refused the contract builders. With `regionWindow: 'square'`, the shipped arms give #106's
+baseline back exactly, cell for cell.
 
 **Known engine behaviour, mirrored rather than fixed.** When a square streams back into the plus, the engine refields
 every encounter in it that was not cleared, at full health. Only uniques and cleared encounters are remembered, in the
@@ -102,7 +112,8 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
 - **Damage by system** (encounter, finale, random, contract or located event, threat wave, caravan, bleeding) and the
   **system behind each death**.
 - **Encounters:** how many the generator fielded, the bodies it spawned, how many stood on the road at once on
-  average, and the seconds in which the actor budget refused one. The report's `regionWindow` names the window.
+  average, and the seconds in which the actor budget refused one. The report's `regionWindow` names the window. Also
+  the soldiers commanders called (W1-6), which count on the road once called.
 - `sweepBalance` aggregates them per faction and policy, with the run-length distribution.
 
 ## Running it
@@ -117,7 +128,8 @@ The committed file runs in about 20 s: its sweep takes three seeds per cell and 
 ## Baseline
 
 `HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on `main` at 29adca3, in the
-engine's streaming window.
+engine's streaming window. W1-6 added `commanders: 'shipped'` to the shipped arms. The same 360 runs with it are this
+baseline cell for cell: no friendly garrison fought beside a scripted player long enough to call a soldier.
 
 | Policy · faction | Win / defeat / timeout | Won in p10–p50–p90 | Damage taken | Kills |
 | --- | --- | --- | ---: | ---: |
@@ -156,8 +168,8 @@ Over all 360 runs:
   contract fights deal 3 801.
 - **Contracts.** Every run reached its contract and started it: 360 started, 346 kept, 12 failed and none abandoned;
   two were still running when their run ended. 51 random events stood down for a contract, and 47 located fights were
-  handed back to make room. In the 3x3 the same sweep started 120 and abandoned 239 as `crowded`. The starvation the
-  first baseline reported came from the harness's window, not from the game.
+  handed back to make room. In the 3x3 the same sweep started 120 and abandoned 239 as `crowded`. The starvation
+  #106's baseline reported came from the harness's window, not from the game.
 - **Encounters.** The generator fielded 18.5 encounters per run (20.8 in the 3x3), with 11.1 of its bodies on the
   road at once on average (17.2 in the 3x3). The actor budget never had to refuse one; the 3x3 kept it full for
   45 s a run. A `beeline` or `duelist` run spawns about 70 encounter bodies. A `cautious` run spawns 477 to 1 080,
@@ -199,13 +211,40 @@ give 53/60 against 0/60: the review's 88 % against 0 %.
 - The window barely moves win rates, 30 and 55 in the 3x3 against 28 and 57, and wins come 10 to 15 s later in it.
   What it moved is the contracts, the located fights and how crowded the road is: see the baseline.
 
+## W1-6: commanders and the contract room
+
+`HARNESS_SHIPPED_ARMS` on both arms of the fork, `contractPolicy` `nearest` and `contrary`, with `commanders` at
+`legacy` and then `shipped`; 30 Hz, 600 s, seeds `1 + 7919 n` for n = 0…39, all three policies, 120 runs a row.
+
+| Arm · faction | Arrivals | Started / kept | `crowded` | Calls per run | Wins |
+| --- | ---: | --- | --- | --- | --- |
+| nearest · elf | 120 | 120 / 118 | 0 → 0 | 0 → 0 | 61 → 61 |
+| nearest · guard | 120 | 120 / 108 | 0 → 0 | 0.27 → 0 | 62 → 60 |
+| nearest · villain | 120 | 120 / 120 | 0 → 0 | 0 → 0 | 80 → 80 |
+| contrary · elf | 120 | 120 / 118 | 0 → 0 | 0 → 0 | 55 → 55 |
+| contrary · guard | 120 | 117 / 94 | 3 → 3 | 0.25 → 0 | 63 → 63 |
+| contrary · villain | 120 | 120 / 120 | 0 → 0 | 0 → 0 | 77 → 77 |
+
+- The scripted players walk past the palace strongholds within a call or two, so the old rule called a quarter of a
+  soldier per guard run and decided no contract. Started, kept and abandoned are identical under both rules in every
+  row; guard kills per run move by 0.02, road bodies by less than 0.1, and a guard cell's median win by 2.4 s at most.
+- **Known residual.** The three `crowded` arrivals are one site: seed 1's «Зверьё у домиков» (`cull`), which every
+  policy reaches on the contrary arm. Its window holds 18 bodies of the guard's own garrisons, and a beast raid needs
+  five slots where four are left, under every commander rule, `inert` included. A guard who takes that arm always
+  loses its payout. A follow-up lets the guard's own idle garrisons step out of sight to make room for a contract.
+- The scripted player is what hides the old cost. `tests/commanderReinforcements.test.ts` fields each contract
+  site's window through the engine's own spawner and holds the player 100 s by it before arriving. Over the 240 sites
+  the old rule crowds out 16 of the guard's 80, and 11 with every hostile pack cleared; the shipped rule crowds out
+  one, the same seed 1 site. A person who fights, heals or looks around by the palace before taking the contract
+  pays the old rule's price; a script does not.
+
 ## What it still does not model
 
 The harness header lists these with the bias each one introduces. In short: no props, buildings, trees or water as
 colliders. No player bow, shield, rush, evasion, perfect guard or knockback, so only the blow itself knocks a looter
-off a cart. No flanking, separation, commanders or boar charges. The squad only follows. The sustain policy is a
-script that never buys an upgrade. The bridge ambush, civilians, ambient prowlers, campfires, achievements and the
-profile are not modelled. The pinned arms keep a 6.4 m/s walk, a 22 m sense range, a contract grace from before
-W1-1 and a simulated 3x3, none of them the engine's.
+off a cart. No flanking, separation, commanders' orders and rallies, or boar charges. The squad only follows. The
+sustain policy is a script that never buys an upgrade. The bridge ambush, civilians, ambient prowlers, campfires,
+achievements and the profile are not modelled. The pinned arms keep a 6.4 m/s walk, a 22 m sense range, a contract
+grace from before W1-1, a simulated 3x3 and an inert commander, none of them the engine's.
 
 A number from this harness is a scripted player's, not a person's.

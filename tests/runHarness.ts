@@ -86,12 +86,13 @@
  *    same events — nor would they on one stream, because the harness's route is scripted.
  * 5. **No rendering, audio, camera, hit-stop or particles.** Nothing here can tell you
  *    whether a fight feels good.
- * 6. **Flanking, separation and commanders are still unmeasurable.** Actors steer only
- *    around terrain; nobody keeps an elbow's distance, sights a stranger for a friend,
+ * 6. **Flanking, separation and commanders' orders are still unmeasurable.** Actors steer
+ *    only around terrain; nobody keeps an elbow's distance, sights a stranger for a friend,
  *    obeys or rallies to a commander, or charges like a boar. A commander here is a body
- *    with its role's swing. Without knockback or charges, only the blow itself takes a
- *    looter off a cart, and an ambush raider that reaches its post stands there rather
- *    than wandering round its spawn.
+ *    with its role's swing; W1-6's `commanders` arm adds the one thing that changes the
+ *    actor budget, his call for reinforcements, and the shipped arms turn it on. Without
+ *    knockback or charges, only the blow itself takes a looter off a cart, and an ambush
+ *    raider that reaches its post stands there rather than wandering round its spawn.
  * 7. **The squad only follows.** Hold, Focus and Regroup are never ordered; companions
  *    steer straight at their formation slot with no squad pathing, and a routed companion
  *    falls back on where it spawned, as the engine's does.
@@ -285,12 +286,14 @@ import {
   beastPackShare,
   evaluateMorale,
   evaluatePlayerPursuit,
+  isCommanderGroupEngaged,
   isPacifistRole,
   localGroupShare,
   selectThreat,
   THREAT_PLAYER,
   type AiActor,
   type AiPoint,
+  type AiPositionOf,
   type MoraleBreak,
 } from '../src/game/world/ActorAi.ts'
 import type { FactionObjectiveNode, Territory, WorldBlueprint } from '../src/game/world/worldTypes.ts'
@@ -806,6 +809,80 @@ export const HARNESS_ENGINE_REGION_STREAMING = {
   discoverVisibleRegions: false,
 } as const
 
+/**
+ * W1-6 — what a `commander` does besides swing.
+ *
+ * `inert` (the default) is this file's commander until W1-6: a body with its role's swing,
+ * which every pinned number was measured with. `legacy` is `updateCommander` before W1-6:
+ * every commander called a reinforcement every 25 s from the moment he was fielded, four in
+ * all, each borrowing whatever room the budget would lend. `shipped` is the engine's rule
+ * now: a commander who is not hostile to the player calls only while his own people are
+ * fighting (`isCommanderGroupEngaged`), and every call reserves out of its category's own
+ * share (`ActorBudget.reserveOwn`), never borrowing and never evicting.
+ *
+ * Only the guard meets a commander outside its finale. The boss slots of the elf's and the
+ * villain's finales are the guard's own strongholds, so for the guard they field friendly
+ * garrisons, each led by one. The finale's own commander takes the finale's director and
+ * never calls.
+ */
+export type CommanderModel = 'inert' | 'legacy' | 'shipped'
+
+/** `COMMANDER_REINFORCEMENT_INTERVAL`: seconds between calls. The fidelity test holds it. */
+export const HARNESS_COMMANDER_INTERVAL = 25
+/** `COMMANDER_REINFORCEMENT_LIMIT`: calls per commander each time he is fielded. */
+export const HARNESS_COMMANDER_LIMIT = 4
+/** `COMMANDER_ORDER_RANGE`: whose fight counts as his men's fight. */
+export const HARNESS_COMMANDER_ORDER_RANGE = 18
+
+/** One commander's reinforcement clock, made with his body, as `spawnActor` arms it. */
+export interface CommanderClock {
+  timer: number
+  called: number
+}
+
+export function createCommanderClock(): CommanderClock {
+  return { timer: HARNESS_COMMANDER_INTERVAL, called: 0 }
+}
+
+/** W1-6 — `commanderGathersMen` under each model: whether his clock runs this frame. */
+export function commanderGathers<T extends AiActor & { hostileToPlayer: boolean }>(
+  model: CommanderModel,
+  commander: T,
+  actors: readonly T[],
+  positionOf: AiPositionOf<T>,
+  attacking: (actor: T) => boolean,
+): boolean {
+  if (model === 'inert') return false
+  if (model === 'legacy' || commander.hostileToPlayer) return true
+  return isCommanderGroupEngaged(
+    commander,
+    actors,
+    HARNESS_COMMANDER_ORDER_RANGE,
+    positionOf,
+    attacking,
+  )
+}
+
+/**
+ * W1-6 — one frame of `updateCommander`'s call for men. `gathers` is whether his clock runs
+ * this frame, and `admit` reserves the slot; it is asked only when a call is due and the
+ * limit is not reached. True when a reinforcement takes the field.
+ */
+export function advanceCommanderClock(
+  clock: CommanderClock,
+  delta: number,
+  gathers: boolean,
+  admit: () => boolean,
+): boolean {
+  if (!gathers) return false
+  clock.timer -= delta
+  if (clock.timer > 0) return false
+  clock.timer += HARNESS_COMMANDER_INTERVAL
+  if (clock.called >= HARNESS_COMMANDER_LIMIT || !admit()) return false
+  clock.called += 1
+  return true
+}
+
 /** How close the scripted player has to be for a contract to be counted as under way. */
 export const HARNESS_CONTRACT_RANGE = 6
 /**
@@ -1166,6 +1243,8 @@ export interface EncounterMetrics {
   meanOnField: number
   /** Seconds in which the actor budget turned away at least one encounter body. */
   refusedSeconds: number
+  /** W1-6 — soldiers commanders called onto the field. Counted on the road once called. */
+  reinforcementsCalled: number
 }
 
 /**
@@ -1218,6 +1297,8 @@ export interface RunReport {
   encounterModel: EncounterModel
   /** The window the run simulated in: `engine` under the shipped encounters or events. */
   regionWindow: RegionWindow
+  /** W1-6 — what the commanders did besides swing. */
+  commanders: CommanderModel
   /** Frames per simulated second the run was driven at. */
   hz: number
   outcome: RunOutcome
@@ -1371,6 +1452,11 @@ export interface RunOptions {
    * Setting it to `square` under the shipped arms is the control.
    */
   regionWindow?: RegionWindow
+  /**
+   * W1-6 — defaults to `inert`, the commander every pinned number was measured with: a body
+   * and a swing. `legacy` is the engine's call for men before W1-6, `shipped` after it.
+   */
+  commanders?: CommanderModel
 }
 
 /**
@@ -1402,6 +1488,7 @@ export const HARNESS_SHIPPED_ARMS = {
   eventDirector: 'shipped',
   playerKit: 'shipped',
   encounterModel: 'shipped',
+  commanders: 'shipped',
 } as const satisfies Partial<RunOptions>
 
 // ---------------------------------------------------------------------------
@@ -1632,6 +1719,7 @@ export function runHarness(options: RunOptions): RunReport {
   // W1-6 — the engine's window whenever its encounters or its fights are on.
   const regionWindow: RegionWindow =
     options.regionWindow ?? (shippedEncounters || eventsFought ? 'engine' : 'square')
+  const commanderModel: CommanderModel = options.commanders ?? 'inert'
 
   const blueprint = options.blueprint ?? generateWorld(options.seed)
   // The two placebos. Both leave every site, encounter, road and chronicle seed identical
@@ -2008,6 +2096,7 @@ export function runHarness(options: RunOptions): RunReport {
     actorsSpawned: 0,
     meanOnField: 0,
     refusedSeconds: 0,
+    reinforcementsCalled: 0,
   }
   const fieldedEncounterIds = new Set<string>()
   /** Live encounter bodies times seconds, divided out into `meanOnField` at the end. */
@@ -2054,6 +2143,11 @@ export function runHarness(options: RunOptions): RunReport {
   const reserveSlotsUpTo = (category: ActorBudgetCategory, count: number): number => {
     actorBudget.sync(budgetUsage())
     return actorBudget.reserveUpTo(category, count)
+  }
+  /** W1-6 — `reserveOwnActorSlots`: the category's own share only, nothing borrowed. */
+  const reserveOwnSlots = (category: ActorBudgetCategory, count: number): boolean => {
+    actorBudget.sync(budgetUsage())
+    return actorBudget.reserveOwn(category, count)
   }
   const availableSlots = (category: ActorBudgetCategory): number => {
     actorBudget.sync(budgetUsage())
@@ -4656,6 +4750,43 @@ export function runHarness(options: RunOptions): RunReport {
   }
 
   /**
+   * W1-6 — `updateCommander`'s call for men. Each commander's clock is made with his body,
+   * so a commander the streamer fields again calls again, as the engine's fresh actor does.
+   * The call takes his position's square and his side, and joins the road as one of the
+   * encounter's bodies.
+   */
+  const commanderClocks = new WeakMap<HarnessActor, CommanderClock>()
+  const stepCommander = (actor: HarnessActor): void => {
+    let clock = commanderClocks.get(actor)
+    if (!clock) {
+      clock = createCommanderClock()
+      commanderClocks.set(actor, clock)
+    }
+    const gathers = commanderGathers(
+      commanderModel,
+      actor,
+      actors,
+      actorPoint,
+      (member) => member.actionPhase !== 'idle',
+    )
+    const category = actor.budgetCategory
+    const called = advanceCommanderClock(clock, delta, gathers, () =>
+      commanderModel === 'shipped' ? reserveOwnSlots(category, 1) : reserveSlots(category, 1))
+    if (!called) return
+    const angle = (clock.called - 1) * 1.9
+    spawnEngineActor({
+      allegiance: actor.allegiance,
+      role: 'soldier',
+      x: actor.x + Math.sin(angle) * 3.2,
+      z: actor.z + Math.cos(angle) * 3.2,
+      system: actor.system,
+      budget: category,
+      hostileToPlayer: actor.hostileToPlayer,
+    })
+    encounterMetrics.reinforcementsCalled += 1
+  }
+
+  /**
    * One `engine`-model body, one frame: `updateActors`' order — timers, stance, morale on
    * its own clock, the action in flight, stagger, ropes, the rout — then either the squad's
    * `selectSquadIntent` or the world's `selectThreat`, at the engine's own ranges.
@@ -4683,6 +4814,11 @@ export function runHarness(options: RunOptions): RunReport {
         actor.orderX = null
         actor.orderZ = null
       }
+    }
+    // W1-6 — where `updateActors` calls `updateCommander`: after the finale's own bodies,
+    // before morale, and never while he is staggered.
+    if (commanderModel !== 'inert' && actor.role === 'commander' && actor.reaction !== 'stagger') {
+      stepCommander(actor)
     }
 
     actor.moraleTimer -= delta
@@ -5948,6 +6084,7 @@ export function runHarness(options: RunOptions): RunReport {
     playerKit,
     encounterModel,
     regionWindow,
+    commanders: commanderModel,
     hz,
     outcome,
     elapsed,
@@ -6625,6 +6762,8 @@ export interface BalanceCell {
     meanActorsSpawned: number
     meanOnField: number
     meanRefusedSeconds: number
+    /** W1-6 — soldiers commanders called, per run. */
+    meanReinforcements: number
   }
   meanGoldEarned: number
   meanGoldSpent: number
@@ -6723,7 +6862,13 @@ function summarizeCell(
   }
   const events = { random: 0, located: 0, threatWaves: 0, wonWithoutPlayer: 0, stoodDown: 0 }
   const rumours = { offered: 0, beyondReach: 0, beyondReachShare: 0 }
-  const encounters = { meanFielded: 0, meanActorsSpawned: 0, meanOnField: 0, meanRefusedSeconds: 0 }
+  const encounters = {
+    meanFielded: 0,
+    meanActorsSpawned: 0,
+    meanOnField: 0,
+    meanRefusedSeconds: 0,
+    meanReinforcements: 0,
+  }
   let damage = 0
   let kills = 0
   let companionsAtEnd = 0
@@ -6775,6 +6920,7 @@ function summarizeCell(
     encounters.meanActorsSpawned += balance.encounters.actorsSpawned / runs
     encounters.meanOnField += balance.encounters.meanOnField / runs
     encounters.meanRefusedSeconds += balance.encounters.refusedSeconds / runs
+    encounters.meanReinforcements += balance.encounters.reinforcementsCalled / runs
     goldEarned += balance.sustain.goldEarned
     goldSpent += balance.sustain.goldSpent
     healed += balance.sustain.healed

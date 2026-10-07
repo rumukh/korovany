@@ -335,6 +335,32 @@ test('the window arm: the shipped arms simulate the engine\'s plus, and the 3x3 
   assert.ok(refused(plus) < refused(square), `refused ${refused(plus)} s in the plus, ${refused(square)} s in the 3x3`)
 })
 
+test('W1-6 in whole runs: the guard\'s own garrisons call for men only in a fight', () => {
+  // Seed 95029: the guard's road to «Домики жгут» runs past the two palace strongholds,
+  // whose friendly commanders called a soldier under the old rule while nobody fought. The
+  // shipped rule calls nobody there, and the contract is the same contract. The `inert`
+  // commander, a body and a swing, is what every pinned number was measured with.
+  const options = {
+    ...HARNESS_SHIPPED_ARMS,
+    seed: 95029,
+    faction: 'guard',
+    policy: 'beeline',
+    hz: 30,
+    timeLimit: 300,
+  } as const
+  const shipped = runHarness(options)
+  const legacy = runHarness({ ...options, commanders: 'legacy' })
+  const inert = runHarness({ ...options, commanders: 'inert' })
+  assert.equal(shipped.commanders, 'shipped')
+  assert.equal(shipped.balance.encounters.reinforcementsCalled, 0, 'an idle garrison called a soldier')
+  assert.ok(legacy.balance.encounters.reinforcementsCalled >= 1, 'the old rule called nobody: the arm is not wired')
+  assert.equal(inert.balance.encounters.reinforcementsCalled, 0)
+  for (const report of [shipped, legacy, inert]) {
+    assert.equal(report.balance.contracts.started, 1)
+    assert.equal(report.balance.contracts.abandoned, 0)
+  }
+})
+
 test('the arms leave the pinned run alone, and the shipped kit walks the engine\'s road', () => {
   const base = { seed: 424242, faction: 'elf', policy: 'beeline', hz: 60, timeLimit: 40 } as const
   const omitted = runHarness(base)
@@ -348,6 +374,7 @@ test('the arms leave the pinned run alone, and the shipped kit walks the engine\
     playerKit: 'harness',
     encounterModel: 'harness',
     regionWindow: 'square',
+    commanders: 'inert',
   })
   assert.deepEqual(explicit, omitted, 'the declared defaults must be the defaults')
   assert.equal(omitted.balance.companions.started, 0)

@@ -444,6 +444,7 @@ import {
   findCivilianAlarm,
   flankApproachAngle,
   flankBlend,
+  isCommanderGroupEngaged,
   isPacifistRole,
   localGroupShare,
   playerEngagementRank,
@@ -8965,12 +8966,16 @@ export class GameEngine {
 
   private updateCommander(actor: Actor, delta: number): void {
     this.broadcastCommanderOrder(actor)
+    if (!this.commanderGathersMen(actor)) return
     actor.reinforcementTimer -= delta
     if (actor.reinforcementTimer > 0) return
     actor.reinforcementTimer += COMMANDER_REINFORCEMENT_INTERVAL
     if (
       actor.reinforcementsCalled >= COMMANDER_REINFORCEMENT_LIMIT ||
-      !this.reserveActorSlots(actor.budgetCategory, 1)
+      // W1-6 — out of his own side's share only: a summons never borrows the room a
+      // contract or a located fight would stage in, and never pushes anyone out for it.
+      // With no room it waits for the next call, as it always has.
+      !this.reserveOwnActorSlots(actor.budgetCategory, 1)
     ) {
       return
     }
@@ -8997,6 +9002,30 @@ export class GameEngine {
     if (actor.mesh.position.distanceTo(this.player.position) < 35) {
       this.callbacks.onNotice(REINFORCEMENTS_ORDERED_NOTICE, 'warning')
     }
+  }
+
+  /**
+   * W1-6 — whether a commander's reinforcement clock runs this frame.
+   *
+   * One hostile to the player keeps the old rule: the men he gathers are part of the fight
+   * the player walks into, so he gathers them whether or not anyone is swinging yet. One
+   * who is not — the guard's own garrisons at the two palace strongholds the elves and the
+   * villain march on — calls for men only while his own are fighting, and his clock stands
+   * still in between. He used to call four the moment his square streamed in, every time it
+   * did, with nobody to fight, and those idle garrisons were what filled the room a guard
+   * contract nearby needed.
+   */
+  private commanderGathersMen(commander: Actor): boolean {
+    return (
+      commander.hostileToPlayer ||
+      isCommanderGroupEngaged(
+        commander,
+        this.actors,
+        COMMANDER_ORDER_RANGE,
+        (actor) => actor.mesh.position,
+        (actor) => actor.action !== null,
+      )
+    )
   }
 
   /**
@@ -11463,6 +11492,15 @@ export class GameEngine {
   ): number {
     this.actorBudget.sync(this.actorUsageByCategory())
     return this.actorBudget.reserveUpTo(category, count)
+  }
+
+  /**
+   * W1-6 — a reservation out of the category's own share alone: nothing borrowed from the
+   * categories below it, and nobody made to yield. For a summons that can wait.
+   */
+  private reserveOwnActorSlots(category: ActorBudgetCategory, count: number): boolean {
+    this.actorBudget.sync(this.actorUsageByCategory())
+    return this.actorBudget.reserveOwn(category, count)
   }
 
   /** Frees room for a higher-priority category. Ambient is asked first, by design. */
