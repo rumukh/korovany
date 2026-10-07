@@ -1,5 +1,10 @@
 import { SITE_PRESENTATIONS } from './registry.ts'
 import { getDoctrineDefinition } from '../run/doctrine.ts'
+import {
+  RUN_COMPLETION_REWARD,
+  type RunCompletionRewardBreakdown,
+  type RunCompletionRewardInput,
+} from '../run/profile.ts'
 import { computeRunRulesetFingerprint } from '../run/ruleset.ts'
 import type {
   ActorRole,
@@ -1458,6 +1463,74 @@ export function describeRunEpilogue(
   }
 }
 
+/**
+ * W1-4 — the end screen's receipt: the profile reward, line by line, in the words the hint
+ * promised. Amounts come from `computeRunCompletionRewardBreakdown`, so this file only names
+ * them; it never recomputes a number the archive did not pay.
+ */
+export interface RunRewardLine {
+  id: keyof Omit<RunCompletionRewardBreakdown, 'total'>
+  label: string
+  amount: number
+}
+
+export const RUN_REWARD_LINES_LABEL = 'Из чего сложилась награда'
+
+const PROFILE_COIN_FORMS: RussianCountForms = ['монета', 'монеты', 'монет']
+
+export function describeRunRewardLines(
+  summary: RunCompletionRewardInput,
+  breakdown: RunCompletionRewardBreakdown,
+): RunRewardLine[] {
+  const rules = RUN_COMPLETION_REWARD
+  const kills = String(summary.kills)
+  const gold = String(summary.endingGold)
+  const objectiveSteps = rules.objectiveCap / rules.coinsPerObjective
+  return [
+    {
+      id: 'completion',
+      label: summary.status === 'victory' ? 'Суть выполнена' : 'Труп тоже 3Д — за попытку',
+      amount: breakdown.completion,
+    },
+    {
+      id: 'kills',
+      label:
+        breakdown.kills >= rules.killCap
+          ? `Побед — ${kills}: больше ${String(rules.killCap)} за драки не платят`
+          : summary.kills === 0
+            ? 'Побед — 0: пацифизм не оплачивается'
+            : `Побед — ${kills}: монета за каждые ${String(rules.killsPerCoin)}`,
+      amount: breakdown.kills,
+    },
+    {
+      id: 'objectives',
+      label: `Суть такова: ${String(summary.objectivesCompleted)} из ${String(objectiveSteps)}`,
+      amount: breakdown.objectives,
+    },
+    {
+      id: 'gold',
+      label:
+        breakdown.gold >= rules.goldCap
+          ? `Золото — ${gold}: больше ${String(rules.goldCap)} из кошелька не вытрясти`
+          : summary.endingGold === 0
+            ? 'Кошелёк пуст: всё ушло торговцу, как в Daggerfall'
+            : breakdown.gold === 0
+              ? `Золото — ${gold}: на монету не наскрёб`
+              : `Золото — ${gold}: монета за десяток`,
+      amount: breakdown.gold,
+    },
+  ]
+}
+
+/** The shop's line under the purse: what banking it is worth, at the same bounded rate. */
+export function describePurseReward(coins: number): string {
+  if (coins <= 0) return 'Десяток не набрался: профилю пока ничего.'
+  const amount = `+${formatRussianCount(coins, PROFILE_COIN_FORMS)} профиля`
+  return coins >= RUN_COMPLETION_REWARD.goldCap
+    ? `Доживёт до конца похода — ${amount}, больше не дают.`
+    : `Доживёт до конца похода — ${amount}.`
+}
+
 // ---------------------------------------------------------------------------
 // Diegetic first-time lines
 // ---------------------------------------------------------------------------
@@ -1577,7 +1650,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'success',
   },
   gold: {
-    text: 'Золото тратится у торговца: лечение, протезы, заточка. Что доживёт до конца забега, вернётся монетами профиля — на них открываются припасы к следующему.',
+    text: 'Золото тратится у торговца: лечение, протезы, заточка. Что доживёт до конца забега, вернётся монетами профиля — монета за десяток, но не больше 15 за поход.',
     tone: 'success',
   },
   upgrades: {

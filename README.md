@@ -38,6 +38,8 @@ selectors. Previously stored original/low/balanced choices are ignored.
 foliage, weather and camera effects remain independently configurable, including
 previously saved effect-off choices. Bloom-off uses the real no-post path.
 Interface preferences do not replace or reset campaign saves.
+On desktop, the right-hand HUD column scrolls rather than slipping under the
+mouse-capture card, and notices start past the zone header instead of under its pause button.
 Faction launch cards come first, above seed and starting-gift customization.
 Theme, effect, audio and interface controls are grouped under **Настройки** at
 the bottom of the main menu; the pause dialog keeps its live controls.
@@ -148,6 +150,16 @@ gets no such window because it defends the road cart, and knocking a looter off 
 earns its bounded caravan aid. The chronicle's ambushed carts follow the same rules, and
 taking their cargo counts toward caravan achievements. An emptied road cart says who
 emptied it. None of this is saved: a continue brings the escorts and the raiders back.
+
+## Profile rewards
+
+A finished run pays profile coins once, when it is archived: 45 for a victory or
+12 for a defeat, one coin per four kills (up to 25), four per closed campaign step
+(up to 20), and one per ten unspent gold (up to 15). An abandoned run pays nothing,
+and suspend/continue cannot refill the purse. The end screen itemises the four
+lines and the shop shows what the current purse would add. The purse cap stays
+below the 33-coin gap between victory and defeat, so hoarding never beats buying
+what wins.
 
 ## Development
 
