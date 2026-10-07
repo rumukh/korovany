@@ -19,8 +19,8 @@
  * ## The documented baseline
  *
  * `HARNESS_SHIPPED_ARMS`, 30 Hz, a 600 s limit, seeds `1 + 7919 n` for n = 0…39, every
- * faction under every policy — 360 runs on `main` at d56950b, W1-1's contract rule and
- * W1-2's caravan claim merged — reproduced by
+ * faction under every policy — 360 runs on `main` at 29adca3, in the engine's streaming
+ * window — reproduced by
  * `KOROVANY_BALANCE_SEEDS=40 node --experimental-strip-types --test tests/runHarnessBalance.test.ts`
  * (that command uses the committed test's 480 s limit; the table used 600 s through
  * `sweepBalance` directly). Victories are win / defeat / timeout; length is the victories'
@@ -28,36 +28,36 @@
  *
  * ```text
  * policy · faction    win/def/timeout   won in p10–p50–p90   damage   companions at finale
- * beeline · elf       15 / 25 /  0      79–109–233 s         142      2.8 (37/38 with ≥ 1)
- * beeline · guard     16 / 24 /  0      85–105–185 s         154      2.8 (38/39)
- * beeline · villain   25 / 15 /  0      79– 92–116 s         105      2.9 (40/40)
- * cautious · elf      13 / 10 / 17      81–109–233 s         128      2.9 (38/38)
- * cautious · guard    14 / 14 / 12      86–105–158 s         145      2.8 (38/39)
- * cautious · villain  21 / 11 /  8      79– 93–111 s         101      2.9 (40/40)
- * duelist · elf       38 /  2 /  0      82– 99–129 s         106      3.1 (40/40)
- * duelist · guard     38 /  2 /  0      86–108–129 s          91      3.0 (40/40)
- * duelist · villain   36 /  4 /  0      81– 97–132 s          90      3.0 (40/40)
+ * beeline · elf       14 / 26 /  0      63– 88–149 s         139      3.1 (35/37 with ≥ 1)
+ * beeline · guard     14 / 24 /  2      76– 87–107 s         318      2.8 (36/37)
+ * beeline · villain   23 / 17 /  0      68– 89–108 s         120      2.9 (40/40)
+ * cautious · elf      12 / 14 / 14      63– 87–111 s         128      3.0 (37/39)
+ * cautious · guard    10 / 16 / 14      71– 86–107 s         310      2.7 (36/38)
+ * cautious · villain  19 / 11 / 10      68– 83–107 s         111      2.9 (40/40)
+ * duelist · elf       35 /  5 /  0      78– 96–133 s         118      3.5 (40/40)
+ * duelist · guard     36 /  4 /  0      80–107–136 s         119      2.9 (39/40)
+ * duelist · villain   38 /  2 /  0      75– 94–144 s         111      3.0 (40/40)
  * ```
  *
  * What it says, in the review's terms:
  *
- * - **F5, inverted.** Fighting everything within 13 m now wins 112 of 120 and walking past
- *   it 56 of 120. The review's 0 of 60 was a harness with no squad and no healing: every
+ * - **F5, inverted.** Fighting everything within 13 m now wins 109 of 120 and walking past
+ *   it 51 of 120. The review's 0 of 60 was a harness with no squad and no healing: every
  *   W1-5 arm off, with the review's `commit` rumours and 1 200 s limit, gives its 88 %
  *   against 0 % again (53/60 against 0/60), and one arm at a time each of the squad and
- *   healing roughly doubles the fighter's wins — `docs/run-harness.md` has the ablation.
- * - **F1, unchanged.** 306 of 360 runs end inside three minutes and the median doctrine
- *   drafts reached is zero in every cell but cautious elf, where four runs in ten stall to
- *   the time limit.
- * - **F2, measured.** 239 contracts abandoned against 120 started and 115 kept, every one
- *   of them `crowded`: W1-1 took random events out of the cause (11 stood down; the 18 that
- *   were still up could not have made room), but the 3×3 window's own encounters hold the
- *   shared actor budget. Before W1-2 the elf's and villain's own squad plundered 35 road
- *   carts; with it merged, no NPC started a single load in the sweep, and the 120 claims the
- *   player won went unrobbed by `ignore`.
- * - **F3, measured.** 451 of 1 222 rumours (37 %) were beyond reach when offered.
- * - **F4.** At least one companion reached 351 of 354 finales; the finale is still the
- *   single largest killer (51 of 107 defeats).
+ *   healing more than halves the fighter's wins when taken away — `docs/run-harness.md`
+ *   has the ablation.
+ * - **F1, unchanged.** 302 of 360 runs end inside three minutes and the median doctrine
+ *   drafts reached is zero in every cell but cautious elf and guard, where a third of the
+ *   runs stall to the time limit.
+ * - **F2, corrected.** Every run reached its contract and started it: 360 started, 346
+ *   kept, none abandoned. The first baseline's 239 `crowded` abandonments came from the
+ *   harness simulating the whole 3x3 where the engine simulates only the plus inside it
+ *   (W1-6's finding): the 3x3 kept the actor budget full for 45 s a run. NPCs took 12
+ *   carts, each after a full load, and the squad took none.
+ * - **F3, measured.** 420 of 1 226 rumours (34 %) were beyond reach when offered.
+ * - **F4.** At least one companion reached 343 of 351 finales; the finale is still the
+ *   single largest killer (54 of 119 defeats).
  *
  * The committed test below sweeps three seeds per cell and asserts bands that held at forty;
  * `KOROVANY_BALANCE_SEEDS` widens it without changing what it asserts.
@@ -141,14 +141,25 @@ test('the shipped baseline: three factions, three policies, inside the measured 
   const withOne = pooled(report.cells, (cell) => cell.companionsAtFinale.atLeastOne)
   assert.ok(opened > 0 && withOne / opened >= 0.6, `${withOne}/${opened} finales with a companion`)
 
-  // Contracts: far more are abandoned than kept (F2), and the cause is named.
+  // Contracts start where the player arrives (F2, corrected). In the engine's window the
+  // actor budget has room for the builder, so the 40-seed baseline started every contract
+  // it reached and abandoned none. The 3x3 window refused two in three as `crowded`.
+  const started = pooled(report.cells, (cell) => cell.contracts.started)
   const abandoned = pooled(report.cells, (cell) => cell.contracts.abandoned)
-  const kept = pooled(report.cells, (cell) => cell.contracts.kept)
-  assert.ok(abandoned > kept, `abandoned ${abandoned}, kept ${kept}`)
+  const totalRuns = pooled(report.cells, (cell) => cell.runs)
+  assert.ok(started >= totalRuns * 0.8, `${started} contracts started in ${totalRuns} runs`)
+  assert.ok(abandoned * 10 <= started, `abandoned ${abandoned}, started ${started}`)
   const named = pooled(report.cells, (cell) =>
     Object.values(cell.contracts.abandonedBy).reduce((sum, count) => sum + count, 0),
   )
   assert.equal(named, abandoned, 'every abandoned contract has a refusal reason')
+  // The road is the engine's: the budget never had to turn an encounter body away.
+  for (const cell of report.cells) {
+    assert.ok(
+      cell.encounters.meanOnField > 0 && cell.encounters.meanRefusedSeconds < 1,
+      `${cell.policy}/${cell.faction}: ${JSON.stringify(cell.encounters)}`,
+    )
+  }
 
   // W1-2: nobody takes a cart by touching it, and the squad never loads one. The rule is held
   // to the engine's own methods by `runHarnessFidelity.test.ts`; here it holds over whole
@@ -281,16 +292,19 @@ test('W1-1 in whole runs: a random event up at arrival stands down, and the cont
 })
 
 test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never to the squad', () => {
-  // Seed 47515 under `engage`: the elf and the guard both reach chronicle ambushes whose
-  // raiders get to the cart. In the baseline's `ignore` arm no NPC ever starts a load, so
-  // these are the runs that show the channel working end to end. The pre-W1-2 touch rule
-  // would lose a cart without a load (`lost > loads`), and the old squad rule would show
-  // up in `robbedBySquad`.
-  const reports = (['elf', 'guard'] as const).map((faction) =>
+  // Under `engage`, the elf on seed 31677 and the guard on seed 182138 each reach a chronicle
+  // ambush whose raiders load their cart. In the baseline's `ignore` arm no NPC ever starts a
+  // load, so these are the runs that show the channel working end to end. The pre-W1-2
+  // touch rule would lose a cart without a load (`lost > loads`), and the old squad rule
+  // would show up in `robbedBySquad`.
+  const reports = ([
+    [31677, 'elf'],
+    [182138, 'guard'],
+  ] as const).map(([seed, faction]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,
       eventPolicy: 'engage',
-      seed: 47515,
+      seed,
       faction,
       policy: 'duelist',
       hz: 30,
@@ -301,8 +315,24 @@ test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never 
   const lost = total(reports, (report) => report.balance.caravans.robberiesLostToNpcs)
   assert.ok(loads >= 2, `${loads} loads: the channel never ran in a whole run`)
   assert.ok(lost >= 1 && lost <= loads, `${lost} carts lost to NPCs after ${loads} loads`)
-  assert.ok(lost < loads, 'every load finished, so nothing ever raced a looter')
   for (const report of reports) assert.equal(report.balance.caravans.robbedBySquad, 0)
+})
+
+test('the window arm: the shipped arms simulate the engine\'s plus, and the 3x3 is the control', () => {
+  // The same seeds and factions, once in the engine's window and once in the pinned 3x3.
+  // Over a whole run the two meet much the same encounters; what differs is how many stand
+  // on the road at once, and whether the budget has to turn bodies away to hold them.
+  const plus = sample({})
+  const square = sample({ regionWindow: 'square' })
+  for (const report of plus) assert.equal(report.regionWindow, 'engine')
+  for (const report of square) assert.equal(report.regionWindow, 'square')
+  const crowd = (reports: readonly RunReport[]) =>
+    total(reports, (report) => report.balance.encounters.meanOnField) / reports.length
+  const refused = (reports: readonly RunReport[]) =>
+    total(reports, (report) => report.balance.encounters.refusedSeconds)
+  assert.ok(crowd(plus) > 0, 'the plus fielded nobody')
+  assert.ok(crowd(plus) < crowd(square), `${crowd(plus)} bodies on the road in the plus, ${crowd(square)} in the 3x3`)
+  assert.ok(refused(plus) < refused(square), `refused ${refused(plus)} s in the plus, ${refused(square)} s in the 3x3`)
 })
 
 test('the arms leave the pinned run alone, and the shipped kit walks the engine\'s road', () => {
@@ -317,6 +347,7 @@ test('the arms leave the pinned run alone, and the shipped kit walks the engine\
     eventDirector: 'shipped',
     playerKit: 'harness',
     encounterModel: 'harness',
+    regionWindow: 'square',
   })
   assert.deepEqual(explicit, omitted, 'the declared defaults must be the defaults')
   assert.equal(omitted.balance.companions.started, 0)

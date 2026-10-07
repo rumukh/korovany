@@ -27,6 +27,12 @@
  * random event stands down unless the player is in the middle of it, in which case the
  * contract waits with its grace paused. The harness's `contractStartGate` is read beside it
  * on every frame, and the rule W1-1 replaced is kept as the negative control.
+ *
+ * And the streaming window, which W1-6 found: the engine sees a 3x3 but simulates only the
+ * plus inside it. A real `GeneratedWorldRuntime` is walked over the whole map, and the
+ * engine's own `syncGeneratedRegions` is run after every step. The harness's `engine`
+ * window has to name the squares it spawns encounters in, in its order. The pinned 3x3 is
+ * the control, and has to be told apart from the engine on every square.
  */
 
 import assert from 'node:assert/strict'
@@ -53,6 +59,8 @@ import {
 } from '../src/game/world/CaravanClaim.ts'
 import type { SquadMembership } from '../src/game/world/SquadCommand.ts'
 import { CollisionWorld } from '../src/game/systems/CollisionWorld.ts'
+import { createFinaleIdentity, createFinaleState } from '../src/game/world/FinaleDirector.ts'
+import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { TerrainSystem } from '../src/game/world/TerrainSystem.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import {
@@ -98,6 +106,7 @@ import {
   type LooterBody,
   type PlanPoint,
 } from './runHarnessEvents.ts'
+import { createRegionWindow } from './runHarness.ts'
 
 // The shipped class, through the same extensionless-import adapter `squadRuntimeHarness.ts`
 // uses. Nothing here edits it: every method called below is `GameEngine.prototype`'s own.
@@ -1289,4 +1298,92 @@ test('W1-1: the shipped rule stands a random event down, and waits only while th
   }
   assert.equal(replaced(false), 'started')
   assert.equal(replaced(true), 'abandoned')
+})
+
+// ---------------------------------------------------------------------------
+// 8. The squares the engine simulates (W1-6's finding)
+// ---------------------------------------------------------------------------
+
+test('the shipped arms simulate the squares the engine simulates, and the pinned 3x3 does not', () => {
+  // A real `GeneratedWorldRuntime` walked over every square of the map, and the engine's
+  // own `syncGeneratedRegions` run on it after each step: the squares it spawns encounters
+  // in, in the order it spawns them, and the squares its navigation routes through. The
+  // harness's `engine` window has to name the same squares in the same order; the pinned
+  // `square` window is the negative control, and has to be told apart on every square.
+  let visited = 0
+  for (const seed of [SEEDS[0], SEEDS[1]]) {
+    const { blueprint, terrain } = bench(seed)
+    const runtime = new GeneratedWorldRuntime(new THREE.Scene(), blueprint, {
+      decorationDensity: 0,
+      terrainResolution: 6,
+    })
+    try {
+      const faction: Faction = 'elf'
+      const finale = createFinaleState(createFinaleIdentity(blueprint, faction))
+      const spawnedIn: string[] = []
+      const engine = Object.assign(Object.create(RuntimeEngine.prototype), {
+        generatedWorld: runtime,
+        generatedNavigationRegionSignature: '',
+        generatedNavigationCache: new Map(),
+        simulatedGeneratedRegions: new Set<string>(),
+        generatedActivationSpawns: new Map<string, Set<string>>(),
+        actors: [],
+        faction,
+        finale,
+        spawnGeneratedRegionEncounters: (regionId: string) => {
+          spawnedIn.push(regionId)
+        },
+        removeActorById: () => {},
+        clearFinaleThreats: () => {},
+      })
+      const shipped = createRegionWindow(blueprint, terrain, 'engine')
+      const pinned = createRegionWindow(blueprint, terrain, 'square')
+      const finaleFirst = (left: string, right: string) =>
+        Number(right === finale.identity.regionId) - Number(left === finale.identity.regionId)
+      const sorted = (ids: readonly string[]) => [...ids].sort()
+      // A serpentine walk, so each step streams in a row's worth of squares, not nine.
+      const rows = new Map<number, typeof terrain.layout.regions>()
+      for (const region of terrain.layout.regions) {
+        rows.set(region.coordinate.z, [...(rows.get(region.coordinate.z) ?? []), region])
+      }
+      const walk = [...rows.entries()]
+        .sort(([left], [right]) => left - right)
+        .flatMap(([, row], index) =>
+          [...row].sort((left, right) =>
+            index % 2 === 0
+              ? left.coordinate.x - right.coordinate.x
+              : right.coordinate.x - left.coordinate.x,
+          ),
+        )
+      for (const region of walk) {
+        const x = (region.bounds.minX + region.bounds.maxX) / 2
+        const z = (region.bounds.minZ + region.bounds.maxZ) / 2
+        runtime.update({ focus: { x, z }, deltaSeconds: 0 })
+        spawnedIn.length = 0
+        engine.syncGeneratedRegions()
+        const simulated = runtime.regions.getSimulatedRegionIds().map(String)
+        const visible = runtime.regions.getVisibleRegionIds().map(String)
+        const ours = shipped(x, z)
+        const label = `seed ${seed}, square ${String(region.id)}`
+        assert.deepEqual([...ours.simulated], simulated, `${label}: simulated`)
+        assert.deepEqual([...ours.visible], visible, `${label}: visible`)
+        assert.deepEqual([...ours.simulated].sort(finaleFirst), spawnedIn, `${label}: spawn order`)
+        assert.deepEqual(
+          sorted(runtime.navigation.getActiveRegions().map(String)),
+          sorted(ours.simulated),
+          `${label}: navigation`,
+        )
+        // The pinned window is the engine's *visible* set, and simulates all of it.
+        const square = pinned(x, z)
+        assert.deepEqual(sorted(square.visible), sorted(visible), `${label}: the 3x3 is what is seen`)
+        assert.notDeepEqual(sorted(square.simulated), sorted(simulated), `${label}: control`)
+        assert.ok(square.simulated.length > simulated.length)
+        visited += 1
+      }
+    } finally {
+      runtime.dispose()
+    }
+  }
+  // Non-vacuity: the whole map, corners, edges and middle, on both seeds.
+  assert.equal(visited, 50)
 })
