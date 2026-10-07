@@ -30,7 +30,8 @@ import {
 import {
   GUARD_ARM_PITCH,
   GUARD_ARM_ROLL,
-  GUARD_ELBOW_PITCH,
+  GUARD_ARM_YAW,
+  GUARD_ELBOW_FLEX,
 } from './art/AbilityPresentation.ts'
 import {
   createMeleePresentation,
@@ -117,6 +118,7 @@ import {
   taperedBox,
   resolveCharacterPlan,
   setCharacterShoulderWidth,
+  elbowRotation,
   solveHandOffset,
   solveHeadYaw,
   type BeastKind,
@@ -4492,10 +4494,11 @@ export class GameEngine {
       const off = rig.mainHand > 0 ? rig.leftArm : rig.rightArm
       const offElbow = rig.mainHand > 0 ? rig.leftElbow : rig.rightElbow
       if (arm) arm.rotation.set(-1.22, 0, rig.mainHand * 0.17, 'XYZ')
-      if (elbow) elbow.rotation.x = 0.12
-      if (off) off.rotation.set(-1.2, 0, -rig.mainHand * 0.34, 'XYZ')
-      if (offElbow) offElbow.rotation.x = 1.5
-      this.placeWeaponInHand(rig, arm, -1.22, rig.mainHand * 0.17, 0.12, 0.06, -rig.mainHand * 0.12)
+      if (elbow) elbow.rotation.x = elbowRotation(0.12)
+      // The archer's own draw at this anticipation: string hand folded back to the jaw.
+      if (off) off.rotation.set(-1.54, 0, -rig.mainHand * 0.3, 'XYZ')
+      if (offElbow) offElbow.rotation.x = elbowRotation(2.2)
+      this.placeWeaponInHand(rig, arm, -1.22, rig.mainHand * 0.17, elbowRotation(0.12), 0.06, -rig.mainHand * 0.12)
     }
     const presenter = characterPresenter(subject.root)
     if (presenter) {
@@ -13179,11 +13182,13 @@ export class GameEngine {
     if (rig && this.shieldActive) {
       const arm = rig.mainHand > 0 ? rig.leftArm : rig.rightArm
       const elbow = rig.mainHand > 0 ? rig.leftElbow : rig.rightElbow
+      const yaw = rig.mainHand * GUARD_ARM_YAW
       const roll = rig.mainHand * GUARD_ARM_ROLL
-      if (arm) arm.rotation.set(GUARD_ARM_PITCH, 0, roll)
-      if (elbow) elbow.rotation.x = GUARD_ELBOW_PITCH
+      const elbowX = elbowRotation(GUARD_ELBOW_FLEX)
+      if (arm) arm.rotation.set(GUARD_ARM_PITCH, yaw, roll)
+      if (elbow) elbow.rotation.x = elbowX
       const hand = solveHandOffset(this.handOffset, rig.upperArm, rig.forearm,
-        GUARD_ARM_PITCH, roll, GUARD_ELBOW_PITCH)
+        GUARD_ARM_PITCH, roll, elbowX, yaw)
       shield.position.set(
         (arm?.position.x ?? -rig.mainHand * 0.6) + hand.x,
         (arm?.position.y ?? rig.shoulderY) + hand.y,
@@ -13415,11 +13420,13 @@ export class GameEngine {
       )
     }
     if (rig) {
+      // Slack arms still bend forward at the elbow; a corpse is not double-jointed.
+      const slack = elbowRotation(0.9)
       const leftElbowX = rig.leftElbow
-        ? THREE.MathUtils.lerp(rig.leftElbow.rotation.x, 0.9, eased)
+        ? THREE.MathUtils.lerp(rig.leftElbow.rotation.x, slack, eased)
         : 0
       const rightElbowX = rig.rightElbow
-        ? THREE.MathUtils.lerp(rig.rightElbow.rotation.x, 0.9, eased)
+        ? THREE.MathUtils.lerp(rig.rightElbow.rotation.x, slack, eased)
         : 0
       if (rig.leftElbow) rig.leftElbow.rotation.x = leftElbowX
       if (rig.rightElbow) rig.rightElbow.rotation.x = rightElbowX
@@ -15712,7 +15719,7 @@ export class GameEngine {
       const elbow = new THREE.Group()
       elbow.name = name === 'leftArm' ? 'leftElbow' : 'rightElbow'
       elbow.position.y = -p.upperArm
-      elbow.rotation.x = p.elbowRest
+      elbow.rotation.x = elbowRotation(p.elbowRest)
       const forearm = new THREE.Mesh(
         build(keys.forearm, () =>
           buildForearm(plan.faction, plan.armour, plan.gloved, p.forearm),
@@ -17863,35 +17870,49 @@ export class GameEngine {
     const off = rig.mainHand > 0 ? rig.leftArm : rig.rightArm
     const offElbow = rig.mainHand > 0 ? rig.leftElbow : rig.rightElbow
 
-    // The weapon arm drives the attack; the free arm counterbalances it.
+    // The weapon arm drives the attack; the free arm counterbalances it. The windup
+    // raises the arm up and out with the elbow folded, so the weapon is drawn back
+    // over the shoulder; the strike throws it forward and down and straightens the
+    // elbow through the blow.
     const mainX =
       stride * 0.62 -
-      pose.attack * 0.95 +
-      pose.anticipation * 0.7 -
+      pose.attack * 0.95 -
+      pose.anticipation * 2.1 -
       pose.recovery * 0.18 -
       pose.flinch * 0.3 +
       pose.stagger * 0.62
     const mainZ =
-      rig.mainHand * (rig.armSplay + pose.flinch * 0.18 + pose.stagger * 0.42) -
+      rig.mainHand *
+        (rig.armSplay + pose.anticipation * 0.42 + pose.flinch * 0.18 + pose.stagger * 0.42) -
       pose.attack * 0.2 + sweep * rig.mainHand * 0.7
     const offX =
-      -stride * 0.62 + pose.flinch * 0.3 + pose.stagger * 0.62 - pose.attack * 0.16
+      -stride * 0.62 +
+      pose.anticipation * 0.32 +
+      pose.flinch * 0.3 +
+      pose.stagger * 0.62 -
+      pose.attack * 0.16
     const offZ = -rig.mainHand * (rig.armSplay + pose.flinch * 0.18 + pose.stagger * 0.42)
 
     if (main) main.rotation.set(mainX, 0, mainZ)
     if (off) off.rotation.set(offX, 0, offZ)
 
-    // Elbows carry the arm's rest flex, deepen when the arm swings forward, cock
-    // through the windup and snap through the strike.
-    const mainElbowX = rig.boundArms
+    // Elbows carry the arm's rest flex, deepen when the arm swings forward, fold
+    // through the windup and straighten through the strike. Flex is authored as a
+    // positive bend and turned into a joint angle in one place, `elbowRotation`.
+    const mainFlex = rig.boundArms
       ? rig.elbowRest
-      : rig.elbowRest +
-        Math.max(0, -mainX) * 0.55 +
-        pose.anticipation * 0.95 -
-        pose.attack * 0.42 +
-        pose.recovery * 0.2 +
-        pose.stagger * 0.5
-    const offElbowX = rig.elbowRest + Math.max(0, -offX) * 0.55 + pose.stagger * 0.5
+      : Math.max(
+          0.04,
+          rig.elbowRest +
+            Math.max(0, -mainX) * 0.55 +
+            pose.anticipation * 0.45 -
+            pose.attack * 0.5 +
+            pose.recovery * 0.2 +
+            pose.stagger * 0.5,
+        )
+    const offFlex = rig.elbowRest + Math.max(0, -offX) * 0.55 + pose.stagger * 0.5
+    const mainElbowX = elbowRotation(mainFlex)
+    const offElbowX = elbowRotation(offFlex)
     if (mainElbow) mainElbow.rotation.x = mainElbowX
     if (offElbow) offElbow.rotation.x = offElbowX
 
@@ -17921,7 +17942,7 @@ export class GameEngine {
         mainZ,
         mainElbowX,
         0.34 -
-          pose.anticipation * 1.45 +
+          pose.anticipation * 0.6 +
           pose.attack * 1.85 -
           pose.recovery * 0.32 +
           mainX * 0.35,
@@ -18005,7 +18026,9 @@ export class GameEngine {
       kind === 'wolf' ? 1.05 : kind === 'boar' ? 0.9 : kind === 'bear' ? 0.78 : 0.62
     const stride = pose.stride * reach
     const lunge = pose.attack * (kind === 'troll' ? 1.15 : 0.7)
-    const rear = pose.anticipation * (kind === 'troll' ? 0.8 : 0.35)
+    // A troll's arms are arms: its windup lifts both fists with the elbows folded and
+    // the lunge brings them down. Four-legged beasts rear their forelegs back instead.
+    const rear = kind === 'troll' ? -pose.anticipation * 1.7 : pose.anticipation * 0.35
     // Diagonal pairs: the front-left limb travels with the hind-right one.
     if (rig.leftArm) {
       rig.leftArm.rotation.set(-stride - lunge + rear + pose.stagger * 0.5, 0, 0)
@@ -18016,9 +18039,9 @@ export class GameEngine {
     if (rig.leftLeg) rig.leftLeg.rotation.set(stride * 0.88 - pose.stagger * 0.3, 0, 0)
     if (rig.rightLeg) rig.rightLeg.rotation.set(-stride * 0.88 - pose.stagger * 0.3, 0, 0)
     if (kind === 'troll') {
-      const flex = 0.25 + pose.anticipation * 0.6 - pose.attack * 0.18 + pose.stagger * 0.35
-      if (rig.leftElbow) rig.leftElbow.rotation.x = Math.max(0.03, flex - stride * 0.12)
-      if (rig.rightElbow) rig.rightElbow.rotation.x = Math.max(0.03, flex + stride * 0.12)
+      const flex = 0.25 + pose.anticipation * 1.1 - pose.attack * 0.18 + pose.stagger * 0.35
+      if (rig.leftElbow) rig.leftElbow.rotation.x = elbowRotation(Math.max(0.03, flex - stride * 0.12))
+      if (rig.rightElbow) rig.rightElbow.rotation.x = elbowRotation(Math.max(0.03, flex + stride * 0.12))
     }
     if (rig.cloak) {
       // `cloak` holds the tail on a beast: it lifts with speed and tucks when hit.
@@ -18152,11 +18175,13 @@ export class GameEngine {
         ? this.finale.action?.pitch ?? 0 : 0
       const bowX = -1.22 - actor.stride * 0.08 - aimPitch
       const bowZ = rig.mainHand * (0.12 + draw * 0.06)
-      const bowElbowX = 0.12
+      const bowElbowX = elbowRotation(0.12)
       if (bowArm) bowArm.rotation.set(bowX, 0, bowZ)
       if (bowElbow) bowElbow.rotation.x = bowElbowX
-      if (drawArm) drawArm.rotation.set(-1.05 - draw * 0.18 - aimPitch, 0, -rig.mainHand * 0.34)
-      if (drawElbow) drawElbow.rotation.x = 0.5 + draw * 1.25
+      // The string arm comes up to shoulder height and folds until the hand is back
+      // at the jaw, which with a real elbow is a deep flex, not a backward hinge.
+      if (drawArm) drawArm.rotation.set(-1.4 - draw * 0.16 - aimPitch, 0, -rig.mainHand * 0.3)
+      if (drawElbow) drawElbow.rotation.x = elbowRotation(0.7 + draw * 1.75)
       this.placeWeaponInHand(
         rig,
         bowArm,

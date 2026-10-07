@@ -67,13 +67,15 @@ for (const mode of ['legacy', 'enhanced'] as const) {
       const materials = value.library.sharedMaterialCount
       for (const stride of [0, 0.62, -0.62]) {
         value.draw(stride)
-        assert.ok(arm.rotation.x < -1)
-        assert.ok(value.joint('leftElbow').rotation.x > 1)
+        assert.ok(arm.rotation.x < -0.6, 'the shield arm is carried forward')
+        // Negative is flexion: the forearm crosses in front of the chest instead of
+        // hinging backwards from an elbow held up in the air.
+        assert.ok(value.joint('leftElbow').rotation.x < -1, 'the brace flexes the elbow forward')
         assert.ok(shield.position.z > 0.6)
       }
       Object.assign(value.melee, { phase: 'windup', beat: 1, phaseRemaining: 0.04 })
       value.draw()
-      assert.ok(arm.rotation.x < -1, 'the sword arm must not steal the shield arm pose')
+      assert.ok(arm.rotation.x < -0.6, 'the sword arm must not steal the shield arm pose')
       assert.equal(value.cache.size, keys)
       assert.equal(value.library.sharedMaterialCount, materials)
       Object.assign(value.melee, createPlayerMeleeState())

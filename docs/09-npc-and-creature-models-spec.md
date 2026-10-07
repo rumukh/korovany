@@ -2463,7 +2463,8 @@ CharacterKit.ts
       sword | greatsword | sabre | dagger | axe | cleaver
       | spear | glaive | mace | maul | bow | staff
   ── rig maths ────────────────────────────────────────────────
-  solveHandOffset(target, upperArm, forearm, armX, armZ, elbowX)
+  elbowRotation(flex), swivelElbowTowardPole(orientation, axis, pole)
+  solveHandOffset(target, upperArm, forearm, armX, armZ, elbowX, armY?)
   ── creatures ────────────────────────────────────────────────
   BEAST_RIG, BEAST_LOOK_CLAMP, beastLookYaw,
   buildBeastSkeleton, buildBeastBody, buildBeastHead,
@@ -2674,6 +2675,13 @@ All procedural, all allocation-free, all driven from the existing `CharacterPose
   forward half of the stride and extends before the plant. Elbows carry a fixed carry
   angle plus a swing-driven flex, and the attack gets a cock-and-release through the
   elbow instead of a whole-arm sweep.
+- **Elbow sign.** Figures face +Z and an elbow hinges about its own X axis, so flexion
+  is a *negative* `rotation.x`: a positive one swings the forearm behind the upper arm.
+  Poses author flex as a positive bend and convert it with `elbowRotation`. The arm
+  solvers (`fitArm`, `BowAimPose`) bend the same way and then turn the arm about its
+  shoulder-to-hand line with `swivelElbowTowardPole`, so a braced elbow sits down and
+  out and a drawing elbow out and back. Knees are the other way round: positive is
+  already correct for them.
 - **Idle.** Breathing (kept), weight shift (kept), plus a slow shoulder counter-rotation,
   head micro-drift and a per-actor phase so a squad is not a chorus line.
 - **Cloak.** `cloak-pivot` lags the torso's yaw and pitches back with speed. One damped

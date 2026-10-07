@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { elbowRotation, swivelElbowTowardPole } from './CharacterKit.ts'
 
 export const BOW_AIM_DRAW = 0.3
 const MIN_DRAW = 0.08
@@ -30,6 +31,7 @@ export class BowAimPose {
   private readonly nockTarget = new THREE.Vector3()
   private readonly scratch = new THREE.Vector3()
   private readonly local = new THREE.Vector3()
+  private readonly pole = new THREE.Vector3()
 
   constructor(rig: BowAimRig) {
     this.rig = rig
@@ -93,8 +95,8 @@ export class BowAimPose {
     this.drawMeters = draw
     this.scratch.copy(this.gripOrigin).addScaledVector(this.forward, draw)
     this.frame.setPosition(this.scratch)
-    this.applyArm(main, this.gripTarget, gripBend)
-    if (supportBend !== null) this.applyArm(main === 1 ? -1 : 1, this.nockTarget, supportBend)
+    this.applyArm(main, this.gripTarget, gripBend, false)
+    if (supportBend !== null) this.applyArm(main === 1 ? -1 : 1, this.nockTarget, supportBend, true)
   }
 
   private handVector(side: -1 | 1): THREE.Vector3 {
@@ -130,16 +132,22 @@ export class BowAimPose {
     return Math.hypot((this.rig.upperArm + forearm * Math.cos(bend)) * sy, forearm * Math.sin(bend) * sz)
   }
 
-  private applyArm(side: -1 | 1, target: THREE.Vector3, bend: number): void {
+  private applyArm(side: -1 | 1, target: THREE.Vector3, bend: number, drawing: boolean): void {
     const arm = side > 0 ? this.rig.rightArm : this.rig.leftArm
     const elbow = side > 0 ? this.rig.rightElbow : this.rig.leftElbow
     const hand = this.handVector(side)
     const phase = Math.atan2(hand.z, -hand.y)
     const forearm = hand.length()
+    // The chain is aimed with the hand forward of the upper arm, so the elbow flexes
+    // the way a real one does; the joint takes that bend as `elbowRotation`. The bow
+    // arm's elbow then turns out and down, the string arm's out and back.
     this.local.set(0, -(this.rig.upperArm + forearm * Math.cos(bend)) * arm.scale.y,
-      -forearm * Math.sin(bend) * arm.scale.z).normalize()
+      forearm * Math.sin(bend) * arm.scale.z).normalize()
     this.scratch.copy(target).sub(arm.position).normalize()
     arm.quaternion.setFromUnitVectors(this.local, this.scratch)
-    elbow.rotation.set(bend + phase, 0, 0, 'XYZ')
+    if (drawing) this.pole.set(side * 0.8, -0.1, -1)
+    else this.pole.set(side, -0.5, 0)
+    swivelElbowTowardPole(arm.quaternion, this.scratch, this.pole)
+    elbow.rotation.set(phase + elbowRotation(bend), 0, 0, 'XYZ')
   }
 }

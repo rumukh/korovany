@@ -3499,6 +3499,48 @@ export function buildWeaponGrip(kind: WeaponKind, compact = false): THREE.Buffer
 // ---------------------------------------------------------------------------
 
 /**
+ * The elbow joint's `rotation.x` for a bend of `flex` radians.
+ *
+ * Figures face +Z and an elbow hinges about its own X axis, so a positive rotation
+ * swings the forearm towards -Z: behind the line of the upper arm, which no elbow can
+ * do. Flexion is a negative rotation. Poses author flex as a positive bend and turn it
+ * into a joint angle here, so no pose can hyperextend an arm by writing a flex
+ * straight into the joint. Knees are the opposite case: positive is already correct.
+ */
+export function elbowRotation(flex: number): number {
+  return -flex
+}
+
+const SWIVEL_ELBOW = new THREE.Vector3()
+const SWIVEL_POLE = new THREE.Vector3()
+const SWIVEL_CROSS = new THREE.Vector3()
+const SWIVEL_TURN = new THREE.Quaternion()
+
+/**
+ * Turns a solved arm about its shoulder-to-hand line until the elbow points at `pole`.
+ *
+ * Any turn about that line keeps the hand on its target, so this moves only the
+ * elbow. A shortest-arc solve leaves the elbow wherever the arc happened to carry it,
+ * which for a shield or a two-handed grip is inside the chest. `orientation` is the
+ * arm's quaternion and `axis` the unit shoulder-to-target direction, both in the
+ * arm's parent frame, as is `pole`. A pole along the axis leaves the arm alone.
+ */
+export function swivelElbowTowardPole(
+  orientation: THREE.Quaternion,
+  axis: THREE.Vector3,
+  pole: THREE.Vector3,
+): THREE.Quaternion {
+  const elbow = SWIVEL_ELBOW.set(0, -1, 0).applyQuaternion(orientation)
+  elbow.addScaledVector(axis, -elbow.dot(axis))
+  const preferred = SWIVEL_POLE.copy(pole).addScaledVector(axis, -pole.dot(axis))
+  if (elbow.lengthSq() < 1e-10 || preferred.lengthSq() < 1e-10) return orientation
+  elbow.normalize()
+  preferred.normalize()
+  const turn = Math.atan2(SWIVEL_CROSS.crossVectors(elbow, preferred).dot(axis), elbow.dot(preferred))
+  return orientation.premultiply(SWIVEL_TURN.setFromAxisAngle(axis, turn))
+}
+
+/**
  * Where the hand ends up, given the arm chain's rotation.
  *
  * The weapon pivot is a sibling of the arm rather than its child — `attachTorch`
@@ -3508,6 +3550,9 @@ export function buildWeaponGrip(kind: WeaponKind, compact = false): THREE.Buffer
  * into the weapon pivot's position.
  *
  * Mirrors `THREE.Euler` order `XYZ`, which is what `Object3D.rotation` uses.
+ * `elbowX` is the elbow joint's rotation, as {@link elbowRotation} returns it, not
+ * the flex. `shoulderY` turns the upper arm about its own length; a shield arm uses
+ * it to bring the forearm across the chest.
  */
 export function solveHandOffset(
   target: THREE.Vector3,
@@ -3516,17 +3561,23 @@ export function solveHandOffset(
   shoulderX: number,
   shoulderZ: number,
   elbowX: number,
+  shoulderY = 0,
 ): THREE.Vector3 {
   const along = -(upperArm + forearm * Math.cos(elbowX))
   const ahead = -forearm * Math.sin(elbowX)
   const cosZ = Math.cos(shoulderZ)
   const sinZ = Math.sin(shoulderZ)
+  const cosY = Math.cos(shoulderY)
+  const sinY = Math.sin(shoulderY)
   const cosX = Math.cos(shoulderX)
   const sinX = Math.sin(shoulderX)
+  const rolledX = -along * sinZ
+  const rolledY = along * cosZ
+  const yawedZ = -rolledX * sinY + ahead * cosY
   return target.set(
-    -along * sinZ,
-    along * cosZ * cosX - ahead * sinX,
-    along * cosZ * sinX + ahead * cosX,
+    rolledX * cosY + ahead * sinY,
+    rolledY * cosX - yawedZ * sinX,
+    rolledY * sinX + yawedZ * cosX,
   )
 }
 
