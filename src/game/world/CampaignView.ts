@@ -60,6 +60,7 @@ import {
   type AbilityView,
   type BodyState,
   type CampaignContractView,
+  type ChoiceTravelView,
   type ChronicleEntryView,
   type ChronicleRumourView,
   type DoctrineCardView,
@@ -80,6 +81,8 @@ import type { ActiveRunSaveV3, RunConfig } from '../run/runTypes.ts'
 import { SUPPLY_BASELINE, getContestedRegionIds, isRegionRazed, type RegionChronicleState } from './Chronicle.ts'
 import type { CaravanLootView } from './CaravanClaim.ts'
 import {
+  CHAMPION_DAMAGE_CAP,
+  contractPayout,
   createGeneratedObjectives,
   findContractTemplate,
   getContractProgress,
@@ -102,7 +105,12 @@ import {
   type PlayerMeleeState,
 } from './CombatResolver.ts'
 import type { WorldBlueprint } from './worldTypes.ts'
-import { ExpeditionPlanner, type ExpeditionView } from './ExpeditionPlanner.ts'
+import {
+  ExpeditionPlanner,
+  buildExpeditionKnowledge,
+  estimateChoiceTravel,
+  type ExpeditionView,
+} from './ExpeditionPlanner.ts'
 import {
   buildCaravanBeatsView,
   caravanBeatExpeditionTargets,
@@ -114,6 +122,8 @@ import {
 import {
   buildCombatMasteryView,
   normalizeCombatMastery,
+  PLAYER_WALK_SPEED,
+  playerLegMobility,
   type CameraControlMode,
   type CombatMasteryState,
 } from './CombatMastery.ts'
@@ -411,6 +421,13 @@ export interface CampaignContractInput {
   objectives: readonly Objective[]
   contracts: CampaignContractState
   sitePosition: (siteId: string) => { x: number; z: number } | null
+  /** W2-3 — what earlier champion wins already added, so a duel's card quotes what is left. */
+  championDamageBonus?: number
+  /**
+   * W2-3 — how the caller times a walk to a site. Both view paths pass the planner's
+   * estimate; without it the cards simply quote no walk.
+   */
+  travel?: (point: { x: number; z: number }) => ChoiceTravelView | null
 }
 
 export function buildCampaignContractViews(
@@ -456,6 +473,11 @@ export function buildCampaignContractViews(
       contractId === null
         ? CONTRACT_ERRAND_STAKE
         : describeContractStake(contractId, { regionLabel, siteLabel })
+    // W2-3 — the price, from the same table the engine pays from. A settled contract has
+    // nothing left to pay, and its clock is only quoted while the contract is still on offer.
+    const settled = status === 'kept' || status === 'failed'
+    // Measured to the site the compass charts, which is known before its square streams in.
+    const travelPoint = getSiteWorldPosition2D(input.blueprint, node.siteId)
     return {
       id: node.id,
       contract: contractId,
@@ -468,6 +490,9 @@ export function buildCampaignContractViews(
       status,
       timeRemaining:
         status === 'active' && progress && template ? progress.remaining : null,
+      payout: template && !settled ? contractPayout(template, input.championDamageBonus ?? 0) : null,
+      timeLimit: template && status === 'offered' ? template.timeoutSeconds : null,
+      travel: travelPoint && input.travel ? input.travel(travelPoint) : null,
       x: position?.x ?? null,
       z: position?.z ?? null,
     }
@@ -794,16 +819,6 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     chronicleRegions.set(regionId, delta.chronicle)
   }
   const contestedRegionIds = getContestedRegionIds(blueprint, chronicleRegions)
-  const contracts = buildCampaignContractViews({
-    blueprint,
-    faction: config.faction,
-    objectives,
-    contracts: normalizeCampaignContractState(restored?.directorState.campaignContracts),
-    sitePosition: (siteId) => {
-      const position = getSiteWorldPosition2D(blueprint, siteId)
-      return position ? { x: position.x, z: position.z } : null
-    },
-  })
   // Roadmap 1.6 — the same reasoning as the campaign board below: the strip is derived from
   // the seed and the persisted ledger, neither of which needs a frame of engine, so a
   // continued run shows what it is already committed to before the first frame rather than
@@ -845,6 +860,27 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
       }
     }
   }
+
+  // W2-3 — built after the boon's reveal, so the cards' known danger reads the same
+  // discovered squares the engine's first frame does.
+  const travelKnowledge = buildExpeditionKnowledge({
+    faction: config.faction, discoveredRegionIds: discovered, chronicleRegions, contestedRegionIds,
+  }, blueprint)
+  const walkSpeed = PLAYER_WALK_SPEED * playerLegMobility(body)
+  const contracts = buildCampaignContractViews({
+    blueprint,
+    faction: config.faction,
+    objectives,
+    contracts: normalizeCampaignContractState(restored?.directorState.campaignContracts),
+    sitePosition: (siteId) => {
+      const position = getSiteWorldPosition2D(blueprint, siteId)
+      return position ? { x: position.x, z: position.z } : null
+    },
+    championDamageBonus: Math.min(CHAMPION_DAMAGE_CAP,
+      Math.max(0, serializableNumber(restored?.directorState.championDamageBonus))),
+    travel: (point) => estimateChoiceTravel(blueprint, { x: position[0], z: position[2] }, point,
+      travelKnowledge, walkSpeed),
+  })
 
   // W2-2 — the same plans, restore and builder the engine uses, so a continued run shows
   // its caravans exactly as the first live frame will.

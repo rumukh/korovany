@@ -26,7 +26,6 @@ import { getBlueprintRegionBounds, getSiteWorldPosition2D } from '../src/game/co
 import {
   RICH_CARAVAN_CONFISCATE_DESCRIPTION,
   CARAVAN_CONFISCATE_PROMPT,
-  RICH_CARAVAN_CONFISCATED_MESSAGE,
   RICH_CARAVAN_CONFISCATED_NOTICE,
   RICH_CARAVAN_LOOT_TAKEN_NOTICE,
   WORLD_EVENT_FAILURE_MESSAGES,
@@ -37,6 +36,7 @@ import {
   describeContractWaitsForEvent,
   describeEventHandbackForContract,
   describeRandomEventStoodDown,
+  describeRichCaravanConfiscated,
   formatRegionGridLabel,
   generatedSiteLabel,
 } from '../src/game/content/gameCopy.ts'
@@ -56,6 +56,7 @@ import { attachCaravanBeats } from './caravanBeatFixture.ts'
 import {
   CONTRACT_TEMPLATES,
   EVENT_RETRY,
+  WORLD_EVENT_REWARDS,
   completeObjectiveEntry,
   createCampaignContractState,
   createChronicleCommitmentState,
@@ -1247,7 +1248,8 @@ test("the palace guard confiscates a rich caravan for the palace, it does not ro
   guard.frames(FRAME)
   assert.deepEqual(guard.worldEvents, [{ kind: 'richCaravan', succeeded: true }])
   assert.equal(guard.gold(), 55 + 180)
-  assert.ok(guard.notices.some((notice) => notice.message === RICH_CARAVAN_CONFISCATED_MESSAGE))
+  assert.ok(guard.notices.some((notice) =>
+    notice.message === describeRichCaravanConfiscated(WORLD_EVENT_REWARDS.richCaravan.gold)))
   // Negative control: the villain at the same cart robs it, in the robber's words.
   const villain = fixture('villain')
   const robbed = villain.rollRandomEvent('richCaravan')

@@ -381,3 +381,31 @@ B3 > B2 > C2 > D2 > E2 with the unscouted bridge. A taken A3 rumour led the comp
 kept the pending bridge card aside, survived save and continue, and «Бросить» handed back.
 Neither `1366x768` nor `390x844` overflowed horizontally or had a control under 44 CSS
 pixels. A real save, reload and continue kept the default, explicit and cleared states.
+
+### 2026-10-07: priced destinations (W2-3)
+
+The contract board, the journal and the atlas now quote a choice's price before it is made.
+A ready objective's card and its atlas destination carry three fields:
+
+- `payout`: everything keeping the contract pays, from `contractPayout`, which reads the same
+  `WORLD_EVENT_REWARDS` table `GameEngine` pays from. It names gold, a companion, damage (only
+  what the run's champion cap still allows), healing and the guaranteed trophy. An errand, a
+  failed contract and a kept contract carry none.
+- `timeLimit`: the contract's own clock while it is still on offer.
+- `travel`: `estimateChoiceTravel` times the itinerary the compass would chart from where the
+  player stands, using the same shortest road route or short straight approach, at
+  `PLAYER_WALK_SPEED` (8.2 m/s) times the current leg mobility. It ignores sprint, fights,
+  props and the elf's forest stride, so it is a walking estimate, not a guarantee. With no road
+  to plan it quotes the straight line as `basis: 'straight'`, labelled «по прямой: дороги нет»,
+  just as the compass labels its bearing.
+
+`travel.danger` names only discovered hostile or contested squares on that itinerary, from the
+same knowledge filter the cautious route uses. Squares still in fog are counted in
+`travel.unscouted` and never named. The fog's exception for a mission's own itinerary covers
+the walk's distance: it exposes no more than selecting the destination already draws.
+
+Cards are measured on the live path through `ExpeditionPlanner.measureTravel`, which remembers
+an estimate per 4 m of player movement, and on the launch path directly, after the starting
+boon's reveal, so initial and live views agree. The atlas list row shows a short form
+(«300 золотых · идти ~45 с»); the detail shows the full price. The bridge-ambush destination is
+left unpriced for the caravan-beat work that replaces it.

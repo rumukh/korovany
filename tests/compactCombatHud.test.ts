@@ -259,3 +259,34 @@ test('compact controls keep 44px targets, scalable wrapping and original safe-ar
   const change = app.slice(app.indexOf('const changeVisualPreferences ='), app.indexOf('const selectBoon ='))
   assert.doesNotMatch(change, /setPaused|setScreen|destroy|new GameEngine|applyGameOverlays/)
 })
+
+test('W2-3: a priced contract card shows its price in Full, Compact, the journal and the atlas; an unpriced one shows none', () => {
+  const price = {
+    payout: { gold: 300, supplies: 0, heal: 0, damage: 0, companion: false, loot: 'uncommon' as const },
+    timeLimit: 150,
+    travel: { meters: 370.2, seconds: 46, basis: 'road' as const, danger: ['B2'], unscouted: 1 },
+  }
+  const lines = ['Плата: 300 золотых и трофей.', 'Срок: 150 с с начала', 'Идти ~46 с, 371 м дороги',
+    'Опасно: B2 · в тумане: 1 квадрат']
+  for (const mode of ['full', 'compact'] as const) {
+    const props = fixture(mode, 'villain')
+    props.view.contracts = props.view.contracts.map((entry, index) =>
+      index === 0 ? { ...entry, ...price } : { ...entry, payout: null, timeLimit: null, travel: null })
+    const html = renderToStaticMarkup(createElement(GameScreen, props))
+    for (const line of lines) assert.ok(html.includes(line), `${mode} lost «${line}»`)
+    // Negative control: the second card carries no price, so exactly one block renders.
+    assert.equal((html.match(/class="choice-price"/g) ?? []).length, 1, mode)
+    const journal = renderToStaticMarkup(createElement(GameScreen, { ...props, activeOverlay: 'journal', simulationPaused: true }))
+    assert.equal((journal.match(/Плата: 300 золотых и трофей\./g) ?? []).length, 2, `${mode}: HUD and journal`)
+  }
+  const props = fixture('full', 'villain')
+  const first = props.view.expedition.targets[0]
+  assert.ok(first)
+  const priced = { ...first, kind: 'objective' as const, title: 'Жирный корован', ...price }
+  props.view.expedition = { ...props.view.expedition, mode: 'selected', target: priced,
+    targets: [priced, ...props.view.expedition.targets.slice(1).map((target) => ({ ...target, payout: null, travel: null }))] }
+  const atlas = renderToStaticMarkup(createElement(GameScreen, { ...props, activeOverlay: 'atlas', simulationPaused: true }))
+  assert.ok(atlas.includes('<span class="expedition-price">300 золотых · идти ~46 с</span>'))
+  for (const line of lines) assert.ok(atlas.includes(line), `the atlas detail lost «${line}»`)
+  assert.equal((atlas.match(/class="expedition-price"/g) ?? []).length, 1, 'only the priced destination quotes a price')
+})

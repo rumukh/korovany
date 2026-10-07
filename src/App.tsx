@@ -104,6 +104,7 @@ import { FinaleHud, FinaleResult } from './game/ui/FinaleHud'
 import { CaravanBeatHud } from './game/ui/CaravanBeatHud'
 import { CaravanLootCue } from './game/ui/CaravanLootCue'
 import { CampaignJournal } from './game/ui/CampaignJournal'
+import { ChoicePrice } from './game/ui/ChoicePrice'
 import type { CaravanBeatOutcome } from './game/world/CaravanBeats'
 import { CompactMissionHud, CompactWorldNews } from './game/ui/CompactCombatHud'
 import {
@@ -867,6 +868,7 @@ function ContractBoard({
             </div>
             <p className="contract-task">{entry.task}</p>
             <p className="contract-stake">{entry.stake}</p>
+            <ChoicePrice payout={entry.payout} timeLimit={entry.timeLimit} travel={entry.travel} />
             <button
               className={`contract-pin ${entry.pinned ? 'active' : ''}`}
               type="button"

@@ -27,6 +27,12 @@
  * random event stands down unless the player is in the middle of it, in which case the
  * contract waits with its grace paused. The harness's `contractStartGate` is read beside it
  * on every frame, and the rule W1-1 replaced is kept as the negative control.
+ *
+ * And the streaming window, which W1-6 found: the engine sees a 3x3 but simulates only the
+ * plus inside it. A real `GeneratedWorldRuntime` is walked over the whole map, and the
+ * engine's own `syncGeneratedRegions` is run after every step. The harness's `engine`
+ * window has to name the squares it spawns encounters in, in its order. The pinned 3x3 is
+ * the control, and has to be told apart from the engine on every square.
  */
 
 import assert from 'node:assert/strict'
@@ -53,6 +59,8 @@ import {
 } from '../src/game/world/CaravanClaim.ts'
 import type { SquadMembership } from '../src/game/world/SquadCommand.ts'
 import { CollisionWorld } from '../src/game/systems/CollisionWorld.ts'
+import { createFinaleIdentity, createFinaleState } from '../src/game/world/FinaleDirector.ts'
+import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { TerrainSystem } from '../src/game/world/TerrainSystem.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import {
@@ -100,6 +108,15 @@ import {
   type LooterBody,
   type PlanPoint,
 } from './runHarnessEvents.ts'
+import {
+  HARNESS_COMMANDER_INTERVAL,
+  HARNESS_COMMANDER_LIMIT,
+  advanceCommanderClock,
+  commanderGathers,
+  createCommanderClock,
+  createRegionWindow,
+  type CommanderModel,
+} from './runHarness.ts'
 
 // The shipped class, through the same extensionless-import adapter `squadRuntimeHarness.ts`
 // uses. Nothing here edits it: every method called below is `GameEngine.prototype`'s own.
@@ -1329,4 +1346,221 @@ test('W1-1: the shipped rule stands a random event down, and waits only while th
   }
   assert.equal(replaced(false), 'started')
   assert.equal(replaced(true), 'abandoned')
+})
+
+// ---------------------------------------------------------------------------
+// 8. The squares the engine simulates (W1-6's finding)
+// ---------------------------------------------------------------------------
+
+test('the shipped arms simulate the squares the engine simulates, and the pinned 3x3 does not', () => {
+  // A real `GeneratedWorldRuntime` walked over every square of the map, and the engine's
+  // own `syncGeneratedRegions` run on it after each step: the squares it spawns encounters
+  // in, in the order it spawns them, and the squares its navigation routes through. The
+  // harness's `engine` window has to name the same squares in the same order; the pinned
+  // `square` window is the negative control, and has to be told apart on every square.
+  let visited = 0
+  for (const seed of [SEEDS[0], SEEDS[1]]) {
+    const { blueprint, terrain } = bench(seed)
+    const runtime = new GeneratedWorldRuntime(new THREE.Scene(), blueprint, {
+      decorationDensity: 0,
+      terrainResolution: 6,
+    })
+    try {
+      const faction: Faction = 'elf'
+      const finale = createFinaleState(createFinaleIdentity(blueprint, faction))
+      const spawnedIn: string[] = []
+      const engine = Object.assign(Object.create(RuntimeEngine.prototype), {
+        generatedWorld: runtime,
+        generatedNavigationRegionSignature: '',
+        generatedNavigationCache: new Map(),
+        simulatedGeneratedRegions: new Set<string>(),
+        generatedActivationSpawns: new Map<string, Set<string>>(),
+        actors: [],
+        faction,
+        finale,
+        spawnGeneratedRegionEncounters: (regionId: string) => {
+          spawnedIn.push(regionId)
+        },
+        removeActorById: () => {},
+        clearFinaleThreats: () => {},
+      })
+      const shipped = createRegionWindow(blueprint, terrain, 'engine')
+      const pinned = createRegionWindow(blueprint, terrain, 'square')
+      const finaleFirst = (left: string, right: string) =>
+        Number(right === finale.identity.regionId) - Number(left === finale.identity.regionId)
+      const sorted = (ids: readonly string[]) => [...ids].sort()
+      // A serpentine walk, so each step streams in a row's worth of squares, not nine.
+      const rows = new Map<number, typeof terrain.layout.regions>()
+      for (const region of terrain.layout.regions) {
+        rows.set(region.coordinate.z, [...(rows.get(region.coordinate.z) ?? []), region])
+      }
+      const walk = [...rows.entries()]
+        .sort(([left], [right]) => left - right)
+        .flatMap(([, row], index) =>
+          [...row].sort((left, right) =>
+            index % 2 === 0
+              ? left.coordinate.x - right.coordinate.x
+              : right.coordinate.x - left.coordinate.x,
+          ),
+        )
+      for (const region of walk) {
+        const x = (region.bounds.minX + region.bounds.maxX) / 2
+        const z = (region.bounds.minZ + region.bounds.maxZ) / 2
+        runtime.update({ focus: { x, z }, deltaSeconds: 0 })
+        spawnedIn.length = 0
+        engine.syncGeneratedRegions()
+        const simulated = runtime.regions.getSimulatedRegionIds().map(String)
+        const visible = runtime.regions.getVisibleRegionIds().map(String)
+        const ours = shipped(x, z)
+        const label = `seed ${seed}, square ${String(region.id)}`
+        assert.deepEqual([...ours.simulated], simulated, `${label}: simulated`)
+        assert.deepEqual([...ours.visible], visible, `${label}: visible`)
+        assert.deepEqual([...ours.simulated].sort(finaleFirst), spawnedIn, `${label}: spawn order`)
+        assert.deepEqual(
+          sorted(runtime.navigation.getActiveRegions().map(String)),
+          sorted(ours.simulated),
+          `${label}: navigation`,
+        )
+        // The pinned window is the engine's *visible* set, and simulates all of it.
+        const square = pinned(x, z)
+        assert.deepEqual(sorted(square.visible), sorted(visible), `${label}: the 3x3 is what is seen`)
+        assert.notDeepEqual(sorted(square.simulated), sorted(simulated), `${label}: control`)
+        assert.ok(square.simulated.length > simulated.length)
+        visited += 1
+      }
+    } finally {
+      runtime.dispose()
+    }
+  }
+  // Non-vacuity: the whole map, corners, edges and middle, on both seeds.
+  assert.equal(visited, 50)
+})
+
+// ---------------------------------------------------------------------------
+// W1-6 — a commander's call for men
+// ---------------------------------------------------------------------------
+
+test('W1-6: a commander calls for men when `updateCommander` does, frame for frame', () => {
+  // The engine's own `updateCommander`, `commanderGathersMen` and budget seams, beside the
+  // harness's `commanderGathers` and `advanceCommanderClock` reading the same bodies before
+  // every frame. Where the harness calls, the engine has to have put a soldier down on that
+  // frame, and where it does not, the engine must not have.
+  const HZ = 30
+  const SECONDS = 130
+  interface Script {
+    hostile: boolean
+    /** Spans of the run, in seconds, in which one of his men has a living enemy picked out. */
+    fights: ReadonlyArray<readonly [number, number]>
+    /** Six more campaign bodies elsewhere, so campaign's own share is already spent. */
+    fullShare: boolean
+  }
+  const harnessBody = (actor: FakeActor) => ({
+    id: actor.id,
+    allegiance: actor.allegiance as Allegiance,
+    role: actor.role as ActorRole,
+    alive: actor.alive,
+    ignoredTargetId: actor.ignoredTargetId,
+    targetId: actor.targetId,
+    packId: actor.packId,
+    packKinSize: actor.packKinSize,
+    hp: actor.hp,
+    maxHp: actor.maxHp,
+    playerAggro: actor.playerAggro,
+    hostileToPlayer: actor.hostileToPlayer,
+    x: actor.mesh.position.x,
+    z: actor.mesh.position.z,
+    actionPhase: actor.action ? 'windup' : 'idle',
+  })
+  const drive = (model: 'legacy' | 'shipped', script: Script, harnessModel: CommanderModel = model) => {
+    const { self, actors } = engineFor(SEEDS[0], 'guard', { x: 0, z: 0 }, new RandomStream(1))
+    // The real budget seams, not the builders' stubs.
+    for (const seam of ['reserveActorSlots', 'reserveActorSlotsUpTo']) Reflect.deleteProperty(self, seam)
+    self.actorBudget = new ActorBudget()
+    if (model === 'legacy') {
+      // The rule W1-6 replaced, put back on the instance.
+      self.commanderGathersMen = () => true
+      self.reserveOwnActorSlots = (category: string, count: number) =>
+        self.reserveActorSlots(category, count)
+    }
+    const side = script.hostile ? 'villain' : 'guard'
+    for (let index = 0; index < 3; index += 1) {
+      self.spawnActor('guard', 'soldier', 1 + index, 1, index, { budget: 'squad', hostileToPlayer: false })
+    }
+    const commander = self.spawnActor(side, 'commander', 30, 0, 0, {
+      budget: 'campaign',
+      hostileToPlayer: script.hostile,
+    }) as FakeActor & { reinforcementTimer: number; reinforcementsCalled: number; phase: number }
+    Object.assign(commander, { reinforcementTimer: HARNESS_COMMANDER_INTERVAL, reinforcementsCalled: 0, phase: 0 })
+    const man = self.spawnActor(side, 'soldier', 33, 0, 0, { budget: 'campaign', hostileToPlayer: script.hostile }) as FakeActor
+    self.spawnActor(side, 'soldier', 36, 0, 0, { budget: 'campaign', hostileToPlayer: script.hostile })
+    const enemy = self.spawnActor(script.hostile ? 'elf' : 'villain', 'soldier', 40, 0, 0, { budget: 'chronicle' }) as FakeActor
+    if (script.fullShare) {
+      for (let index = 0; index < 6; index += 1) {
+        self.spawnActor('guard', 'soldier', -80, index * 2, 0, { budget: 'campaign', hostileToPlayer: false })
+      }
+    }
+    const clock = createCommanderClock()
+    const ledger = new ActorBudget()
+    const usage = () => {
+      const counts: Record<ActorBudgetCategory, number> = { squad: 0, campaign: 0, chronicle: 0, ambient: 0 }
+      for (const actor of actors) counts[actor.budgetCategory as ActorBudgetCategory] += 1
+      return counts
+    }
+    const calls: number[] = []
+    let disagreements = 0
+    for (let frame = 1; frame <= SECONDS * HZ; frame += 1) {
+      const second = frame / HZ
+      man.targetId = script.fights.some(([from, to]) => second > from && second <= to) ? enemy.id : null
+      const bodies = actors.map(harnessBody)
+      const leader = bodies.find((body) => body.id === commander.id)
+      assert.ok(leader)
+      const harnessCalls = advanceCommanderClock(
+        clock,
+        1 / HZ,
+        commanderGathers(harnessModel, leader, bodies, (body) => ({ x: body.x, y: 0, z: body.z }),
+          (body) => body.actionPhase !== 'idle'),
+        () => {
+          ledger.sync(usage())
+          return harnessModel === 'shipped' ? ledger.reserveOwn('campaign', 1) : ledger.reserve('campaign', 1)
+        },
+      )
+      const before = actors.length
+      self.updateCommander(commander, 1 / HZ)
+      const engineCalled = actors.length > before
+      if (engineCalled !== harnessCalls) disagreements += 1
+      if (engineCalled) calls.push(Math.round(second))
+    }
+    return { calls, disagreements, called: commander.reinforcementsCalled }
+  }
+
+  const fighting: Script = { hostile: false, fights: [[10, 40], [70, 100]], fullShare: false }
+  const idle: Script = { hostile: false, fights: [], fullShare: false }
+  const hostile: Script = { hostile: true, fights: [], fullShare: false }
+  const crowded: Script = { hostile: false, fights: [[0, SECONDS]], fullShare: true }
+  const everyCall = Array.from({ length: HARNESS_COMMANDER_LIMIT }, (_, index) => (index + 1) * HARNESS_COMMANDER_INTERVAL)
+
+  const shipped = {
+    fighting: drive('shipped', fighting),
+    idle: drive('shipped', idle),
+    hostile: drive('shipped', hostile),
+    crowded: drive('shipped', crowded),
+  }
+  const legacy = { idle: drive('legacy', idle), crowded: drive('legacy', crowded) }
+  for (const [name, result] of [...Object.entries(shipped), ...Object.entries(legacy)]) {
+    assert.equal(result.disagreements, 0, `${name}: the harness and the engine called on different frames`)
+  }
+  // Twenty-five seconds of fighting a call: the first at 35 s, the second after a lull, at
+  // 90 s; ten seconds into the next span the fight ends short of a third.
+  assert.deepEqual(shipped.fighting.calls, [35, 90])
+  assert.deepEqual(shipped.idle.calls, [])
+  assert.deepEqual(shipped.hostile.calls, everyCall)
+  assert.deepEqual(shipped.crowded.calls, [], 'a call borrowed past campaign\'s own share')
+  assert.deepEqual(legacy.idle.calls, everyCall)
+  assert.deepEqual(legacy.crowded.calls, everyCall)
+  assert.equal(legacy.idle.called, HARNESS_COMMANDER_LIMIT)
+
+  // The negative control: a harness still on the old rule is told apart from the engine
+  // on the idle garrison and on the spent share.
+  assert.ok(drive('shipped', idle, 'legacy').disagreements > 0)
+  assert.ok(drive('shipped', crowded, 'legacy').disagreements > 0)
 })

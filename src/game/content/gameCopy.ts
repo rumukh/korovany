@@ -9,6 +9,8 @@ import { computeRunRulesetFingerprint } from '../run/ruleset.ts'
 import type {
   ActorRole,
   BodyPart,
+  ChoicePayoutView,
+  ChoiceTravelView,
   ChronicleWorldEventKind,
   Faction,
   NoticeTone,
@@ -820,6 +822,98 @@ export function describeEventHandbackForContract(regionLabel: string): string {
   return `Подряду нужны люди: бой в квадрате ${regionLabel} ушёл в хронику, чем кончился — прочитаешь там.`
 }
 
+// ---------------------------------------------------------------------------
+// W2-3 — the price on a choice card
+// ---------------------------------------------------------------------------
+
+/**
+ * The words for what a choice costs and pays, said before it is made.
+ *
+ * One rule: **a card quotes only what the game will actually do.** The payout comes from the
+ * table the engine pays from, the walk from the itinerary the compass would chart, the
+ * danger from squares the player has seen. A straight line is called a straight line, and a
+ * square in fog is counted, never named.
+ */
+export const CHOICE_PRICE_COPY = {
+  payout: 'Плата',
+  timeLimit: 'Срок',
+  walk: 'Идти',
+  danger: 'Опасно',
+  fog: 'в тумане',
+  noDanger: 'Известной опасности нет',
+  payoutLabel: 'Что заплатят',
+  routeLabel: 'Срок, дорога и опасность',
+} as const
+
+const GOLD_FORMS: RussianCountForms = ['золотой', 'золотых', 'золотых']
+const RATION_FORMS: RussianCountForms = ['паёк', 'пайка', 'пайков']
+const SQUARE_FORMS: RussianCountForms = ['квадрат', 'квадрата', 'квадратов']
+
+function joinRussianList(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts[0] ?? ''
+  return `${parts.slice(0, -1).join(', ')} и ${parts[parts.length - 1]}`
+}
+
+/** «Плата: 220 золотых, +6 к урону и легендарный трофей.» Null when it pays nothing named. */
+export function describeChoicePayout(payout: ChoicePayoutView): string | null {
+  const parts: string[] = []
+  if (payout.gold > 0) parts.push(formatRussianCount(payout.gold, GOLD_FORMS))
+  if (payout.supplies > 0) parts.push(formatRussianCount(payout.supplies, RATION_FORMS))
+  if (payout.heal > 0) parts.push(`+${String(payout.heal)} здоровья`)
+  if (payout.damage > 0) parts.push(`+${String(payout.damage)} к урону`)
+  if (payout.companion) parts.push('свой в отряд')
+  if (payout.loot === 'legendary') parts.push('легендарный трофей')
+  else if (payout.loot === 'uncommon') parts.push('трофей')
+  if (parts.length === 0) return null
+  return `${CHOICE_PRICE_COPY.payout}: ${joinRussianList(parts)}.`
+}
+
+/** A contract's own clock, which starts on arrival rather than now. */
+export function describeContractTimeLimit(seconds: number): string {
+  return `${CHOICE_PRICE_COPY.timeLimit}: ${String(Math.ceil(seconds))} с с начала`
+}
+
+/** «Идти ~45 с, 370 м дороги» — at walking pace, and honest about how it was measured. */
+export function describeChoiceTravel(travel: ChoiceTravelView): string {
+  const walk = `${CHOICE_PRICE_COPY.walk} ~${String(travel.seconds)} с`
+  const meters = Math.ceil(travel.meters)
+  switch (travel.basis) {
+    case 'arrived':
+      return 'Ты уже на месте'
+    case 'road':
+      return `${walk}, ${String(meters)} м дороги`
+    case 'direct':
+      return `${walk}, ${String(meters)} м: рядом`
+    case 'straight':
+      return `${walk}, ${String(meters)} м по прямой: дороги нет`
+  }
+}
+
+/** «Опасно: B2, C3 · в тумане: 1 квадрат», or a plain «нет» about what is known. */
+export function describeChoiceDanger(travel: ChoiceTravelView): string {
+  const parts: string[] = []
+  if (travel.danger.length > 0) parts.push(`${CHOICE_PRICE_COPY.danger}: ${travel.danger.join(', ')}`)
+  if (travel.unscouted > 0) {
+    parts.push(`${CHOICE_PRICE_COPY.fog}: ${formatRussianCount(travel.unscouted, SQUARE_FORMS)}`)
+  }
+  if (parts.length === 0) return CHOICE_PRICE_COPY.noDanger
+  const line = parts.join(' · ')
+  return line.charAt(0).toUpperCase() + line.slice(1)
+}
+
+/** The short form for a destination row: «300 золотых · идти ~45 с». */
+export function describeChoiceSummary(
+  payout: ChoicePayoutView | null,
+  travel: ChoiceTravelView | null,
+): string | null {
+  const parts: string[] = []
+  if (payout && payout.gold > 0) parts.push(formatRussianCount(payout.gold, GOLD_FORMS))
+  if (travel) {
+    parts.push(travel.basis === 'arrived' ? 'на месте' : `идти ~${String(travel.seconds)} с`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
 export function describeObjectivePinned(text: string): string {
   return `Взялся: «${text}».`
 }
@@ -1212,8 +1306,7 @@ export const CARAVAN_BEAT_CHOICE_LABELS: Record<CaravanBeatOutcome, string> = {
   burn: 'Сжечь груз',
 }
 
-const RATION_FORMS: RussianCountForms = ['паёк', 'пайка', 'пайков']
-
+// W2-3 owns `RATION_FORMS`; the beat lines count rations in the same words its price cards do.
 function formatRations(count: number): string {
   return `+${formatRussianCount(count, RATION_FORMS)}`
 }
@@ -1379,8 +1472,11 @@ export const CARAVAN_CONFISCATE_PROMPT = '[E] Конфисковать груз 
 export const CARAVAN_AMBUSH_CONFISCATED_OUTCOME =
   'Груз конфискован для дворца по всем правилам. Конкуренты остались с пустой телегой.'
 export const RICH_CARAVAN_CONFISCATED_NOTICE = 'Груз конфискован. Теперь уходи от погони!'
-export const RICH_CARAVAN_CONFISCATED_MESSAGE =
-  'Груз конфискован для дворца, погоня позади. Командир выдал награду: +180 золота.'
+
+/** W2-3 — the amount is handed in from `WORLD_EVENT_REWARDS`, like every other success line. */
+export function describeRichCaravanConfiscated(gold: number): string {
+  return `Груз конфискован для дворца, погоня позади. Командир выдал награду: +${gold} золота.`
+}
 
 const SQUAD_NAMES: Record<Faction, string> = {
   elf: 'Партизаны эльфов',
@@ -1493,21 +1589,32 @@ export function describeEventStarted(title: string, description: string): string
   return `Событие: ${title}. ${description}`
 }
 
-/** The four fixed success lines; the champion's depends on how much damage it granted. */
-export const WORLD_EVENT_SUCCESS_MESSAGES: Record<
-  Exclude<RandomWorldEventKind, 'champion'>,
-  string
-> = {
-  richCaravan: 'Богатый корован ограблен, погоня позади. +180 золота.',
-  defendHome: 'Дом отбили! +90 золота и +8 здоровья.',
-  rescue: 'Пленник спасён и теперь идёт в твоём отряде.',
-  bounty: 'Заказ выполнен, награда в кармане. +70 золота.',
+/**
+ * The four fixed success lines; the champion's depends on how much damage it granted.
+ *
+ * W2-3 — the amounts are handed in from `WORLD_EVENT_REWARDS`, the table the engine pays
+ * from and the contract cards price from, instead of being spelled inside the sentence.
+ */
+export function describeRandomEventSuccess(
+  kind: Exclude<RandomWorldEventKind, 'champion'>,
+  reward: { gold: number; heal: number },
+): string {
+  switch (kind) {
+    case 'richCaravan':
+      return `Богатый корован ограблен, погоня позади. +${reward.gold} золота.`
+    case 'defendHome':
+      return `Дом отбили! +${reward.gold} золота и +${reward.heal} здоровья.`
+    case 'rescue':
+      return 'Пленник спасён и теперь идёт в твоём отряде.'
+    case 'bounty':
+      return `Заказ выполнен, награда в кармане. +${reward.gold} золота.`
+  }
 }
 
-export function describeChampionDefeated(damageBonus: number): string {
+export function describeChampionDefeated(gold: number, damageBonus: number): string {
   return damageBonus > 0
-    ? `Чемпион побеждён! +120 золота и +${damageBonus} к урону.`
-    : 'Чемпион побеждён! +120 золота. Урон уже достиг предела.'
+    ? `Чемпион побеждён! +${gold} золота и +${damageBonus} к урону.`
+    : `Чемпион побеждён! +${gold} золота. Урон уже достиг предела.`
 }
 
 export function describeKillReward(
@@ -2060,7 +2167,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'info',
   },
   contracts: {
-    text: 'Пунктов открылось сразу несколько, и один из них — подряд твоей стороны. Берись за любой: обязательные закроешь в любом порядке.',
+    text: 'Пунктов открылось несколько, один из них — подряд твоей стороны. На карточке плата, срок, дорога и где опасно. Обязательные закроешь в любом порядке.',
     tone: 'info',
   },
   exclusive: {

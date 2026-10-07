@@ -38,6 +38,10 @@ changing damage state or intentional injury-related vision loss. Full mode keeps
 the original panel arrangement. Browser layout/visual acceptance is separate from
 the CPU-tested DOM contract.
 
+A contract card's price lines (**Плата**, **Срок**, **Идти**, **Опасно**) render in both
+modes, inside the **Поход** disclosure in Compact. Narrow screens hide a card's stake
+prose but keep the price, since it is what the decision is made with.
+
 On desktop layouts, both modes keep two lanes clear. The right-hand column ends
 above the bottom-right mouse-capture card and scrolls, so the card can no longer
 cover a rumour's «Взяться» while capture is off. Wider than 1000px, the notice

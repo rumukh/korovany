@@ -116,12 +116,27 @@ traded blows within the last 10 seconds and 60 m. That one you finish first, on 
 terms, while the contract waits with its grace paused. Located chronicle fights are handed
 back, farthest first, when the contract needs their actors.
 
+Every card on the board, in the journal and in the atlas says what the choice is worth before
+you take it. **Плата** is everything a kept contract pays: its gold, plus a companion, damage,
+healing or a trophy, named plainly. Duel damage is only what the run's champion cap still allows.
+**Срок** is its clock once started. **Идти** times the walk along the itinerary the compass would
+chart, at walking pace on the legs you have; with no road to plan it quotes the straight line and
+says so. It ignores sprint, fights and props. **Опасно** names the hostile or contested squares
+you already know on the way; squares still in fog are counted, never named. Payouts come from
+one table, the one the game pays from.
+
 Only a genuine inability to stage the contract spends its 12-second start grace: an actor
 budget that cannot be reclaimed, or no walkable ground at the site. The notice then names
 the reason. Lingering by the arm you did not take costs nothing, and the second arm waits
 without losing patience while the first is still on the ground. A lost contract still fails
 forward: walk to its site and the node closes without the payout. A caravan beat never
 takes a contract's fighters to make room for its own; on a crowded road it waits and retries.
+
+Nor do idle garrisons crowd a contract out. A commander on your own side, such as the palace
+guard's garrison commanders, calls for reinforcements only while his men are fighting, and no
+commander's call ever takes the room a contract would stage in: it waits for his own side's
+share of the field. The guard used to reach a contract beside the palace and find the square
+already full of soldiers nobody had sent for.
 
 ## Caravan beats
 

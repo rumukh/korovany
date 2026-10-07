@@ -228,7 +228,6 @@ import {
   CARAVAN_BEATS_SAVE_WARNING,
   RICH_CARAVAN_CONFISCATE_DESCRIPTION,
   CARAVAN_CONFISCATE_PROMPT,
-  RICH_CARAVAN_CONFISCATED_MESSAGE,
   RICH_CARAVAN_CONFISCATED_NOTICE,
   chronicleEventTone,
   describeBeastProwler,
@@ -278,6 +277,8 @@ import {
   describeEventHandbackForContract,
   describeRandomEventStoodDown,
   describeRandomEventStoodDownForCaravan,
+  describeRandomEventSuccess,
+  describeRichCaravanConfiscated,
   describeRationEaten,
   describeRazedSite,
   describeRout,
@@ -305,7 +306,6 @@ import {
   SHIELD_DROPPED_NOTICE,
   TREASURE_ALREADY_LOOTED_NOTICE,
   WORLD_EVENT_FAILURE_MESSAGES,
-  WORLD_EVENT_SUCCESS_MESSAGES,
   FINALE_COPY,
   describeFinaleDefeat,
   FINALE_RESTORE_WARNING,
@@ -457,6 +457,7 @@ import {
   findCivilianAlarm,
   flankApproachAngle,
   flankBlend,
+  isCommanderGroupEngaged,
   isPacifistRole,
   localGroupShare,
   playerEngagementRank,
@@ -510,6 +511,7 @@ import {
   createCombatMasteryState,
   missingPlayerLegs,
   normalizeCombatMastery,
+  PLAYER_WALK_SPEED,
   playerLegMobility,
   raisePerfectGuard,
   resolveCombatMasteryContact,
@@ -533,7 +535,10 @@ import {
   type CaravanRobber,
 } from './world/CaravanClaim.ts'
 import {
+  CARAVAN_AMBUSH_DEFENDED_REWARD,
+  CHAMPION_DAMAGE_CAP,
   EVENT_RETRY,
+  WORLD_EVENT_REWARDS,
   advanceContract,
   advanceEventTimer,
   advanceRumourProgress,
@@ -549,6 +554,7 @@ import {
   enemyHealthMultiplier,
   ensureContractProgress,
   eventCooldownRange,
+  eventDamageGain,
   findContractTemplate,
   getContractNodes,
   getContractProgress,
@@ -1495,7 +1501,6 @@ const OUTLINE_PLAYER_HIDE_DISTANCE_SQ = 2.4 * 2.4
 const FIRST_EVENT_AT = 30
 const THREAT_WAVE_FIRST_AT = 240
 const CORPSE_LIFETIME = 12
-const CHAMPION_DAMAGE_CAP = 18
 const DEFEND_HOME_MAX_DISTANCE = 95
 /**
  * Roadmap 1.4 — how close the player has to get before a signature contract goes live.
@@ -1655,11 +1660,6 @@ const CARAVAN_LOOT_CARGO_SHARE = 0.65
 const CARAVAN_LOOT_TELL_INTENSITY = 0.55
 /** W2-2 — a beat waits this long before asking the actor budget again on a crowded road. */
 const CARAVAN_BEAT_SPAWN_RETRY_SECONDS = 2
-/**
- * W1-2 backlog — defending a cart of one's own side pays less than robbing one, because the
- * cargo stays with its owner. 0.65 of the 140 a robbery of the same ambush pays.
- */
-const CARAVAN_AMBUSH_DEFENDED_REWARD = 90
 
 function caravanBeatOwnerId(beatId: string): string {
   return `caravan-beat:${beatId}`
@@ -1867,14 +1867,6 @@ const LOCATED_EVENT_TIMEOUT = 150
 const MATERIALIZE_INTERVAL = 6
 /** A located fight this close to the player counts as "the player's problem". */
 const THREAT_WAVE_EVENT_RADIUS = 45
-
-const LOCATED_EVENT_REWARDS: Record<ChronicleWorldEventKind, number> = {
-  factionRaid: 110,
-  caravanAmbush: 140,
-  warband: 80,
-  aftermath: 45,
-  beastRaid: 95,
-}
 
 /** Layer 3 — how many of a beast raid's slots go to the settlement's own garrison. */
 const BEAST_RAID_DEFENDERS = 2
@@ -6028,9 +6020,17 @@ export class GameEngine {
   }
 
   private buildExpeditionInput(): ExpeditionInput {
+    const discoveredRegionIds = new Set(this.generatedWorld.discoveredRegionIds.map(String))
+    const player = { x: this.player.position.x, z: this.player.position.z }
+    // W2-3 — the cards time a walk as the compass would chart it, on the legs the player has now.
+    const knowledge = {
+      faction: this.faction, discoveredRegionIds,
+      chronicleRegions: this.chronicleRegions, contestedRegionIds: this.chronicleContestedRegionIds,
+    }
+    const walkSpeed = PLAYER_WALK_SPEED * playerLegMobility(this.body)
     return {
       faction: this.faction,
-      player: { x: this.player.position.x, z: this.player.position.z },
+      player,
       heading: this.cameraYaw,
       objectives: this.objectives,
       activeObjectiveId: this.getActiveGeneratedObjective()?.id ?? null,
@@ -6038,9 +6038,11 @@ export class GameEngine {
         blueprint: this.generatedBlueprint, faction: this.faction,
         objectives: this.objectives, contracts: this.campaignContracts,
         sitePosition: (id) => this.generatedWorld.getSitePosition(id) ?? null,
+        championDamageBonus: this.championDamageBonus,
+        travel: (point) => this.expeditionPlanner.measureTravel(knowledge, player, point, walkSpeed),
       }),
       rumours: this.buildRumourViews(),
-      discoveredRegionIds: new Set(this.generatedWorld.discoveredRegionIds.map(String)),
+      discoveredRegionIds,
       chronicleRegions: this.chronicleRegions,
       contestedRegionIds: this.chronicleContestedRegionIds,
       caravanBeats: caravanBeatExpeditionTargets(
@@ -7093,7 +7095,7 @@ export class GameEngine {
     this.isSprinting = sprinting
     if (sprinting) this.cancelBowAim()
     const speed =
-      8.2 *
+      PLAYER_WALK_SPEED *
       mobility *
       (sprinting ? 1.65 : 1) *
       (this.shieldActive ? SHIELD_SPEED_MULTIPLIER : 1)
@@ -7143,7 +7145,7 @@ export class GameEngine {
         ? Math.atan2(forward.x, forward.z)
         : Math.atan2(move.x, move.z)
       const travelled = Math.hypot(this.player.position.x - startX, this.player.position.z - startZ)
-      const gaitSpeed = 8.2 * (sprinting ? 1.65 : 1)
+      const gaitSpeed = PLAYER_WALK_SPEED * (sprinting ? 1.65 : 1)
       this.playerGaitPhase = (this.playerGaitPhase + travelled * (sprinting ? 15 : 10) / gaitSpeed) % (Math.PI * 2)
       const motion = delta > 0 ? Math.min(1, travelled / (speed * delta)) : 0
       const stride = this.onGround ? Math.sin(this.playerGaitPhase) * 0.62 * motion : 0
@@ -9265,12 +9267,16 @@ export class GameEngine {
 
   private updateCommander(actor: Actor, delta: number): void {
     this.broadcastCommanderOrder(actor)
+    if (!this.commanderGathersMen(actor)) return
     actor.reinforcementTimer -= delta
     if (actor.reinforcementTimer > 0) return
     actor.reinforcementTimer += COMMANDER_REINFORCEMENT_INTERVAL
     if (
       actor.reinforcementsCalled >= COMMANDER_REINFORCEMENT_LIMIT ||
-      !this.reserveActorSlots(actor.budgetCategory, 1)
+      // W1-6 — out of his own side's share only: a summons never borrows the room a
+      // contract or a located fight would stage in, and never pushes anyone out for it.
+      // With no room it waits for the next call, as it always has.
+      !this.reserveOwnActorSlots(actor.budgetCategory, 1)
     ) {
       return
     }
@@ -9297,6 +9303,30 @@ export class GameEngine {
     if (actor.mesh.position.distanceTo(this.player.position) < 35) {
       this.callbacks.onNotice(REINFORCEMENTS_ORDERED_NOTICE, 'warning')
     }
+  }
+
+  /**
+   * W1-6 — whether a commander's reinforcement clock runs this frame.
+   *
+   * One hostile to the player keeps the old rule: the men he gathers are part of the fight
+   * the player walks into, so he gathers them whether or not anyone is swinging yet. One
+   * who is not — the guard's own garrisons at the two palace strongholds the elves and the
+   * villain march on — calls for men only while his own are fighting, and his clock stands
+   * still in between. He used to call four the moment his square streamed in, every time it
+   * did, with nobody to fight, and those idle garrisons were what filled the room a guard
+   * contract nearby needed.
+   */
+  private commanderGathersMen(commander: Actor): boolean {
+    return (
+      commander.hostileToPlayer ||
+      isCommanderGroupEngaged(
+        commander,
+        this.actors,
+        COMMANDER_ORDER_RANGE,
+        (actor) => actor.mesh.position,
+        (actor) => actor.action !== null,
+      )
+    )
   }
 
   /**
@@ -11774,6 +11804,15 @@ export class GameEngine {
     return this.actorBudget.reserveUpTo(category, count)
   }
 
+  /**
+   * W1-6 — a reservation out of the category's own share alone: nothing borrowed from the
+   * categories below it, and nobody made to yield. For a summons that can wait.
+   */
+  private reserveOwnActorSlots(category: ActorBudgetCategory, count: number): boolean {
+    this.actorBudget.sync(this.actorUsageByCategory())
+    return this.actorBudget.reserveOwn(category, count)
+  }
+
   /** Frees room for a higher-priority category. Ambient is asked first, by design. */
   private yieldActorSlots(category: ActorBudgetCategory, count: number): number {
     let freed = 0
@@ -12231,36 +12270,23 @@ export class GameEngine {
     succeeded: boolean,
   ): string {
     if (!succeeded) return WORLD_EVENT_FAILURE_MESSAGES[kind]
-    if (kind === 'richCaravan') {
-      this.gold += 180
-      this.achievements.recordGoldEarned(180)
-      this.achievements.recordCaravanRobbed(true)
-      // W2-2 — the guard never robs a cart; it confiscates one for the palace.
-      return this.faction === 'guard'
-        ? RICH_CARAVAN_CONFISCATED_MESSAGE
-        : WORLD_EVENT_SUCCESS_MESSAGES.richCaravan
+    // W2-3 — every amount comes from the table the contract cards price from.
+    const reward = WORLD_EVENT_REWARDS[kind]
+    if (reward.gold > 0) {
+      this.gold += reward.gold
+      this.achievements.recordGoldEarned(reward.gold)
     }
-    if (kind === 'defendHome') {
-      this.gold += 90
-      this.achievements.recordGoldEarned(90)
-      this.health = Math.min(this.maxHealth, this.health + 8)
-      return WORLD_EVENT_SUCCESS_MESSAGES.defendHome
-    }
+    if (kind === 'richCaravan') this.achievements.recordCaravanRobbed(true)
+    if (reward.heal > 0) this.health = Math.min(this.maxHealth, this.health + reward.heal)
     if (kind === 'champion') {
-      this.gold += 120
-      this.achievements.recordGoldEarned(120)
-      const damageBonus = Math.min(
-        6,
-        Math.max(0, CHAMPION_DAMAGE_CAP - this.championDamageBonus),
-      )
+      const damageBonus = eventDamageGain(reward, this.championDamageBonus)
       this.championDamageBonus += damageBonus
       this.damage += damageBonus
-      return describeChampionDefeated(damageBonus)
+      return describeChampionDefeated(reward.gold, damageBonus)
     }
-    if (kind === 'rescue') return WORLD_EVENT_SUCCESS_MESSAGES.rescue
-    this.gold += 70
-    this.achievements.recordGoldEarned(70)
-    return WORLD_EVENT_SUCCESS_MESSAGES.bounty
+    // W2-2 — the guard never robs a cart; it confiscates one for the palace, for the same pay.
+    if (kind === 'richCaravan' && this.faction === 'guard') return describeRichCaravanConfiscated(reward.gold)
+    return describeRandomEventSuccess(kind, reward)
   }
 
   /**
@@ -12277,7 +12303,7 @@ export class GameEngine {
     if (succeeded) {
       const reward = defended
         ? CARAVAN_AMBUSH_DEFENDED_REWARD
-        : LOCATED_EVENT_REWARDS[event.kind as ChronicleWorldEventKind]
+        : WORLD_EVENT_REWARDS[event.kind].gold
       this.gold += reward
       this.achievements.recordGoldEarned(reward)
       // W1-2 — taking a chronicle cart's cargo is robbing a caravan. Counted here, where an
@@ -15099,14 +15125,11 @@ export class GameEngine {
   }
 
   private spawnEventLoot(event: WorldEvent): void {
-    const legendary = event.kind === 'champion'
+    const tier = WORLD_EVENT_REWARDS[event.kind].loot
     // A located event was won where it stood, so its spoils stay there.
     const position =
-      legendary || event.anchor === 'located' ? event.markerPos : this.player.position
-    this.spawnLoot(
-      this.rollLootReward(legendary ? 'legendary' : 'uncommon'),
-      position,
-    )
+      tier === 'legendary' || event.anchor === 'located' ? event.markerPos : this.player.position
+    this.spawnLoot(this.rollLootReward(tier), position)
   }
 
   private rollLootReward(minimumRarity: LootRarity): LootReward {
