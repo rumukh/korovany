@@ -24,11 +24,13 @@ import test from 'node:test'
 import * as THREE from 'three'
 import { getBlueprintRegionBounds, getSiteWorldPosition2D } from '../src/game/content/registry.ts'
 import {
+  RICH_CARAVAN_LOOT_TAKEN_NOTICE,
   WORLD_EVENT_FAILURE_MESSAGES,
   describeContractAbandoned,
   describeContractQueued,
   describeContractStarted,
   describeContractTitle,
+  describeContractWaitsForEvent,
   describeEventHandbackForContract,
   describeRandomEventStoodDown,
   formatRegionGridLabel,
@@ -126,6 +128,23 @@ interface HeadlessActor {
   deathAt: number | null
   healthBar: THREE.Sprite
   healthBarTexture: THREE.Texture
+  // What the production damage and death paths read and write.
+  reaction: string
+  reactionRemaining: number
+  poise: number
+  maxPoise: number
+  poiseRecoveryDelay: number
+  staggerImmunity: number
+  retreatTimer: number
+  alertCooldown: number
+  chargeTimer: number
+  healthBarVisibleUntil: number
+  velocity: THREE.Vector3
+  knockbackVelocity: THREE.Vector3
+  lastHitDirection: THREE.Vector3
+  deathStartPosition: THREE.Vector3
+  deathStartRotation: THREE.Euler
+  deathStyle: string | null
 }
 
 interface LiveEvent {
@@ -304,7 +323,7 @@ function fixture(faction: Faction = 'villain', contracts?: CampaignContractState
     eventSequence: 0,
     activeEvents: [],
     activeContractNodeId: null,
-    contractQueueExplainedNodeId: null,
+    contractWaitExplained: null,
     campaignContracts: board,
     chronicleCommitments: createChronicleCommitmentState(),
     chronicleRegions: createChronicleRegions(blueprint),
@@ -339,6 +358,8 @@ function fixture(faction: Faction = 'villain', contracts?: CampaignContractState
       getRunState: () => achievementState(runId, faction),
       recordGoldEarned: (amount: number) => goldEarned.push(amount),
       recordCaravanRobbed() {},
+      recordKill() {},
+      recordPlayerDamage() {},
       recordWorldEvent: (kind: string, succeeded: boolean) => worldEvents.push({ kind, succeeded }),
     },
     callbacks: {
@@ -359,6 +380,14 @@ function fixture(faction: Faction = 'villain', contracts?: CampaignContractState
     locatedEventCopy: new Map(),
     generatedCaravanTravelDirection: new THREE.Vector2(1, 0),
     characterHeightSample: () => 0,
+    // The damage paths: no injury rolls, legacy presentation, nothing on screen.
+    combatRng: () => 0.99,
+    damageFlash: 0,
+    screenShakeEnabled: true,
+    reducedMotion: false,
+    lastPlayerDamageRole: null,
+    lastPlayerDamageAllegiance: null,
+    bledOut: false,
   })
   Reflect.set(engine, 'actorBudget', new ActorBudget((category, count) =>
     invoke<number>(engine, 'yieldActorSlots', category, count)))
@@ -373,6 +402,14 @@ function fixture(faction: Faction = 'villain', contracts?: CampaignContractState
     'spawnDecal',
     'spawnSmokeParticle',
     'spawnEventLoot',
+    'createBloodBurst',
+    'createHitParticles',
+    'createSparks',
+    'presentPhysicalContact',
+    'presentCombatFeedback',
+    'detachActorLimb',
+    'addTrauma',
+    'interruptFinaleAttack',
   ]) {
     Reflect.set(engine, method, () => {})
   }
@@ -430,6 +467,22 @@ function fixture(faction: Faction = 'villain', contracts?: CampaignContractState
       deathAt: null,
       healthBar: new THREE.Sprite(),
       healthBarTexture: new THREE.Texture(),
+      reaction: 'none',
+      reactionRemaining: 0,
+      poise: 72,
+      maxPoise: 72,
+      poiseRecoveryDelay: 0,
+      staggerImmunity: 0,
+      retreatTimer: 0,
+      alertCooldown: 10,
+      chargeTimer: 0,
+      healthBarVisibleUntil: 0,
+      velocity: new THREE.Vector3(),
+      knockbackVelocity: new THREE.Vector3(),
+      lastHitDirection: new THREE.Vector3(0, 0, 1),
+      deathStartPosition: new THREE.Vector3(),
+      deathStartRotation: new THREE.Euler(),
+      deathStyle: null,
       ...extra,
     }
     actors.push(spawned)
@@ -546,6 +599,52 @@ function restoreLegacyAnchoredGate(probe: Probe): void {
   Reflect.set(probe.engine, 'startContractEvent', function legacy(this: object, ...args: unknown[]) {
     return Reflect.get(this, 'playerAnchoredEvent') ? 'crowded' : Reflect.apply(shipped, this, args)
   })
+}
+
+/** `GameEngine`'s `EVENT_ENGAGEMENT_WINDOW`: a fight lasts this long after the last blow. */
+const ENGAGEMENT_WINDOW = 10
+
+/** Puts the pre-carve-out rule back: every random event is stood down on arrival. */
+function ignoreEngagement(probe: Probe): void {
+  Reflect.set(probe.engine, 'isPlayerEngagedWith', () => false)
+}
+
+function ownedActor(probe: Probe, event: LiveEvent, index = 0): HeadlessActor {
+  const owned = probe.actors.find((candidate) => candidate.id === event.ownedActorIds[index])
+  assert.ok(owned, `${event.kind} has no actor ${String(index)}`)
+  return owned
+}
+
+/** One blow each way, through the production `damageActor` and `damagePlayer`. */
+function tradeBlows(probe: Probe, actor: HeadlessActor): void {
+  invoke(probe.engine, 'damageActor', actor, 1, probe.player.position.clone(), probe.faction, true, {
+    attackKind: 'melee',
+  })
+  invoke(probe.engine, 'damagePlayer', 1, new THREE.Vector3(0, 0, 1), false, {
+    attackKind: 'allyMelee',
+    sourceActorId: actor.id,
+    source: { role: actor.role, allegiance: actor.allegiance },
+  })
+}
+
+function strikeDown(probe: Probe, actor: HeadlessActor): void {
+  invoke(probe.engine, 'damageActor', actor, actor.hp + 1, probe.player.position.clone(), probe.faction, true, {
+    attackKind: 'melee',
+  })
+}
+
+/**
+ * Walks the player onto the signature contract's site with `actor` alongside. One frame is
+ * spent just outside the trigger ring first, so the event's marker follows its actor the
+ * way it does every frame in play.
+ */
+function arriveAlongside(probe: Probe, actor: HeadlessActor): void {
+  const site = siteOf(probe.blueprint, probe.signature)
+  probe.standAt(site, probe.start, 35)
+  actor.mesh.position.set(probe.player.position.x + 3, 0, probe.player.position.z)
+  probe.frames(FRAME)
+  probe.standAt(site)
+  actor.mesh.position.set(site.x + 3, 0, site.z)
 }
 
 /** A located chronicle fight with `size` chronicle actors, built by the engine's own factory. */
@@ -866,6 +965,147 @@ test('a random event already won on the arrival frame still pays, then the contr
   assert.equal(running.status(running.signature), 'active')
   assert.deepEqual(running.worldEvents, [])
   assert.equal(running.gold(), 55)
+})
+
+test('a bounty the player is fighting finishes first: the contract waits, then starts, and the bounty pays', () => {
+  const probe = fixture('villain')
+  const bounty = probe.rollRandomEvent('bounty')
+  const mark = ownedActor(probe, bounty)
+  arriveAlongside(probe, mark)
+  tradeBlows(probe, mark)
+  probe.frames(FRAME)
+  assert.equal(probe.status(probe.signature), 'offered', 'the contract erased a fight under the player')
+  assert.ok(probe.events().includes(bounty))
+  // Longer than the whole grace, still trading blows: the contract waits and spends nothing.
+  for (let second = 0; second < PAST_GRACE; second += 1) {
+    probe.frames(1)
+    tradeBlows(probe, mark)
+  }
+  assert.equal(probe.status(probe.signature), 'offered')
+  assert.equal(probe.progress(probe.signature)?.waited, 0, 'the wait spent grace')
+  assert.equal(probe.notices.filter((notice) =>
+    notice.message === describeContractWaitsForEvent('plunder', bounty.title)).length, 1)
+  // The mark goes down: the bounty pays on its own terms, and the contract starts next.
+  strikeDown(probe, mark)
+  probe.frames(FRAME)
+  assert.deepEqual(probe.worldEvents, [{ kind: 'bounty', succeeded: true }])
+  assert.equal(probe.gold(), 55 + 70)
+  probe.frames(FRAME)
+  assert.equal(probe.status(probe.signature), 'active')
+  assert.ok(!probe.notices.some((notice) => notice.message === describeRandomEventStoodDown(bounty.title)))
+
+  // Negative control: without the carve-out the same fight vanishes on arrival, unpaid.
+  const control = fixture('villain')
+  ignoreEngagement(control)
+  const erased = control.rollRandomEvent('bounty')
+  const controlMark = ownedActor(control, erased)
+  arriveAlongside(control, controlMark)
+  tradeBlows(control, controlMark)
+  control.frames(FRAME)
+  assert.equal(control.status(control.signature), 'active')
+  assert.ok(!control.events().includes(erased))
+  assert.ok(!control.actors.includes(controlMark), 'the control kept the mark, so it proves nothing')
+  assert.equal(control.gold(), 55)
+})
+
+test('a rich caravan the player has robbed is not erased before its escape or its clock', () => {
+  const site = siteOf(BLUEPRINT, getContractNodes(BLUEPRINT, 'villain')[0])
+  const robNearSite = (probe: Probe): LiveEvent => {
+    const caravan = probe.rollRandomEvent('richCaravan')
+    const [cart] = Reflect.get(caravan, 'ownedProps') as THREE.Object3D[]
+    // The cart rolled into B2, and the villain robs it ten metres short of the site.
+    cart.position.set(site.x + 10, 0, site.z)
+    probe.standAt({ x: site.x + 10, z: site.z + 2 })
+    invoke(probe.engine, 'interact')
+    assert.ok(probe.notices.some((notice) => notice.message === RICH_CARAVAN_LOOT_TAKEN_NOTICE))
+    return caravan
+  }
+
+  // The escape: eighteen metres from the robbery point, still on the contract's site.
+  const escaped = fixture('villain')
+  const loot = robNearSite(escaped)
+  escaped.frames(5)
+  assert.equal(escaped.status(escaped.signature), 'offered')
+  assert.ok(escaped.events().includes(loot), 'a robbed cart was erased before its escape')
+  assert.equal(escaped.notices.filter((notice) =>
+    notice.message === describeContractWaitsForEvent('plunder', loot.title)).length, 1)
+  escaped.standAt({ x: site.x - 9, z: site.z + 2 })
+  escaped.frames(FRAME)
+  assert.deepEqual(escaped.worldEvents, [{ kind: 'richCaravan', succeeded: true }])
+  assert.equal(escaped.gold(), 55 + 180)
+  escaped.frames(FRAME)
+  assert.equal(escaped.status(escaped.signature), 'active')
+
+  // The clock: robbed and never carried off, the cart runs out its own 25 s first.
+  const lingered = fixture('villain')
+  const kept = robNearSite(lingered)
+  lingered.frames(20)
+  assert.ok(lingered.events().includes(kept), 'a robbed cart was erased before its clock ran out')
+  assert.equal(lingered.status(lingered.signature), 'offered')
+  assert.equal(lingered.progress(lingered.signature)?.waited, 0)
+  lingered.frames(10)
+  assert.ok(!lingered.events().some((event) => event === kept))
+  assert.deepEqual(lingered.worldEvents, [{ kind: 'richCaravan', succeeded: false }])
+  assert.equal(lingered.status(lingered.signature), 'active')
+
+  // Negative control: without the carve-out the robbed cart vanishes on arrival, unpaid.
+  const control = fixture('villain')
+  ignoreEngagement(control)
+  const robbed = robNearSite(control)
+  control.frames(FRAME)
+  assert.equal(control.status(control.signature), 'active')
+  assert.ok(!control.events().includes(robbed))
+  assert.equal(control.gold(), 55)
+})
+
+test('a champion the player stopped fighting, or walked away from, is stood down as before', () => {
+  // Stopped fighting: the contract waits out the engagement window, then stands it down.
+  const probe = fixture('villain')
+  const champion = probe.rollRandomEvent('champion')
+  const body = ownedActor(probe, champion)
+  arriveAlongside(probe, body)
+  tradeBlows(probe, body)
+  let startedAfter = -1
+  for (let waited = FRAME; waited <= 15; waited += FRAME) {
+    probe.frames(FRAME)
+    if (probe.status(probe.signature) === 'active') {
+      startedAfter = waited
+      break
+    }
+  }
+  assert.ok(
+    Math.abs(startedAfter - ENGAGEMENT_WINDOW) <= FRAME * 1.5,
+    `the champion was stood down after ${String(startedAfter)} s`,
+  )
+  const messages = probe.notices.map((notice) => notice.message)
+  assert.ok(messages.includes(describeContractWaitsForEvent('plunder', champion.title)))
+  assert.ok(messages.includes(describeRandomEventStoodDown(champion.title)))
+  assert.deepEqual(probe.worldEvents, [])
+  assert.equal(probe.gold(), 55)
+
+  // Walked away: the blow is fresh, but the champion is 70 m off, so it goes at once.
+  const far = fixture('villain')
+  const distant = far.rollRandomEvent('champion')
+  const farBody = ownedActor(far, distant)
+  const site = siteOf(far.blueprint, far.signature)
+  far.standAt(site, far.start, 35)
+  farBody.mesh.position.set(site.x + 70, 0, site.z)
+  far.frames(FRAME)
+  far.standAt(site)
+  tradeBlows(far, farBody)
+  far.frames(FRAME)
+  assert.equal(far.status(far.signature), 'active')
+  assert.ok(!far.events().includes(distant))
+
+  // Negative control: an engagement that never lapsed would hold the contract for as long
+  // as a timerless champion lives, which is the strand the disengagement bound prevents.
+  const held = fixture('villain')
+  Reflect.set(held.engine, 'isPlayerEngagedWith', () => true)
+  const forever = held.rollRandomEvent('champion')
+  arriveAlongside(held, ownedActor(held, forever))
+  held.frames(60)
+  assert.equal(held.status(held.signature), 'offered')
+  assert.ok(held.events().includes(forever))
 })
 
 test('the bridge ambush and a contract never cancel each other, and neither strands', () => {

@@ -783,6 +783,15 @@ export function describeContractQueued(id: ContractId, running: ContractId): str
 }
 
 /**
+ * W1-1 — the player reached the contract in the middle of a random event of their own: a
+ * fight they are trading blows in, a cart they have just robbed. The contract waits, its
+ * patience untouched, rather than make that vanish.
+ */
+export function describeContractWaitsForEvent(id: ContractId, eventTitle: string): string {
+  return `Сначала доделай начатое: пока идёт «${eventTitle}», «${CONTRACT_TITLES[id]}» подождёт.`
+}
+
+/**
  * W1-1 — a random event called off because the player reached the contract they chose.
  * The interruption is the game's own, so it costs nothing and pays nothing.
  */

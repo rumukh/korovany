@@ -109,8 +109,10 @@ in the HUD or the journal, and walk to its site: the contract starts when you ar
 the game's own random events cannot take it away. None is rolled while a contract is on the
 ground, or while the un-started contract you are heading for is within 120 m. A random event
 still running when you arrive is called off with no penalty, no reward and no failed-event
-record, and located chronicle fights are handed back, farthest first, when the contract
-needs their actors.
+record, unless you are in the middle of it: a cart you have robbed, or a fight in which you
+traded blows within the last 10 seconds and 60 m. That one you finish first, on its own
+terms, while the contract waits with its grace paused. Located chronicle fights are handed
+back, farthest first, when the contract needs their actors.
 
 Only a genuine inability to stage the contract spends its 12-second start grace: an actor
 budget that cannot be reclaimed, or no walkable ground at the site. The notice then names
