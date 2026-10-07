@@ -258,13 +258,13 @@ n = 0…39, all three policies, 120 runs a row.
 
 ### The player's own packs make room
 
-`HARNESS_SHIPPED_ARMS` as W2-1 left them (`escalation: 'progress'`), on both arms of the fork, with `staging` at
-`none` and then `friendly`; the same seeds and settings.
+`HARNESS_SHIPPED_ARMS` as W2-1 and W2-2's first PR left them (`escalation: 'progress'`, defended carts), on both
+arms of the fork, with `staging` at `none` and then `friendly`; the same seeds and settings.
 
 | Arm · faction | Arrivals | Started / kept | `crowded` | Packs stepped back per run | Win / defeat / timeout |
 | --- | ---: | --- | --- | --- | --- |
 | nearest · elf | 120 | 120 / 118 | 0 → 0 | 0 → 0 | 57 / 44 / 19 |
-| nearest · guard | 120 | 120 / 108 | 0 → 0 | 0 → 0 | 64 / 44 / 12 |
+| nearest · guard | 120 | 120 / 108 | 0 → 0 | 0 → 0 | 66 / 42 / 12 |
 | nearest · villain | 120 | 120 / 120 | 0 → 0 | 0 → 0 | 75 / 34 / 11 |
 | contrary · elf | 120 | 120 / 118 | 0 → 0 | 0 → 0 | 48 / 54 / 18 |
 | contrary · guard | 120 | 117 / 94 → 120 / 97 | 3 → 0 | 0 → 0.025 | 61 / 40 / 19 → 61 / 39 / 20 |
@@ -275,7 +275,7 @@ n = 0…39, all three policies, 120 runs a row.
 - On the guard's contrary arm the three arrivals at «Зверьё у домиков» now start. In each run one pack of the
   palace's soldiers, out of sight behind the guard, steps back and comes home later, and all three contracts are
   kept. The cautious run that died at 142 s now lasts to the time limit, so one defeat becomes a timeout. Encounters
-  fielded per run move by 0.02, kills by 0.04 and the duelist's median win by 1.0 s.
+  fielded per run move by 0.02, kills by 0.03 and the duelist's median win by 1.0 s.
 - `tests/contractStaging.test.ts` arrives at every contract site of the same 40 seeds through the engine's own
   spawner, facing each of four ways. With nobody stepping back the guard's one site is crowded; with the staging no
   site is, for any faction or heading. No enemy and nothing in view ever stepped back.
