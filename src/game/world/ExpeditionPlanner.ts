@@ -33,7 +33,8 @@ export interface ExpeditionTargetIdentity {
 }
 export interface ExpeditionState {
   version: 1
-  mode: 'campaign' | 'selected' | 'none'
+  /** `campaign` charts the active objective; `selected` charts an explicit atlas choice. */
+  mode: 'campaign' | 'selected'
   target: ExpeditionTargetIdentity | null
   preference: ExpeditionPreference
 }
@@ -124,7 +125,7 @@ export interface ExpeditionView {
   cautious: ExpeditionRoute | null
   transport: ExpeditionTransport
   guidance: ExpeditionGuidance | null
-  bearingReason: 'not-planned' | 'fog' | null
+  bearingReason: 'fog' | null
   notice: ExpeditionNotice
 }
 export interface ExpeditionInput {
@@ -163,8 +164,13 @@ export function normalizeExpeditionState(value: unknown): { state: ExpeditionSta
       (record.mode === 'campaign' || record.mode === 'none' || record.mode === 'selected') &&
       (record.mode === 'selected' ? target !== null : record.target === null)
     ) {
+      // A version-1 `none` is the old «Убрать маршрут». Clearing now returns to the
+      // active objective's route, so such a save resumes on that default.
       return {
-        state: { version: 1, mode: record.mode, target, preference: record.preference },
+        state: {
+          version: 1, mode: record.mode === 'selected' ? 'selected' : 'campaign', target,
+          preference: record.preference,
+        },
         notice: null,
       }
     }
@@ -617,7 +623,8 @@ export class ExpeditionPlanner {
   select(target: ExpeditionTargetIdentity | null, input: ExpeditionInput): boolean {
     if (target !== null && !buildExpeditionTargets(this.blueprint, input)
       .some((entry) => entry.key === expeditionTargetKey(target))) return false
-    this.state = { ...this.state, mode: target ? 'selected' : 'none', target: target ? { ...target } : null }
+    // Clearing an explicit choice returns to the active objective's route, not to nothing.
+    this.state = { ...this.state, mode: target ? 'selected' : 'campaign', target: target ? { ...target } : null }
     this.notice = null
     this.decisionKey = ''
     return true
@@ -637,10 +644,9 @@ export class ExpeditionPlanner {
       this.notice = completedBridgeTarget ? null : 'stale-target'
       this.decisionKey = ''
     }
-    const target = this.state.mode === 'none' ? null
-      : targets.find((entry) => this.state.mode === 'selected'
-        ? this.state.target && entry.key === expeditionTargetKey(this.state.target)
-        : entry.kind === 'objective' && entry.id === input.activeObjectiveId) ?? null
+    const target = targets.find((entry) => this.state.mode === 'selected'
+      ? this.state.target && entry.key === expeditionTargetKey(this.state.target)
+      : entry.kind === 'objective' && entry.id === input.activeObjectiveId) ?? null
     const knowledge = buildExpeditionKnowledge(input, this.blueprint)
     const attached = attachments(this.graph, input.player)[0]
     const key = [
@@ -656,8 +662,8 @@ export class ExpeditionPlanner {
       distance(input.player, project(input.player, leg.from, leg.to)) > 12)
     if (key !== this.decisionKey || farFromRoute) {
       this.decisionKey = key
-      // The default campaign compass is a bearing. Only explicit selection charts fog.
-      if (target && this.state.mode === 'selected') {
+      // The active objective is charted exactly as if the player had selected it.
+      if (target) {
         this.planCount += 1
         this.shortest = planExpeditionRoute(this.graph, input.player, target.position, knowledge)
         const cautious = planExpeditionRoute(this.graph, input.player, target.position, knowledge, 'cautious')
@@ -671,8 +677,9 @@ export class ExpeditionPlanner {
       }
     }
     const chosen = this.state.preference === 'cautious' ? this.cautious ?? this.shortest : this.shortest
-    const exposeUnscouted = this.state.mode === 'selected' && target?.kind !== 'site'
-    // A discovered utility site does not grant a mission's fog exception.
+    // A mission, including the default objective, may chart its own itinerary through fog.
+    // A discovered utility site does not grant that exception.
+    const exposeUnscouted = target !== null && target.kind !== 'site'
     const visibleRoute = chosen && !exposeUnscouted && chosen.unscoutedRegionIds.length ? null : chosen
     const bridgeLocations = new Set<string>()
     const bridges = this.graph.bridges.filter((bridge) => {
@@ -698,7 +705,7 @@ export class ExpeditionPlanner {
         bridges,
       },
       guidance: target ? buildExpeditionGuidance(this.graph, visibleRoute, target, input.player, input.heading) : null,
-      bearingReason: chosen && !visibleRoute ? 'fog' : target && !chosen ? 'not-planned' : null,
+      bearingReason: chosen && !visibleRoute ? 'fog' : null,
       notice: this.notice,
     }
   }

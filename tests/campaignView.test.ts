@@ -77,6 +77,11 @@ import {
   issueSquadCommand,
   serializeSquadCommandState,
 } from '../src/game/world/SquadCommand.ts'
+import {
+  getExpeditionGraph,
+  isExpeditionSegmentClear,
+  planExpeditionRoute,
+} from '../src/game/world/ExpeditionPlanner.ts'
 
 const FACTIONS: readonly Faction[] = ['elf', 'guard', 'villain']
 type LegacyGameView = Omit<GameView,
@@ -899,6 +904,45 @@ test('initial squad views preserve legacy orders, anchored commands, living heal
   assert.equal(view.squadCommand.mode, 'hold')
   assert.deepEqual(view.squadCommand.anchor, held.anchor)
   assert.equal(buildInitialGameView({ blueprint, config, restored: undefined }).squadCommand.mode, 'follow')
+})
+
+test('launch and restored views chart the active objective by road without an atlas choice', () => {
+  let charted = 0
+  let bearingsIntoWater = 0
+  for (let index = 0; index < 40; index += 1) {
+    const blueprint = generateWorld(21_000 + index * 577)
+    const graph = getExpeditionGraph(blueprint)
+    for (const faction of FACTIONS) {
+      const config: RunConfig = {
+        seed: blueprint.seed, generatorVersion: blueprint.generatorVersion, faction, selectedBoonId: 'provisions',
+      }
+      const restored = makeRestored(blueprint, config,
+        new RandomStream(deriveSeed('campaign-view', `expedition-${index}-${faction}`)))
+      for (const view of [
+        buildInitialGameView({ blueprint, config, restored: undefined }),
+        buildInitialGameView({ blueprint, config, restored }),
+      ]) {
+        const { expedition } = view
+        assert.equal(expedition.mode, 'campaign')
+        if (!expedition.target) continue
+        assert.equal(expedition.target.kind, 'objective')
+        const player = { x: view.markers[0].x, z: view.markers[0].z }
+        const known = new Set(view.worldMap.regions.filter((region) => region.discovered).map((region) => region.id))
+        const planned = planExpeditionRoute(graph, player, expedition.target.position,
+          { discoveredRegionIds: known, risks: new Map() })
+        if (planned.status !== 'road') continue
+        // The pre-change builder left `route` null here: an arrow at the target and nothing else.
+        assert.deepEqual(expedition.route?.legs, planned.legs, `${index}/${faction}`)
+        assert.deepEqual(expedition.route?.bridgeIds, planned.bridgeIds, `${index}/${faction}`)
+        const next = expedition.guidance?.next
+        assert.ok(next && isExpeditionSegmentClear(graph, player, next), `${index}/${faction}`)
+        if (!isExpeditionSegmentClear(graph, player, expedition.target.position)) bearingsIntoWater += 1
+        charted += 1
+      }
+    }
+  }
+  assert.ok(charted >= 180, `expected most launch and restored views to be charted, got ${charted}`)
+  assert.ok(bearingsIntoWater >= 25, `expected some straight bearings into water, got ${bearingsIntoWater}`)
 })
 
 test('a deliberately wrong view builder is caught by the same comparisons', () => {

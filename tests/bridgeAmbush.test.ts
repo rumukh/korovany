@@ -24,7 +24,7 @@ import {
 } from '../src/game/run/doctrine.ts'
 import type { ActiveRunSaveV3 } from '../src/game/run/runTypes.ts'
 import { normalizeActiveRunSaveV3 } from '../src/game/run/storage.ts'
-import { createHealthyBody, type ActorRole, type Allegiance, type Faction } from '../src/game/types.ts'
+import { createHealthyBody, type ActorRole, type Allegiance, type Faction, type Objective } from '../src/game/types.ts'
 import { ActorBudget, MAX_ACTORS } from '../src/game/world/ActorBudget.ts'
 import {
   createCampaignContractState,
@@ -45,10 +45,20 @@ import {
   type BridgeAmbushPlan,
   type BridgeAmbushState,
 } from '../src/game/world/BridgeAmbush.ts'
-import { createChronicleRegions, createChronicleState, type ChronicleState } from '../src/game/world/Chronicle.ts'
+import {
+  createChronicleRegions,
+  createChronicleState,
+  getContestedRegionIds,
+  type ChronicleState,
+} from '../src/game/world/Chronicle.ts'
 import { createPlayerMeleeState } from '../src/game/world/CombatResolver.ts'
 import { createCombatMasteryState } from '../src/game/world/CombatMastery.ts'
-import { ExpeditionPlanner, validateExpeditionRoute, type ExpeditionInput } from '../src/game/world/ExpeditionPlanner.ts'
+import {
+  ExpeditionPlanner,
+  isExpeditionSegmentClear,
+  validateExpeditionRoute,
+  type ExpeditionInput,
+} from '../src/game/world/ExpeditionPlanner.ts'
 import { createFinaleIdentity, createFinaleState } from '../src/game/world/FinaleDirector.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { RegionManager } from '../src/game/world/RegionManager.ts'
@@ -1162,6 +1172,81 @@ test('a pinned campaign route suppresses distant bridge HUD without removing its
   })
   assert.equal(bridgeView.expedition.target?.kind, 'bridgeAmbush')
   assert.equal(bridgeView.bridgeAmbush?.active, true)
+})
+
+test('the engine compass takes the reviewed villain over the C2 bridge without an atlas choice', () => {
+  const value = harness('villain', 20_261_006)
+  const { engine, blueprint, plan, state, player } = value
+  const finalId = blueprint.objectives.villain.finalNodeId
+  const objectives: Objective[] = Reflect.get(engine, 'objectives')
+  for (const objective of objectives) {
+    if (objective.id === 'objective-villain-alt') objective.skipped = true
+    else objective.done = objective.id !== finalId
+  }
+  const treasure = blueprint.objectives.villain.nodes.find((node) => node.id === 'objective-villain-branch')
+  const start = treasure ? getSiteWorldPosition2D(blueprint, treasure.siteId) : undefined
+  assert.ok(start)
+  player.position.set(start.x, 0, start.z)
+  // Discovery and region lookup follow the walk from the A5 camp to the B3 treasure.
+  const walked = new RegionManager(blueprint, undefined, { discoverVisibleRegions: false })
+  for (const id of ['region-0-4', 'region-1-4', 'region-1-3', 'region-1-1', 'region-1-2']) walked.update(id)
+  Object.assign(Reflect.get(engine, 'generatedWorld'), {
+    regions: walked,
+    discoveredRegionIds: walked.getDiscoveredRegionIds(),
+    getRegionIdAt: (x: number, z: number) => blueprint.regions.find((region) => {
+      const bounds = getBlueprintRegionBounds(blueprint, region.id)
+      return bounds !== undefined && x >= bounds.minX && x < bounds.maxX && z >= bounds.minZ && z < bounds.maxZ
+    })?.id,
+  })
+  // As the engine derives it at launch and on every chronicle tick.
+  Reflect.set(engine, 'chronicleContestedRegionIds', getContestedRegionIds(blueprint, value.chronicleRegions))
+  const planner: ExpeditionPlanner = Reflect.get(engine, 'expeditionPlanner')
+  // The same call `emitView` makes for the compass on every frame.
+  const live = () => planner.buildView(invoke<ExpeditionInput>(engine, 'buildExpeditionInput'))
+  const automatic = live()
+  assert.equal(automatic.mode, 'campaign')
+  assert.equal(automatic.target?.id, finalId)
+  assert.ok(automatic.route?.status === 'road' && automatic.target && automatic.guidance?.next)
+  assert.deepEqual(validateExpeditionRoute(planner.graph, automatic.route), [])
+  assert.deepEqual(automatic.route.bridgeIds, [plan.bridgeId])
+  assert.ok(isExpeditionSegmentClear(planner.graph, start, automatic.guidance.next))
+  // Negative control: the straight arrow the old default drew runs into the river.
+  assert.equal(isExpeditionSegmentClear(planner.graph, start, automatic.target.position), false)
+
+  // The pending ambush keeps its own itinerary until tracked, and then follows the atlas.
+  assert.deepEqual(
+    buildBridgeAmbushView(blueprint, 'villain', objectives, plan, state, start, 0, false, false, automatic),
+    buildBridgeAmbushView(blueprint, 'villain', objectives, plan, state, start, 0, false, false),
+  )
+  assert.equal(invoke<boolean>(engine, 'trackBridgeAmbush'), true)
+  const tracked = live()
+  assert.equal(tracked.target?.kind, 'bridgeAmbush')
+  const trackedHud = buildBridgeAmbushView(
+    blueprint, 'villain', objectives, plan, state, start, 0, false, true, tracked)
+  assert.equal(trackedHud.bearing, tracked.guidance?.bearing)
+  assert.equal(trackedHud.distance, tracked.guidance?.distance)
+
+  // «Убрать маршрут» returns to the fortress road rather than to a bare bearing.
+  invoke(engine, 'setExpeditionTarget', null)
+  const cleared = live()
+  assert.equal(cleared.mode, 'campaign')
+  assert.deepEqual(cleared.route, automatic.route)
+
+  // Save and continue: the restored first frame draws the same road, default and explicit alike.
+  const resume = () => {
+    const parsed = normalizeActiveRunSaveV3(JSON.parse(JSON.stringify(
+      invoke<ActiveRunSaveV3>(engine, 'saveGeneratedRun'))))
+    assert.ok(parsed)
+    return { parsed, view: buildInitialGameView({ blueprint, config: parsed.config, restored: parsed }).expedition }
+  }
+  const resumed = resume()
+  assert.deepEqual(resumed.parsed.directorState.expedition,
+    { version: 1, mode: 'campaign', preference: 'shortest', target: null })
+  assert.deepEqual(resumed.view, live())
+  invoke(engine, 'setExpeditionTarget', { kind: 'objective', id: finalId })
+  const explicit = resume()
+  assert.equal(explicit.view.mode, 'selected')
+  assert.deepEqual({ ...explicit.view, mode: 'campaign' }, resumed.view)
 })
 
 test('streaming and actor eviction preserve living enemy health and never count absence as defeat', () => {

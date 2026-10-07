@@ -10,8 +10,7 @@ function routeMessage(expedition: ExpeditionView): string {
   if (!expedition.target) return copy.noSelection
   if (expedition.guidance?.arrived) return copy.arrive
   if (expedition.bearingReason === 'fog') return copy.fog
-  if (!expedition.route) return copy.plan
-  if (expedition.route.status === 'unavailable') return copy.noRoute
+  if (!expedition.route || expedition.route.status === 'unavailable') return copy.noRoute
   return `${Math.ceil(expedition.route.roadDistance)} ${copy.roadMeters} + ${Math.ceil(expedition.route.connectorDistance)} ${copy.approachMeters}`
 }
 
@@ -265,7 +264,8 @@ export function ExpeditionAtlas({ view, onClose, onSelect, onPreference }: Exped
               <p>{routeMessage(expedition)}</p>
               {expedition.route?.status === 'road' ? (
                 <>
-                  <p className="expedition-next-step">{nextInstruction(expedition)}</p>
+                  {!expedition.guidance?.arrived
+                    ? <p className="expedition-next-step">{nextInstruction(expedition)}</p> : null}
                   <p>{expedition.route.regionIds.map((id) => {
                     const region = regions.find((entry) => entry.id === id)
                     return region ? formatRegionGridLabel(region.gridX, region.gridZ) : '?'
@@ -299,12 +299,13 @@ export function ExpeditionAtlas({ view, onClose, onSelect, onPreference }: Exped
             ) : null}
             <header className="expedition-list-header">
               <h3>{copy.destinations}</h3>
-              <button type="button" onClick={() => onSelect(null)} disabled={!expedition.target}>{copy.clear}</button>
+              <button type="button" onClick={() => onSelect(null)} disabled={expedition.mode !== 'selected'}>{copy.clear}</button>
             </header>
             <div className="expedition-destination-list">
               {expedition.targets.length === 0 ? <p>{copy.empty}</p> : null}
               {expedition.targets.map((target) => {
                 const selected = expedition.mode === 'selected' && target.key === expedition.target?.key
+                const followed = expedition.mode === 'campaign' && target.key === expedition.target?.key
                 return (
                   <button type="button" className="expedition-destination" key={target.key}
                     aria-pressed={selected} onClick={() => onSelect({ kind: target.kind, id: target.id })}>
@@ -316,7 +317,7 @@ export function ExpeditionAtlas({ view, onClose, onSelect, onPreference }: Exped
                     {target.timeRemaining !== null ? <span>{Math.ceil(target.timeRemaining)} {copy.seconds}</span> : null}
                     {target.exclusive ? <span className="expedition-exclusive">{copy.exclusive}</span> : null}
                     {target.committed ? <span>{copy.committed}</span> : null}
-                    <span className="expedition-select-label">{selected ? copy.selected : copy.select}</span>
+                    <span className="expedition-select-label">{selected ? copy.selected : followed ? copy.followed : copy.select}</span>
                   </button>
                 )
               })}

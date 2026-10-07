@@ -43,12 +43,14 @@ Provide:
 - A selectable list of ready campaign objectives, live rumours, and discovered useful
   sites. Include region labels, distances, stakes, deadlines, and mutually exclusive
   alternatives without duplicating long prose in the main HUD.
-- Explicit destination selection and clearing. Existing contract/rumour commitment
-  actions remain explicit; inspecting a route must not commit to or complete a task.
+- Explicit destination selection, and clearing back to the active objective's route.
+  Existing contract/rumour commitment actions remain explicit; inspecting a route
+  must not commit to or complete a task.
 - A short road itinerary with the next crossing/region and an honest uncertainty note.
 
 Known objective destinations may retain their existing visibility through fog.
-For an explicitly selected known mission, its planned road itinerary may extend
+For the active campaign objective, which the compass charts by default, or an
+explicitly selected known mission, its planned road itinerary may extend
 through unexplored ground, drawn dashed and labelled unscouted. This deliberately
 exposes only transport geometry along that itinerary, not arbitrary hidden sites,
 biomes, owners, actors, event intentions, or the rest of the road network.
@@ -194,13 +196,16 @@ route decisions are cached until the destination, nearest road leg, known inform
 or substantial departure from the itinerary changes. No navigation grids are built by
 the atlas.
 
-The default compass follows the existing active campaign objective as a labelled
-straight-line bearing. It does not expose an unselected itinerary through fog.
-Explicitly selecting a ready mission or live rumour may expose that mission's dashed,
-unscouted road itinerary and crossing symbols. Unexplored region owners, biomes,
-actors, unrelated sites, river legs, and the rest of the road network remain hidden.
-A discovered utility site does not grant the mission-only fog exception; a route to
-it through unexplored regions remains a compass bearing until scouted.
+Without an atlas choice, the compass charts the active campaign objective exactly as
+if the player had selected it: the same road itinerary, next instruction, crossing
+symbols, and fog exception. Explicitly selecting a ready mission or live rumour
+overrides that default, and «Убрать маршрут» returns to it. Either way, a mission may
+expose its own dashed, unscouted road itinerary and crossing symbols. Unexplored
+region owners, biomes, actors, unrelated sites, river legs, and the rest of the road
+network remain hidden. A discovered utility site does not grant the mission-only fog
+exception; a route to it through unexplored regions remains a compass bearing until
+scouted. When no road itinerary exists, the compass keeps the labelled straight-line
+bearing and the atlas says that the road is unavailable.
 
 ### UI, interaction, and persistence
 
@@ -213,11 +218,13 @@ movement. Road/bridge guidance is independent of `view.prompt`.
 
 The atlas only calls `setExpeditionTarget` and `setExpeditionPreference`; it never
 calls the contract or rumour commitment actions. `directorState.expedition` version 1
-stores `mode` (`campaign`, `selected`, or `none`), the bounded target kind/ID, and
+stores `mode` (`campaign` or `selected`), the bounded target kind/ID, and
 `preference` (`shortest` or `cautious`). It stores no route geometry. Invalid present
 blocks report a warning; completed, legitimately skipped, expired, and unknown targets
 explain their removal and return to the existing campaign-selection fallback.
-Explicit clearing survives a reload.
+Clearing writes `campaign`, which survives a reload. A version-1 save from before
+2026-10-07 may hold `none`, the old «Убрать маршрут»; it loads as `campaign` without
+a warning, because clearing now means returning to the default route.
 
 Both initial and live views carry `expedition`. Initial position and heading now use
 the same start projection as the actual engine rather than the former site-center
@@ -280,3 +287,53 @@ session's artifacts, outside the repository. Native Chrome required its own prof
 anti-occlusion flags, and focus emulation during automated input; touch/reduced-motion
 emulation was held in the same CDP gesture session. Final focus behavior was confirmed
 after a clean page load rather than relying on an older hot-reloaded instance.
+
+### 2026-10-07: road guidance by default
+
+The 2026-10-06 gameplay review followed the default bearing on seed `20261006` and
+walked the villain into the river about 150 m short of the E2 fortress. One atlas click
+on the same objective revealed the bridge road. Selecting a mission reveals exactly its
+own itinerary, so the old fog rule withheld nothing that a click did not show.
+
+`ExpeditionPlanner.buildView` now plans the `campaign` target with the same function,
+decision cache and mission fog exception as a selection. It re-plans when the active
+objective changes (a node completes, a contract is pinned, a selected target expires or
+closes), when the nearest road leg or known information changes, or when the player is
+more than 12 m from every leg of the itinerary. An unchanged frame reuses the decision.
+A taken rumour does not move the default: it is a commitment, not a destination, and
+the atlas still charts it on request. The bridge-ambush card keeps its own opening
+itinerary until it is tracked, as before. In the atlas, the default target reads
+«Компас и так ведёт сюда», and «Убрать маршрут» is enabled only for an explicit choice.
+
+Evidence:
+
+- `tests\expeditionPlanner.test.ts`: for the 600 fixed start-to-finale cases, the
+  default view equals an explicit selection of the same objective, and its first compass
+  segment never crosses water. The pre-change straight bearing fails that check in all
+  600. The reviewed B3 treasure case routes B3 > B2 > C2 > D2 > E2 over
+  `bridge-road-branch-shop-region-2-1`, exposes nothing else through fog, and ignores
+  poisoned hidden state. Re-planning triggers, save/continue of the default, explicit and
+  cleared states, and the legacy `none` save are covered.
+- `tests\campaignView.test.ts`: launch and restored first frames carry the planner's road.
+- `tests\bridgeAmbush.test.ts`: the engine's expedition input, the tracked bridge card,
+  «Убрать маршрут» and `saveGeneratedRun` agree on the same C2 bridge road.
+- Restoring selection-only planning fails all seven of these tests.
+
+Browser observations used an isolated headless Chrome with SwiftShader on a loaded host,
+at about one frame per second, so they support no feel or difficulty conclusions. A fresh
+villain run on seed `20261006` opened with «Выход к дороге - 17 м». A labelled setup then
+placed the villain at the B3 treasure with the start, contract and treasure done, the
+alternative skipped, and no bridge-ambush block, as in the reviewed build. Without the
+atlas, the compass read «Выход к дороге - 6 м», then «По дороге - 20 м» on the road.
+From 15 m west of the C2 bridge it read «Через мост - 15 м», counted down while walking,
+and switched to «По дороге - 43 м» after the crossing. The atlas showed
+«290 м дороги + 18 м подхода» over B3 > B2 > C2 > D2 > E2 with the unscouted bridge.
+Neither `1366x768` nor `390x844` overflowed horizontally or had a control under 44 CSS
+pixels. A real save, reload and continue kept the default, explicit and cleared states.
+With the ambush still pending, its card replaced the compass and led to the same bridge.
+
+Known limit: the camp is about 20 m from the start, and the road itinerary to it is
+usually two to three times longer. Across the 600 fixed launches the first instruction
+was «Выход к дороге» in 573, and the arrow pointed a median 24 degrees (at most 64) away
+from the straight line to the camp. This follows the routing contract above, which never
+replaces road travel with an unchecked shortcut; the straight-line distance stays shown.

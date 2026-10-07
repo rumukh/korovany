@@ -15,18 +15,27 @@ import {
   buildExpeditionKnowledge,
   ExpeditionPlanner,
   normalizeExpeditionState,
+  type ExpeditionGraph,
   type ExpeditionInput,
   type ExpeditionKnowledge,
+  type ExpeditionPoint,
   type ExpeditionRoute,
+  type ExpeditionView,
 } from '../src/game/world/ExpeditionPlanner.ts'
 import { WORLD_FACTIONS } from '../src/game/world/worldTypes.ts'
 import type { Faction } from '../src/game/types.ts'
+import { formatRegionGridLabel } from '../src/game/content/gameCopy.ts'
 import { buildCampaignContractViews, buildChronicleRumourViews, buildInitialGameView } from '../src/game/world/CampaignView.ts'
-import { createCampaignContractState, createGeneratedObjectives } from '../src/game/world/CampaignDirector.ts'
+import {
+  createCampaignContractState,
+  createGeneratedObjectives,
+  pinObjective,
+  resolveActiveObjectiveNode,
+} from '../src/game/world/CampaignDirector.ts'
 import { createChronicleRegions, createChronicleState } from '../src/game/world/Chronicle.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { createBridgeAmbushPlan } from '../src/game/world/BridgeAmbush.ts'
-import type { ActiveRunSaveV3 } from '../src/game/run/runTypes.ts'
+import type { ActiveRunSaveV3, JsonValue } from '../src/game/run/runTypes.ts'
 import { normalizeActiveRunSaveV3 } from '../src/game/run/storage.ts'
 import { RandomStream } from '../src/game/random/RandomStream.ts'
 
@@ -34,8 +43,7 @@ const FIXED_SEEDS = Array.from({ length: 200 }, (_, index) =>
   (20_260_905 + Math.imul(index, 2_654_435_761)) >>> 0)
 const unknown: ExpeditionKnowledge = { discoveredRegionIds: new Set(), risks: new Map() }
 
-function fixture(faction: Faction = 'villain', seed = 20_260_905) {
-  const blueprint = generateWorld(seed)
+function fixture(faction: Faction = 'villain', seed = 20_260_905, blueprint = generateWorld(seed)) {
   const player = getFactionStartPosition2D(blueprint, faction)
   assert.ok(player)
   const finalId = blueprint.objectives[faction].finalNodeId
@@ -51,6 +59,85 @@ function fixture(faction: Faction = 'villain', seed = 20_260_905) {
     chronicleRegions: createChronicleRegions(blueprint), contestedRegionIds: new Set(),
   }
   return { blueprint, input, finalId }
+}
+
+/** The reviewed run: seed 20261006, the villain at the B3 treasure with only the E2 fortress left. */
+const REVIEW_SEED = 20_261_006
+const REVIEW_BRIDGE = 'bridge-road-branch-shop-region-2-1'
+
+function reviewFixture() {
+  const blueprint = generateWorld(REVIEW_SEED)
+  const faction: Faction = 'villain'
+  const label = (id: string) => {
+    const region = blueprint.regions.find((entry) => entry.id === id)
+    assert.ok(region, id)
+    return formatRegionGridLabel(region.coordinate.x, region.coordinate.y)
+  }
+  const finalId = blueprint.objectives.villain.finalNodeId
+  const treasure = blueprint.objectives.villain.nodes.find((node) => node.id === 'objective-villain-branch')
+  assert.ok(treasure)
+  assert.equal(label(treasure.regionId), 'B3')
+  const player = getSiteWorldPosition2D(blueprint, treasure.siteId)
+  assert.ok(player)
+  // The contract arm of the fork was done, which closed its alternative.
+  const objectives = createGeneratedObjectives(blueprint, faction).map((objective) =>
+    objective.id === 'objective-villain-alt' ? { ...objective, skipped: true }
+      : { ...objective, done: objective.id !== finalId })
+  const contracts = createCampaignContractState()
+  const input: ExpeditionInput = {
+    faction, player, heading: 0, objectives,
+    activeObjectiveId: resolveActiveObjectiveNode(blueprint, faction, objectives, contracts.pinnedNodeId)?.id ?? null,
+    contracts: buildCampaignContractViews({
+      blueprint, faction, objectives, contracts,
+      sitePosition: (id) => getSiteWorldPosition2D(blueprint, id) ?? null,
+    }),
+    rumours: [],
+    // A5 camp, the B5-B4 road, the B2 contract and the B3 treasure: east of the river is fog.
+    discoveredRegionIds: new Set(['region-0-4', 'region-1-4', 'region-1-3', 'region-1-2', 'region-1-1']),
+    chronicleRegions: createChronicleRegions(blueprint), contestedRegionIds: new Set(),
+  }
+  assert.equal(input.activeObjectiveId, finalId)
+  return { blueprint, input, finalId, label }
+}
+
+/**
+ * What the compass asks of the player: an itinerary, and a first straight line from where
+ * they stand to the arrow's point. A bare bearing to a destination across a river fails.
+ */
+function compassProblems(graph: ExpeditionGraph, view: ExpeditionView, player: ExpeditionPoint): string[] {
+  const problems = view.route?.status === 'road'
+    ? validateExpeditionRoute(graph, view.route) : ['not-a-road-itinerary']
+  const next = view.guidance?.next
+  if (!next) problems.push('no-guidance')
+  else if (!isExpeditionSegmentClear(graph, player, next)) problems.push('crosses-water')
+  return problems
+}
+
+/** The pre-change default: no itinerary, just an arrow straight at the destination. */
+function bearingOnly(graph: ExpeditionGraph, view: ExpeditionView, input: ExpeditionInput): ExpeditionView {
+  assert.ok(view.target)
+  return {
+    ...view, route: null, shortest: null, cautious: null,
+    guidance: buildExpeditionGuidance(graph, null, view.target, input.player, input.heading),
+  }
+}
+
+/** Anything a view shows inside fog beyond the charted mission's own transport. */
+function fogLeaks(view: ExpeditionView, known: ReadonlySet<string>): string[] {
+  const charted = new Set(view.route?.bridgeIds ?? [])
+  return [
+    ...view.transport.roads.filter((road) => !known.has(road.regionId)).map((road) => `road:${road.id}`),
+    ...view.transport.rivers.filter((river) => !known.has(river.regionId)).map((river) => `river:${river.id}`),
+    ...view.transport.bridges.filter((bridge) => !known.has(bridge.regionId) && !charted.has(bridge.id))
+      .map((bridge) => `bridge:${bridge.id}`),
+    ...view.transport.bridges.filter((bridge) => bridge.unscouted === known.has(bridge.regionId))
+      .map((bridge) => `bridge-label:${bridge.id}`),
+    ...view.targets.filter((target) => target.kind === 'site' && !known.has(target.regionId))
+      .map((target) => `site:${target.id}`),
+    ...(view.route?.knownRiskRegionIds ?? []).filter((id) => !known.has(id)).map((id) => `risk:${id}`),
+    ...(view.route?.regionIds ?? []).filter((id) => !known.has(id) !== view.route?.unscoutedRegionIds.includes(id))
+      .map((id) => `unscouted-label:${id}`),
+  ]
 }
 
 test('600 generated start-to-finale itineraries use legal bounded roads and real bridges', () => {
@@ -184,21 +271,190 @@ test('selection and repeated view/pan reads do not mutate commitments, clocks, d
     streams: streams.map((stream) => stream.getState()),
   })
   const planner = new ExpeditionPlanner(blueprint)
-  assert.equal(planner.buildView(input).route, null, 'automatic compass must not chart undiscovered transport')
+  const automatic = planner.buildView(input)
+  assert.equal(automatic.mode, 'campaign')
+  assert.equal(automatic.target?.id, finalId)
+  assert.equal(automatic.route?.status, 'road', 'the default compass charts the active objective by road')
+  assert.equal(planner.getStats().planCount, 1)
   assert.ok(planner.select({ kind: 'objective', id: finalId }, input))
   for (let frame = 0; frame < 30; frame += 1) {
     planner.buildView(input)
     planner.setPreference(frame % 2 ? 'shortest' : 'cautious')
   }
-  assert.equal(planner.getStats().planCount, 1, 'stable current leg and knowledge reuse the route decision')
+  assert.equal(planner.getStats().planCount, 2, 'stable current leg and knowledge reuse the route decision')
   assert.equal(JSON.stringify({
     objectives: input.objectives, contracts: input.contracts, rumours: input.rumours,
     regions: [...input.chronicleRegions], discovered: [...input.discoveredRegionIds],
     streams: streams.map((stream) => stream.getState()),
   }), before)
+  // «Убрать маршрут» returns to the active objective's road, not to a bare bearing or nothing.
   assert.ok(planner.select(null, input))
-  assert.equal(planner.buildView(input).target, null)
-  assert.equal(new ExpeditionPlanner(blueprint, planner.serialize()).buildView(input).target, null)
+  const cleared = planner.buildView(input)
+  assert.equal(cleared.mode, 'campaign')
+  assert.equal(cleared.target?.id, finalId)
+  assert.deepEqual(cleared.route, automatic.route)
+  const reloaded = new ExpeditionPlanner(blueprint, planner.serialize()).buildView(input)
+  assert.equal(reloaded.mode, 'campaign')
+  assert.deepEqual(reloaded.route, automatic.route)
+})
+
+test('with no atlas choice the compass follows the active objective by road, exactly as a selection would', () => {
+  let routes = 0
+  let bearingsIntoWater = 0
+  for (const seed of FIXED_SEEDS) {
+    const world = generateWorld(seed)
+    for (const faction of WORLD_FACTIONS) {
+      const { blueprint, input, finalId } = fixture(faction, seed, world)
+      const context = `${seed}/${faction}`
+      const planner = new ExpeditionPlanner(blueprint)
+      const automatic = planner.buildView(input)
+      assert.equal(automatic.mode, 'campaign', context)
+      assert.equal(automatic.target?.id, finalId, context)
+      assert.equal(automatic.bearingReason, null, context)
+      assert.deepEqual(compassProblems(planner.graph, automatic, input.player), [], context)
+      assert.ok(automatic.route && automatic.route.bridgeIds.length > 0, `${context} skipped its crossing`)
+      assert.deepEqual(fogLeaks(automatic, input.discoveredRegionIds), [], context)
+      const chosen = new ExpeditionPlanner(blueprint)
+      assert.ok(chosen.select({ kind: 'objective', id: finalId }, input))
+      assert.deepEqual({ ...automatic, mode: 'selected' }, chosen.buildView(input), context)
+      // Negative control: the same check rejects the pre-change straight-line default.
+      const old = compassProblems(planner.graph, bearingOnly(planner.graph, automatic, input), input.player)
+      assert.equal(old[0], 'not-a-road-itinerary', context)
+      if (old.includes('crosses-water')) bearingsIntoWater += 1
+      routes += 1
+    }
+  }
+  assert.equal(routes, 600)
+  // Every critical path crosses a river, so every pre-change start bearing pointed into one.
+  assert.equal(bearingsIntoWater, routes, 'the negative control must see each old bearing reach water')
+})
+
+test('the reviewed villain leaves the B3 treasure on the C2 bridge road, not toward the river bank', () => {
+  const { blueprint, input, finalId, label } = reviewFixture()
+  const planner = new ExpeditionPlanner(blueprint)
+  const view = planner.buildView(input)
+  assert.equal(view.mode, 'campaign')
+  assert.equal(view.target?.id, finalId)
+  assert.ok(view.target && view.route)
+  assert.equal(label(view.target.regionId), 'E2')
+  assert.deepEqual(compassProblems(planner.graph, view, input.player), [])
+  assert.deepEqual(view.route.regionIds.map(label), ['B3', 'B2', 'C2', 'D2', 'E2'])
+  assert.deepEqual(view.route.bridgeIds, [REVIEW_BRIDGE])
+  assert.deepEqual(view.route.unscoutedRegionIds.map(label), ['C2', 'D2', 'E2'])
+  // Negative control: the old default's straight line runs into the river short of the fortress.
+  assert.equal(isExpeditionSegmentClear(planner.graph, input.player, view.target.position), false)
+  assert.deepEqual(compassProblems(planner.graph, bearingOnly(planner.graph, view, input), input.player),
+    ['not-a-road-itinerary', 'crosses-water'])
+
+  // On the west bank's road the next instruction is the crossing itself.
+  const bridge = planner.graph.bridges.find((entry) => entry.id === REVIEW_BRIDGE)
+  assert.ok(bridge)
+  const bank = planner.buildView({ ...input, player: { x: bridge.position.x - 15, z: bridge.position.z } })
+  assert.equal(bank.mode, 'campaign')
+  assert.equal(bank.guidance?.next?.kind, 'bridge')
+  assert.equal(bank.guidance?.next?.bridgeId, REVIEW_BRIDGE)
+  assert.ok(bank.guidance && Math.abs(bank.guidance.distance - 15) < 0.01)
+
+  // Fog: the itinerary's own unscouted bridge is drawn, and no other road, river, site or risk.
+  const known = input.discoveredRegionIds
+  assert.deepEqual(fogLeaks(view, known), [])
+  assert.ok(view.transport.bridges.some((entry) => entry.id === REVIEW_BRIDGE && entry.unscouted))
+  const hiddenRoads = planner.graph.roads.filter((road) => !known.has(road.regionId))
+  assert.ok(hiddenRoads.length > 0)
+  const leaky: ExpeditionView = { ...view, transport: { ...view.transport, roads: [
+    ...view.transport.roads,
+    ...hiddenRoads.map((road) => ({ id: road.id, regionId: road.regionId, from: road.center, to: road.edge, blocked: false })),
+  ] } }
+  assert.equal(fogLeaks(leaky, known).length, hiddenRoads.length, 'sensitivity control for the fog check')
+  const poisoned: ExpeditionInput = {
+    ...input,
+    chronicleRegions: new Map([...input.chronicleRegions].map(([id, region]) => [id, known.has(id) ? region : {
+      ...region, control: 'guard' as const, supply: 0,
+      pressure: { elf: 1, guard: 1, villain: 1 }, beastPressure: 1, settlementIntegrity: 0,
+    }])),
+    contestedRegionIds: new Set(blueprint.regions.filter((region) => !known.has(region.id)).map((region) => region.id)),
+  }
+  assert.deepEqual(new ExpeditionPlanner(blueprint).buildView(poisoned), view)
+})
+
+test('the default compass re-plans when its objective changes, not on every frame', () => {
+  const { blueprint } = reviewFixture()
+  const faction: Faction = 'villain'
+  const [startId, branchId, contractId, altId] = ['start', 'branch', 'contract', 'alt']
+    .map((suffix) => `objective-villain-${suffix}`)
+  let objectives = createGeneratedObjectives(blueprint, faction)
+    .map((objective) => ({ ...objective, done: objective.id === startId }))
+  const contracts = createCampaignContractState()
+  const camp = getSiteWorldPosition2D(blueprint, blueprint.starts.villain)
+  const altSite = blueprint.objectives.villain.nodes.find((node) => node.id === altId)?.siteId
+  const rumourAt = altSite ? getSiteWorldPosition2D(blueprint, altSite) : null
+  assert.ok(camp && rumourAt)
+  const at = (player: ExpeditionPoint, rumours: ExpeditionInput['rumours'] = []): ExpeditionInput => ({
+    faction, player, heading: 0, objectives, rumours,
+    activeObjectiveId: resolveActiveObjectiveNode(blueprint, faction, objectives, contracts.pinnedNodeId)?.id ?? null,
+    contracts: buildCampaignContractViews({
+      blueprint, faction, objectives, contracts,
+      sitePosition: (id) => getSiteWorldPosition2D(blueprint, id) ?? null,
+    }),
+    discoveredRegionIds: new Set(['region-0-4']),
+    chronicleRegions: createChronicleRegions(blueprint), contestedRegionIds: new Set(),
+  })
+  const planner = new ExpeditionPlanner(blueprint)
+  const plans = () => planner.getStats().planCount
+  const first = planner.buildView(at(camp))
+  assert.equal(first.target?.id, branchId, 'nothing pinned: the first ready node')
+  assert.ok(first.route?.status === 'road')
+  for (let frame = 0; frame < 30; frame += 1) planner.buildView(at(camp))
+  assert.equal(plans(), 1, 'an unchanged frame reuses the decision')
+
+  // Joining a road leg is a new decision; walking along it is not.
+  const leg = first.route.legs.find((entry) => entry.kind === 'road')
+  assert.ok(leg)
+  const along = (share: number) => ({
+    x: leg.from.x + (leg.to.x - leg.from.x) * share, z: leg.from.z + (leg.to.z - leg.from.z) * share,
+  })
+  planner.buildView(at(along(0.3)))
+  const joined = plans()
+  for (const share of [0.4, 0.5, 0.6, 0.7]) planner.buildView(at(along(share)))
+  assert.equal(plans(), joined, 'progress along the same leg reuses the decision')
+
+  // A pinned contract moves the active objective, and the road with it.
+  assert.ok(pinObjective(contracts, contractId, [branchId, contractId, altId]))
+  const pinned = planner.buildView(at(camp))
+  assert.equal(pinned.target?.id, contractId)
+  assert.deepEqual(compassProblems(planner.graph, pinned, camp), [])
+  assert.equal(plans(), joined + 1)
+
+  // A taken rumour is a commitment, not an atlas choice: the compass stays on the objective.
+  const rumour = {
+    id: 'rumour:taken', kind: 'defend' as const, title: 'Взятый слух', task: '', stake: '',
+    regionLabel: 'C5', timeRemaining: 40, pinned: true, progress: 0,
+    x: rumourAt.x, z: rumourAt.z, outcome: null, outcomeText: null,
+  }
+  const taken = planner.buildView(at(camp, [rumour]))
+  assert.equal(taken.target?.id, contractId)
+  assert.ok(taken.targets.some((target) => target.id === rumour.id && target.committed))
+  assert.equal(plans(), joined + 1)
+
+  // Charting that rumour, then losing it, returns guidance to the objective's road.
+  assert.ok(planner.select({ kind: 'rumour', id: rumour.id }, at(camp, [rumour])))
+  assert.equal(planner.buildView(at(camp, [rumour])).target?.id, rumour.id)
+  assert.equal(plans(), joined + 2)
+  const expired = planner.buildView(at(camp, [{ ...rumour, timeRemaining: 0 }]))
+  assert.equal(expired.mode, 'campaign')
+  assert.equal(expired.notice, 'stale-target')
+  assert.equal(expired.target?.id, contractId)
+  assert.deepEqual(expired.route, pinned.route)
+  assert.equal(plans(), joined + 3)
+
+  // The pinned node completes and closes its alternative, as the engine records it.
+  objectives = objectives.map((objective) => objective.id === contractId ? { ...objective, done: true }
+    : objective.id === altId ? { ...objective, skipped: true } : objective)
+  contracts.pinnedNodeId = null
+  const next = planner.buildView(at(camp))
+  assert.equal(next.target?.id, branchId)
+  assert.deepEqual(compassProblems(planner.graph, next, camp), [])
+  assert.equal(plans(), joined + 4)
 })
 
 test('bridge tracking charts a real road without pinning campaign or rumour state', () => {
@@ -392,6 +648,51 @@ test('bounded destination/preference survives real save normalization and initia
   assert.deepEqual(restored.rngStates, save.rngStates)
   assert.equal(initial.markers[0].x, input.player.x)
   assert.equal(initial.markers[0].z, input.player.z)
+})
+
+test('default, explicit and cleared guidance each survive save and continue, as does a legacy cleared save', () => {
+  const { blueprint, save, input } = saveFixture()
+  const liveInput = { ...input, chronicleRegions: new Map() }
+  const resume = (expedition: JsonValue | undefined) => {
+    if (expedition === undefined) delete save.directorState.expedition
+    else save.directorState.expedition = expedition
+    const restored = normalizeActiveRunSaveV3(JSON.parse(JSON.stringify(save)))
+    assert.ok(restored)
+    return { restored, view: buildInitialGameView({ blueprint, config: save.config, restored }).expedition }
+  }
+  const automatic = new ExpeditionPlanner(blueprint)
+  const live = automatic.buildView(liveInput)
+  assert.equal(live.mode, 'campaign')
+  assert.equal(live.route?.status, 'road')
+  const fresh = resume(automatic.serialize())
+  assert.deepEqual(fresh.view, live)
+  assert.deepEqual(resume(undefined).view, live, 'a save from before the atlas resumes on the same road')
+  // Continuing writes back the same bounded state; nothing accrues across continues.
+  assert.deepEqual(new ExpeditionPlanner(blueprint, fresh.restored.directorState.expedition).serialize(),
+    automatic.serialize())
+
+  const site = live.targets.find((target) => target.kind === 'site')
+  assert.ok(site)
+  const explicit = new ExpeditionPlanner(blueprint)
+  assert.ok(explicit.select({ kind: site.kind, id: site.id }, liveInput))
+  const chosen = resume(explicit.serialize())
+  assert.equal(chosen.view.mode, 'selected')
+  assert.equal(chosen.view.target?.key, site.key)
+  assert.deepEqual(chosen.view, explicit.buildView(liveInput))
+
+  assert.ok(explicit.select(null, liveInput))
+  assert.deepEqual(explicit.serialize(), automatic.serialize())
+  assert.deepEqual(resume(explicit.serialize()).view, live, '«Убрать маршрут» resumes on the default road')
+
+  // Version 1 stored «Убрать маршрут» as `none`; it now means the same default.
+  const legacy = resume({ version: 1, mode: 'none', target: null, preference: 'shortest' })
+  assert.deepEqual(legacy.view, live)
+  assert.equal(legacy.view.notice, null)
+  assert.deepEqual(normalizeExpeditionState({ version: 1, mode: 'none', target: null, preference: 'cautious' }),
+    { state: { version: 1, mode: 'campaign', target: null, preference: 'cautious' }, notice: null })
+  assert.equal(normalizeExpeditionState({
+    version: 1, mode: 'none', target: { kind: 'site', id: site.id }, preference: 'shortest',
+  }).notice, 'invalid-save')
 })
 
 test('restored live rumours share the same position and deadline builder, and expired ones stay out', () => {

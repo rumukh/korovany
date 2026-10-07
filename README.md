@@ -15,7 +15,7 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 - A one-per-run bridge ambush with guarded cargo, a physical delivery, and a lasting supply consequence
 - Directional evasion, perfect guard, and drag-to-look when mouse capture is unavailable
 - Follow, Hold, Focus, and Regroup squad orders with a live health and status roster
-- An expedition atlas with road/bridge itineraries, cautious routes, and a compact compass
+- An expedition atlas with road/bridge itineraries and cautious routes; the compass follows the road by default
 - Faction-specific two-phase finale opponents with readable attack tells and recovery windows
 - Dynamic events, escalating threat, pooled loot, run upgrades, achievements, and starting boons
 - Original vector faction emblems and caravan key art
@@ -127,10 +127,12 @@ leg injuries, and cannot cancel a committed finisher. A guard's first frontal co
 within 0.12 seconds of raising the shield can spend 12 stamina instead of health;
 the timing reward rearms no sooner than 0.65 seconds. Arrows never stun their shooter.
 
-The atlas selects a destination without accepting a rumour or changing a campaign
-commitment. It follows rendered road legs and actual bridges; shortest and cautious
-routes differ only when known danger warrants a detour. Dashed mission routes through
-fog reveal transport only. Dotted local approaches and unavailable-road compass
+Without opening the atlas, the compass follows the active objective's road itinerary
+and crosses rivers on actual bridges. The atlas selects another destination without
+accepting a rumour or changing a campaign commitment; «Убрать маршрут» returns to the
+objective's road. Routes follow rendered road legs and actual bridges; shortest and
+cautious routes differ only when known danger warrants a detour. Dashed mission routes
+through fog reveal transport only. Dotted local approaches and unavailable-road compass
 bearings are not certified walkable paths. The compass stays independent of the `E`
 interaction prompt. Atlas and order selection share the same pause/overlay policy:
 closing one cannot resume an underlying shop or pause, and Escape closes only its owner.
