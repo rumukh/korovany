@@ -228,9 +228,10 @@ give 53/60 against 0/60: the review's 88 % against 0 %.
 - The scripted players walk past the palace strongholds within a call or two, so the old rule called a quarter of a
   soldier per guard run and decided no contract. Started, kept and abandoned are identical under both rules in every
   row; guard kills per run move by 0.02, road bodies by less than 0.1, and a guard cell's median win by 2.4 s at most.
-- The three `crowded` arrivals are one site: seed 1's «Зверьё у домиков» (`cull`), which every policy reaches on the
-  contrary arm. Its window holds 18 bodies of the guard's own garrisons, and a beast raid needs five slots where four
-  are left, under every commander rule, `inert` included.
+- **Known residual.** The three `crowded` arrivals are one site: seed 1's «Зверьё у домиков» (`cull`), which every
+  policy reaches on the contrary arm. Its window holds 18 bodies of the guard's own garrisons, and a beast raid needs
+  five slots where four are left, under every commander rule, `inert` included. A guard who takes that arm always
+  loses its payout. A follow-up lets the guard's own idle garrisons step out of sight to make room for a contract.
 - The scripted player is what hides the old cost. `tests/commanderReinforcements.test.ts` fields each contract
   site's window through the engine's own spawner and holds the player 100 s by it before arriving. Over the 240 sites
   the old rule crowds out 16 of the guard's 80, and 11 with every hostile pack cleared; the shipped rule crowds out
