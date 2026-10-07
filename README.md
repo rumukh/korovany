@@ -156,6 +156,20 @@ bearings are not certified walkable paths. The compass stays independent of the 
 interaction prompt. Atlas and order selection share the same pause/overlay policy:
 closing one cannot resume an underlying shop or pause, and Escape closes only its owner.
 
+## Who gets the caravan
+
+Once a cart's escort is down, nobody takes it by touching it. A looter has to stand at the
+cart for 3.5 seconds while the cargo sinks and glows, and a bar in the action prompt shows
+how much is already gone. Any hit that lands on the looter, its rout, a returning escort or
+the player pressing `E` first ends the attempt. Your own squad never loads a cart.
+
+If you damaged an escort in the last 10 seconds, or stood within 10 m when the last one
+fell, nobody else may start loading for 9 seconds: the robbery is yours. The palace guard
+gets no such window because it defends the road cart, and knocking a looter off that cart
+earns its bounded caravan aid. The chronicle's ambushed carts follow the same rules, and
+taking their cargo counts toward caravan achievements. An emptied road cart says who
+emptied it. None of this is saved: a continue brings the escorts and the raiders back.
+
 ## Profile rewards
 
 A finished run pays profile coins once, when it is archived: 45 for a victory or

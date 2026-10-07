@@ -276,9 +276,13 @@ NG-14. The following work remains outside the delivered milestone:
 | --- | --- | --- |
 | 1 | Full natural campaigns and balance tuning for all three factions | Opening journeys and staged finale fights were observed separately, not as uninterrupted start-to-victory campaigns. These observations do not establish difficulty or progression balance. |
 | 2 | Local navigation and road-access hardening | Off-road approaches are unverified, some companions can genuinely become blocked/distant, and the seed `20260905` D1 cull/shop offer has an unbridged river bend rather than a usable local road itinerary. |
-| 3 | Caravan reward and interaction agency | Killing an ordinary caravan's escorts can precede NPC looting and leave the player without a robbery opportunity. Its intended ownership/reward timing needs a focused investigation. |
+| 3 | Caravan reward and interaction agency | Addressed on 2026-10-07; see "Who gets the caravan" in the README. |
 | 4 | Representative-device performance profiling | Frame pacing, sustained frame rate, memory, and long-run behavior have not been benchmarked across target hardware and browsers. |
 
 The atlas labels uncertain routes instead of certifying them, and squad status reports
 blocked or distant members instead of teleporting or reviving them. Those limitations
 are intentional disclosures, not claims that all navigation cases have been solved.
+
+The caravan claim is deliberately not saved, because it belongs to live escorts and looters.
+A continue still respawns the road cart's escorts at once, so a fight won before a save is
+fought again; persisting the escort fight itself would be a separate change.

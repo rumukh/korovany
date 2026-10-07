@@ -638,6 +638,8 @@ export interface GameView {
   doctrines: DoctrineView
   expedition: ExpeditionView
   bridgeAmbush: BridgeAmbushView | null
+  /** Somebody other than the player is loading a caravan within sight, and how far along. */
+  caravanLoot: import('./world/CaravanClaim.ts').CaravanLootView | null
   finale: FinaleView | null
   shopPriceMultiplier: number
   squad: number

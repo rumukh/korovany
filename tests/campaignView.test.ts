@@ -80,7 +80,7 @@ import {
 
 const FACTIONS: readonly Faction[] = ['elf', 'guard', 'villain']
 type LegacyGameView = Omit<GameView,
-  'contracts' | 'doctrines' | 'expedition' | 'bridgeAmbush' | 'combatMastery' | 'squadCommand' | 'finale'>
+  'contracts' | 'doctrines' | 'expedition' | 'bridgeAmbush' | 'caravanLoot' | 'combatMastery' | 'squadCommand' | 'finale'>
 
 /**
  * Roadmap 1.4 added `contracts` to the `GameView` and roadmap 1.6 added `doctrines`, and the
@@ -97,8 +97,8 @@ function withoutLaterFields(
 ): LegacyGameView {
   const {
     contracts: _contracts, doctrines: _doctrines,
-    expedition: _expedition, bridgeAmbush: _bridgeAmbush, combatMastery: _combatMastery,
-    squadCommand: _squadCommand, finale: _finale, ...rest
+    expedition: _expedition, bridgeAmbush: _bridgeAmbush, caravanLoot: _caravanLoot,
+    combatMastery: _combatMastery, squadCommand: _squadCommand, finale: _finale, ...rest
   } = view
   return {
     ...rest,
@@ -830,7 +830,7 @@ test('the live view carries every field the HUD reads', () => {
     'chronicle', 'shopPriceMultiplier', 'squad', 'elapsed', 'pointerLocked', 'paused',
     'caravanCooldown', 'ability', 'activeEvent', 'lootToast', 'campaignCompleted',
     'threatTier', 'upgrades', 'contracts', 'doctrines', 'melee', 'combatMastery', 'squadCommand', 'expedition',
-    'finale',
+    'finale', 'caravanLoot',
   ]
   for (const key of required) {
     assert.ok(key in view, `the live view dropped ${key}`)

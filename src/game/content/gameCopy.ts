@@ -25,6 +25,7 @@ import type {
   RunEpilogueWound,
   RunHistorySummary,
 } from '../run/runTypes.ts'
+import type { CaravanLooterKind, CaravanRobber } from '../world/CaravanClaim.ts'
 import type { ChronicleEventKind } from '../world/Chronicle.ts'
 import type { ContractId, ObjectiveKind, SiteKind } from '../world/worldTypes.ts'
 import type { SquadCommandMode, SquadMemberStatus } from '../world/SquadCommand.ts'
@@ -984,6 +985,45 @@ export function describeCaravanDefenseAid(healed: number): string {
   return `Корован отстояли. Интендант перевязал раны: +${healed} здоровья.`
 }
 
+/** The escort fell to the player's side: for a few seconds nobody else may load the cart. */
+export const CARAVAN_CLAIM_NOTICE =
+  'Охрана корована легла. Груз твой — бери, пока не растащили.'
+
+/** The HUD cue while somebody else is loading a cart: what is happening and what to do. */
+export function describeCaravanLootCue(looter: CaravanLooterKind, defend: boolean): string {
+  if (looter === 'beast') {
+    return defend ? 'Зверьё лезет в корован — отгони!' : 'Зверьё потрошит корован — отгони!'
+  }
+  return defend ? 'Мародёр грузит корован — сбей его!' : 'Корован грузят без тебя — успей первым!'
+}
+
+/** The player's hit made a looter drop the load. */
+export function describeCaravanLootInterrupted(defend: boolean): string {
+  return defend
+    ? 'Мародёра сбили с телеги. Груз на месте.'
+    : 'Мародёр бросил груз. Корован снова ничей — то есть твой.'
+}
+
+/** An emptied road cart says who emptied it while the engine still knows. */
+export function describeCaravanEmptyPrompt(robbedBy: CaravanRobber | null): string {
+  switch (robbedBy) {
+    case 'player': return 'Этот корован ты уже обчистил'
+    case 'raider': return 'Корован увели без тебя'
+    case 'beast': return 'Корован обглодали звери'
+    default: return 'Корован уже ограбили'
+  }
+}
+
+/** The same honesty for the notice an E press on an empty cart gets. */
+export function describeCaravanAlreadyRobbed(robbedBy: CaravanRobber | null): string {
+  switch (robbedBy) {
+    case 'player': return 'Этот корован ты уже обчистил. Ждём следующий.'
+    case 'raider': return 'Этот корован увели без тебя. Ждём следующий.'
+    case 'beast': return 'Этот корован обглодали звери. Ждём следующий.'
+    default: return CARAVAN_ALREADY_ROBBED_NOTICE
+  }
+}
+
 export const BRIDGE_AMBUSH_TITLE = 'Засада у старого моста'
 export const BRIDGE_AMBUSH_EXPEDITION_TASK =
   'Добраться по настоящей дороге к гружёной телеге у моста.'
@@ -1613,6 +1653,7 @@ export type HintId =
   | 'map'
   | 'expedition'
   | 'bridgeAmbush'
+  | 'caravanLoot'
   | 'chronicle'
   | 'rumours'
   | 'contracts'
@@ -1690,6 +1731,10 @@ const HINT_COPY: Record<HintId, HintCopy> = {
   bridgeAmbush: {
     text: 'На ранней дороге отмечена необязательная засада у моста. Подойди, расставь отряд и реши судьбу телеги только после боя.',
     tone: 'info',
+  },
+  caravanLoot: {
+    text: 'Полоска внизу — кто-то грузит корован. Удар по мародёру сбивает погрузку, а кто первым у телеги, того и груз. Охрана дворца тут не грабит, а отбивает.',
+    tone: 'warning',
   },
   chronicle: {
     text: 'Хроника справа — то, что мир делает без пользователя. Пока ты идёшь, кого-то уже грабят.',
