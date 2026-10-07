@@ -53,6 +53,10 @@ function discoveredRegionCount(view: GameView): number {
   return view.worldMap.regions.filter((region) => region.discovered).length
 }
 
+function followsDefaultRoad(view: GameView): boolean {
+  return view.expedition.mode === 'campaign' && view.expedition.route?.status === 'road'
+}
+
 export interface HudMechanic {
   /** The line this mechanic teaches. */
   readonly hint: HintId
@@ -146,7 +150,12 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
   {
     hint: 'expedition',
     viewFields: ['expedition'],
-    firstSighting: (view) => view.expedition.mode === 'selected',
+    // The first explicit atlas choice, or the first frame the default compass takes up a road
+    // itinerary — normally just after the camp, which is itself a short straight approach.
+    // Change-detecting, so it never fires on the launch frame even when that is a road.
+    firstSighting: (view, previous) => view.expedition.mode === 'selected' ||
+      (previous !== null && followsDefaultRoad(view) && (!followsDefaultRoad(previous) ||
+        previous.expedition.target?.key !== view.expedition.target?.key)),
   },
   {
     hint: 'bridgeAmbush',

@@ -9,12 +9,16 @@ import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import {
   getExpeditionGraph,
   isExpeditionSegmentClear,
+  planDirectApproach,
   planExpeditionRoute,
   validateExpeditionRoute,
   buildExpeditionGuidance,
   buildExpeditionKnowledge,
   ExpeditionPlanner,
   normalizeExpeditionState,
+  DIRECT_APPROACH_DETOUR_METERS,
+  DIRECT_APPROACH_DETOUR_RATIO,
+  DIRECT_APPROACH_METERS,
   type ExpeditionGraph,
   type ExpeditionInput,
   type ExpeditionKnowledge,
@@ -31,6 +35,8 @@ import {
   createGeneratedObjectives,
   pinObjective,
   resolveActiveObjectiveNode,
+  serializeChronicleCommitmentState,
+  type ChronicleCommitmentState,
 } from '../src/game/world/CampaignDirector.ts'
 import { createChronicleRegions, createChronicleState } from '../src/game/world/Chronicle.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
@@ -105,7 +111,7 @@ function reviewFixture() {
  * they stand to the arrow's point. A bare bearing to a destination across a river fails.
  */
 function compassProblems(graph: ExpeditionGraph, view: ExpeditionView, player: ExpeditionPoint): string[] {
-  const problems = view.route?.status === 'road'
+  const problems = view.route?.status === 'road' || view.route?.status === 'direct'
     ? validateExpeditionRoute(graph, view.route) : ['not-a-road-itinerary']
   const next = view.guidance?.next
   if (!next) problems.push('no-guidance')
@@ -138,6 +144,20 @@ function fogLeaks(view: ExpeditionView, known: ReadonlySet<string>): string[] {
     ...(view.route?.regionIds ?? []).filter((id) => !known.has(id) !== view.route?.unscoutedRegionIds.includes(id))
       .map((id) => `unscouted-label:${id}`),
   ]
+}
+
+function turnBetween(a: number, b: number): number {
+  return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)))
+}
+
+/** A taken live rumour at `to`: the default target wherever it is put, as the atlas charts it. */
+function pinnedAt(input: ExpeditionInput, player: ExpeditionPoint, to: ExpeditionPoint): ExpeditionInput {
+  return {
+    ...input, player, rumours: [{
+      id: 'rumour:defend:probe', kind: 'defend', title: 'Проба', task: '', stake: '', regionLabel: '??',
+      timeRemaining: 60, pinned: true, progress: 0, x: to.x, z: to.z, outcome: null, outcomeText: null,
+    }],
+  }
 }
 
 test('600 generated start-to-finale itineraries use legal bounded roads and real bridges', () => {
@@ -311,6 +331,7 @@ test('with no atlas choice the compass follows the active objective by road, exa
       assert.equal(automatic.mode, 'campaign', context)
       assert.equal(automatic.target?.id, finalId, context)
       assert.equal(automatic.bearingReason, null, context)
+      assert.equal(automatic.route?.status, 'road', `${context}: a long target keeps road routing`)
       assert.deepEqual(compassProblems(planner.graph, automatic, input.player), [], context)
       assert.ok(automatic.route && automatic.route.bridgeIds.length > 0, `${context} skipped its crossing`)
       assert.deepEqual(fogLeaks(automatic, input.discoveredRegionIds), [], context)
@@ -377,32 +398,159 @@ test('the reviewed villain leaves the B3 treasure on the C2 bridge road, not tow
   assert.deepEqual(new ExpeditionPlanner(blueprint).buildView(poisoned), view)
 })
 
-test('the default compass re-plans when its objective changes, not on every frame', () => {
+test('the launch compass points straight at the camp for every faction and fixed seed', () => {
+  let launches = 0
+  let roadTurned = 0
+  for (const seed of FIXED_SEEDS) {
+    const blueprint = generateWorld(seed)
+    const graph = getExpeditionGraph(blueprint)
+    for (const faction of WORLD_FACTIONS) {
+      const context = `${seed}/${faction}`
+      const config = { seed, generatorVersion: blueprint.generatorVersion, faction, selectedBoonId: 'provisions' }
+      const view = buildInitialGameView({ blueprint, config, restored: undefined })
+      const { expedition } = view
+      const player = { x: view.markers[0].x, z: view.markers[0].z }
+      const heading = view.markers[0].heading ?? 0
+      const camp = blueprint.objectives[faction].nodes.find((node) => node.siteId === blueprint.starts[faction])
+      assert.ok(camp && expedition.target && expedition.guidance, context)
+      assert.equal(expedition.target.id, camp.id, context)
+      assert.equal(expedition.route?.status, 'direct', context)
+      assert.deepEqual(compassProblems(graph, expedition, player), [], context)
+      const straight = Math.atan2(expedition.target.position.x - player.x, player.z - expedition.target.position.z) - heading
+      assert.ok(turnBetween(expedition.guidance.bearing, straight) < 1e-9, `${context}: the arrow is off the camp`)
+      // Negative control: the road itinerary the compass followed before this rule.
+      const road = planExpeditionRoute(graph, player, expedition.target.position, unknown)
+      assert.equal(road.status, 'road', context)
+      const detour = buildExpeditionGuidance(graph, road, expedition.target, player, heading)
+      if (turnBetween(detour.bearing, straight) > Math.PI / 18) roadTurned += 1
+      launches += 1
+    }
+  }
+  assert.equal(launches, 600)
+  assert.ok(roadTurned >= 400, `the road-only arrow must visibly miss the camp, but missed it in ${roadTurned}`)
+})
+
+test('a short target across water keeps a bridge road or a labelled bearing, never a straight approach', () => {
+  let checked = 0
+  let bridged = 0
+  for (const seed of FIXED_SEEDS.slice(0, 30)) {
+    const { blueprint, input } = fixture('villain', seed)
+    const graph = getExpeditionGraph(blueprint)
+    for (const water of graph.water) {
+      const midX = (water.minX + water.maxX) / 2
+      const midZ = (water.minZ + water.maxZ) / 2
+      for (const [from, to] of [
+        [{ x: water.minX - 6, z: midZ }, { x: water.maxX + 6, z: midZ }],
+        [{ x: midX, z: water.minZ - 6 }, { x: midX, z: water.maxZ + 6 }],
+      ]) {
+        if (Math.hypot(to.x - from.x, to.z - from.z) > DIRECT_APPROACH_METERS) continue
+        if (![from, to].every((point) => Math.abs(point.x) < 199 && Math.abs(point.z) < 199)) continue
+        assert.equal(isExpeditionSegmentClear(graph, from, to), false)
+        const road = planExpeditionRoute(graph, from, to, unknown)
+        assert.equal(planDirectApproach(graph, from, to, unknown, road), null)
+        const view = new ExpeditionPlanner(blueprint).buildView(pinnedAt(input, from, to))
+        assert.equal(view.target?.kind, 'rumour')
+        if (view.route?.status === 'road') {
+          assert.deepEqual(compassProblems(graph, view, from), [], `${seed}: the first leg must stay dry`)
+          if (view.route.bridgeIds.length > 0) bridged += 1
+        } else {
+          assert.equal(view.route?.status, 'unavailable', `${seed}: never a straight line through water`)
+        }
+        checked += 1
+      }
+    }
+  }
+  assert.ok(checked >= 500, `only ${checked} short crossings were exercised`)
+  assert.ok(bridged >= 100, `only ${bridged} short crossings took a bridge`)
+
+  // The D1 bend on seed 20260905: the river turns west at (80, -160) with no bridge, so a
+  // shop 30 m away across it has no road at all. It stays a labelled bearing.
+  const { blueprint, input } = fixture('guard', 20_260_905)
+  const graph = getExpeditionGraph(blueprint)
+  const shop = getSiteWorldPosition2D(blueprint, 'site-shop-riverside')
+  assert.ok(shop)
+  let bend = 0
+  for (let radius = 15; radius <= DIRECT_APPROACH_METERS; radius += 5) {
+    for (let degrees = 0; degrees < 360; degrees += 15) {
+      const angle = degrees * Math.PI / 180
+      const player = { x: shop.x + Math.cos(angle) * radius, z: shop.z + Math.sin(angle) * radius }
+      if (Math.abs(player.x) > 199 || Math.abs(player.z) > 199 || isExpeditionSegmentClear(graph, player, shop)) continue
+      const view = new ExpeditionPlanner(blueprint).buildView(pinnedAt(input, player, shop))
+      assert.notEqual(view.route?.status, 'direct', `${radius} m at ${degrees}°`)
+      bend += 1
+    }
+  }
+  assert.ok(bend >= 50, `only ${bend} wet lines around the bend were exercised`)
+})
+
+test('a dry 60-80 m target goes straight only when the road would double the walk, never past 80 m', () => {
+  let doubled = 0
+  let roadKept = 0
+  let farKept = 0
+  for (const seed of FIXED_SEEDS.slice(0, 20)) {
+    const { blueprint, input } = fixture('villain', seed)
+    const graph = getExpeditionGraph(blueprint)
+    for (const site of blueprint.sites) {
+      const target = getSiteWorldPosition2D(blueprint, site)
+      if (!target) continue
+      for (const radius of [70, 100]) {
+        for (let turn = 0; turn < 4; turn += 1) {
+          const angle = turn * Math.PI / 2 + 0.37
+          const player = { x: target.x + Math.cos(angle) * radius, z: target.z + Math.sin(angle) * radius }
+          if (Math.abs(player.x) > 199 || Math.abs(player.z) > 199 ||
+            !isExpeditionSegmentClear(graph, player, target)) continue
+          const view = new ExpeditionPlanner(blueprint).buildView(pinnedAt(input, player, target))
+          if (radius > DIRECT_APPROACH_DETOUR_METERS) {
+            assert.notEqual(view.route?.status, 'direct', `${seed}: ${radius} m must keep the road`)
+            farKept += 1
+            continue
+          }
+          const road = planExpeditionRoute(graph, player, target, unknown)
+          const doubles = road.status !== 'road' ||
+            road.roadDistance + road.connectorDistance >= radius * DIRECT_APPROACH_DETOUR_RATIO
+          assert.equal(view.route?.status === 'direct', doubles, `${seed}: ${radius} m`)
+          if (doubles) doubled += 1
+          else roadKept += 1
+        }
+      }
+    }
+  }
+  assert.ok(doubled >= 100 && roadKept >= 100 && farKept >= 100, `${doubled}/${roadKept}/${farKept}`)
+})
+
+/** The reviewed villain at the A5 camp with the camp done: three ready nodes, nothing pinned. */
+function campFixture() {
   const { blueprint } = reviewFixture()
   const faction: Faction = 'villain'
   const [startId, branchId, contractId, altId] = ['start', 'branch', 'contract', 'alt']
     .map((suffix) => `objective-villain-${suffix}`)
-  let objectives = createGeneratedObjectives(blueprint, faction)
-    .map((objective) => ({ ...objective, done: objective.id === startId }))
-  const contracts = createCampaignContractState()
+  const state = {
+    objectives: createGeneratedObjectives(blueprint, faction)
+      .map((objective) => ({ ...objective, done: objective.id === startId })),
+    contracts: createCampaignContractState(),
+  }
   const camp = getSiteWorldPosition2D(blueprint, blueprint.starts.villain)
-  const altSite = blueprint.objectives.villain.nodes.find((node) => node.id === altId)?.siteId
-  const rumourAt = altSite ? getSiteWorldPosition2D(blueprint, altSite) : null
-  assert.ok(camp && rumourAt)
+  assert.ok(camp)
   const at = (player: ExpeditionPoint, rumours: ExpeditionInput['rumours'] = []): ExpeditionInput => ({
-    faction, player, heading: 0, objectives, rumours,
-    activeObjectiveId: resolveActiveObjectiveNode(blueprint, faction, objectives, contracts.pinnedNodeId)?.id ?? null,
+    faction, player, heading: 0, objectives: state.objectives, rumours,
+    activeObjectiveId: resolveActiveObjectiveNode(blueprint, faction, state.objectives,
+      state.contracts.pinnedNodeId)?.id ?? null,
     contracts: buildCampaignContractViews({
-      blueprint, faction, objectives, contracts,
+      blueprint, faction, objectives: state.objectives, contracts: state.contracts,
       sitePosition: (id) => getSiteWorldPosition2D(blueprint, id) ?? null,
     }),
     discoveredRegionIds: new Set(['region-0-4']),
     chronicleRegions: createChronicleRegions(blueprint), contestedRegionIds: new Set(),
   })
+  return { blueprint, ids: { startId, branchId, contractId, altId }, state, camp, at }
+}
+
+test('the default compass re-plans when its objective changes, not on every frame', () => {
+  const { blueprint, ids, state, camp, at } = campFixture()
   const planner = new ExpeditionPlanner(blueprint)
   const plans = () => planner.getStats().planCount
   const first = planner.buildView(at(camp))
-  assert.equal(first.target?.id, branchId, 'nothing pinned: the first ready node')
+  assert.equal(first.target?.id, ids.branchId, 'nothing pinned: the first ready node')
   assert.ok(first.route?.status === 'road')
   for (let frame = 0; frame < 30; frame += 1) planner.buildView(at(camp))
   assert.equal(plans(), 1, 'an unchanged frame reuses the decision')
@@ -419,42 +567,112 @@ test('the default compass re-plans when its objective changes, not on every fram
   assert.equal(plans(), joined, 'progress along the same leg reuses the decision')
 
   // A pinned contract moves the active objective, and the road with it.
-  assert.ok(pinObjective(contracts, contractId, [branchId, contractId, altId]))
+  assert.ok(pinObjective(state.contracts, ids.contractId, [ids.branchId, ids.contractId, ids.altId]))
   const pinned = planner.buildView(at(camp))
-  assert.equal(pinned.target?.id, contractId)
+  assert.equal(pinned.target?.id, ids.contractId)
   assert.deepEqual(compassProblems(planner.graph, pinned, camp), [])
   assert.equal(plans(), joined + 1)
 
-  // A taken rumour is a commitment, not an atlas choice: the compass stays on the objective.
-  const rumour = {
-    id: 'rumour:taken', kind: 'defend' as const, title: 'Взятый слух', task: '', stake: '',
-    regionLabel: 'C5', timeRemaining: 40, pinned: true, progress: 0,
-    x: rumourAt.x, z: rumourAt.z, outcome: null, outcomeText: null,
-  }
-  const taken = planner.buildView(at(camp, [rumour]))
-  assert.equal(taken.target?.id, contractId)
-  assert.ok(taken.targets.some((target) => target.id === rumour.id && target.committed))
-  assert.equal(plans(), joined + 1)
-
-  // Charting that rumour, then losing it, returns guidance to the objective's road.
-  assert.ok(planner.select({ kind: 'rumour', id: rumour.id }, at(camp, [rumour])))
-  assert.equal(planner.buildView(at(camp, [rumour])).target?.id, rumour.id)
-  assert.equal(plans(), joined + 2)
-  const expired = planner.buildView(at(camp, [{ ...rumour, timeRemaining: 0 }]))
-  assert.equal(expired.mode, 'campaign')
-  assert.equal(expired.notice, 'stale-target')
-  assert.equal(expired.target?.id, contractId)
-  assert.deepEqual(expired.route, pinned.route)
+  // An explicit choice overrides the default, and clearing it returns to the same road.
+  assert.ok(planner.select({ kind: 'objective', id: ids.altId }, at(camp)))
+  assert.equal(planner.buildView(at(camp)).target?.id, ids.altId)
+  assert.ok(planner.select(null, at(camp)))
+  const cleared = planner.buildView(at(camp))
+  assert.equal(cleared.target?.id, ids.contractId)
+  assert.deepEqual(cleared.route, pinned.route)
   assert.equal(plans(), joined + 3)
 
   // The pinned node completes and closes its alternative, as the engine records it.
-  objectives = objectives.map((objective) => objective.id === contractId ? { ...objective, done: true }
-    : objective.id === altId ? { ...objective, skipped: true } : objective)
-  contracts.pinnedNodeId = null
+  state.objectives = state.objectives.map((objective) => objective.id === ids.contractId
+    ? { ...objective, done: true } : objective.id === ids.altId ? { ...objective, skipped: true } : objective)
+  state.contracts.pinnedNodeId = null
   const next = planner.buildView(at(camp))
-  assert.equal(next.target?.id, branchId)
+  assert.equal(next.target?.id, ids.branchId)
   assert.deepEqual(compassProblems(planner.graph, next, camp), [])
   assert.equal(plans(), joined + 4)
+})
+
+test('a taken live rumour leads the default compass until it is kept, broken or expires', () => {
+  const { blueprint, ids, camp, at } = campFixture()
+  const rumourId = 'rumour:defend:test'
+  const live = {
+    id: rumourId, kind: 'defend' as const, regionId: 'region-1-3', targetRegionId: 'region-1-3',
+    sourceRegionId: null, siteId: null, caravanId: null, faction: null, raisedTick: 0, deadlineTick: 12,
+    progress: 0, actioned: false,
+  }
+  const commitments: ChronicleCommitmentState = { rumours: [live], pinnedRumourId: null, nextOfferTick: 20, verdict: null }
+  const views = (tick = 0) => buildChronicleRumourViews(blueprint, commitments, tick)
+  const planner = new ExpeditionPlanner(blueprint)
+  const plans = () => planner.getStats().planCount
+
+  // Offered but not taken: the objective keeps the compass.
+  const offered = planner.buildView(at(camp, views()))
+  assert.equal(offered.target?.id, ids.branchId)
+  assert.ok(offered.targets.some((target) => target.id === rumourId && !target.committed))
+  assert.equal(plans(), 1)
+
+  // Taken: the rumour leads, charted exactly as an explicit selection would chart it.
+  commitments.pinnedRumourId = rumourId
+  const taken = planner.buildView(at(camp, views()))
+  assert.equal(taken.mode, 'campaign')
+  assert.equal(taken.target?.kind, 'rumour')
+  assert.equal(taken.target?.id, rumourId)
+  assert.deepEqual(compassProblems(planner.graph, taken, camp), [])
+  assert.equal(plans(), 2)
+  const chosen = new ExpeditionPlanner(blueprint)
+  assert.ok(chosen.select({ kind: 'rumour', id: rumourId }, at(camp, views())))
+  assert.deepEqual({ ...taken, mode: 'selected' }, chosen.buildView(at(camp, views())))
+  for (let frame = 0; frame < 20; frame += 1) planner.buildView(at(camp, views()))
+  assert.equal(plans(), 2, 'a live rumour in an unchanged square is not re-planned per frame')
+
+  // An explicit atlas choice still overrides it; clearing returns to the rumour.
+  assert.ok(planner.select({ kind: 'objective', id: ids.contractId }, at(camp, views())))
+  assert.equal(planner.buildView(at(camp, views())).target?.id, ids.contractId)
+  assert.ok(planner.select(null, at(camp, views())))
+  assert.equal(planner.buildView(at(camp, views())).target?.id, rumourId)
+
+  // Kept or broken: the verdict replaces the offer, and the objective leads again.
+  for (const outcome of ['kept', 'broken'] as const) {
+    const settled: ChronicleCommitmentState = {
+      rumours: [], pinnedRumourId: null, nextOfferTick: 20,
+      verdict: { rumourId, kind: 'defend', outcome, committed: true, regionId: live.regionId,
+        targetRegionId: live.targetRegionId, siteId: null, faction: null, tick: 5 },
+    }
+    const resolved = planner.buildView(at(camp, buildChronicleRumourViews(blueprint, settled, 5)))
+    assert.equal(resolved.mode, 'campaign')
+    assert.equal(resolved.target?.id, ids.branchId, outcome)
+    assert.equal(resolved.notice, null, 'a resolved commitment is not a stale atlas choice')
+    assert.equal(resolved.targets.some((target) => target.kind === 'rumour'), false)
+    planner.buildView(at(camp, views()))
+  }
+  // Expired: past its deadline the offer is gone and the objective leads again.
+  assert.equal(planner.buildView(at(camp, views(12))).target?.id, ids.branchId)
+})
+
+test('a taken escort rumour re-plans when its cart changes square, not on every frame', () => {
+  const { blueprint, camp, at } = campFixture()
+  const escort = {
+    id: 'rumour:escort:caravan-test', kind: 'escort' as const, regionId: 'region-1-3', targetRegionId: 'region-2-2',
+    sourceRegionId: 'region-1-3', siteId: null, caravanId: 'caravan-test', faction: null, raisedTick: 0,
+    deadlineTick: 20, progress: 0, actioned: false,
+  }
+  const commitments: ChronicleCommitmentState = {
+    rumours: [escort], pinnedRumourId: escort.id, nextOfferTick: 30, verdict: null,
+  }
+  const planner = new ExpeditionPlanner(blueprint)
+  const view = () => planner.buildView(at(camp, buildChronicleRumourViews(blueprint, commitments, 0)))
+  const first = view()
+  assert.equal(first.target?.id, escort.id)
+  // The cart rolls on inside the same square for many frames: one decision.
+  for (let frame = 0; frame < 40; frame += 1) view()
+  assert.equal(planner.getStats().planCount, 1)
+  // The chronicle moves the escort to the cart's new square (`advanceRumourProgress`).
+  escort.regionId = 'region-1-2'
+  const moved = view()
+  assert.equal(planner.getStats().planCount, 2)
+  assert.notDeepEqual(moved.target?.position, first.target?.position)
+  assert.equal(moved.target?.regionId, 'region-1-2')
+  assert.deepEqual(compassProblems(planner.graph, moved, camp), [])
 })
 
 test('bridge tracking charts a real road without pinning campaign or rumour state', () => {
@@ -693,6 +911,51 @@ test('default, explicit and cleared guidance each survive save and continue, as 
   assert.equal(normalizeExpeditionState({
     version: 1, mode: 'none', target: { kind: 'site', id: site.id }, preference: 'shortest',
   }).notice, 'invalid-save')
+})
+
+test('a save in the middle of a taken rumour resumes on that rumour and falls back once it expires', () => {
+  const { blueprint, save, input } = saveFixture()
+  const regionId = blueprint.criticalPaths.villain.regionIds[2]
+  const rumour = {
+    id: 'rumour:defend:saved', kind: 'defend' as const, regionId, targetRegionId: regionId,
+    sourceRegionId: null, siteId: null, caravanId: null, faction: null, raisedTick: 0, deadlineTick: 6,
+    progress: 2, actioned: false,
+  }
+  const commitments: ChronicleCommitmentState = {
+    rumours: [rumour], pinnedRumourId: rumour.id, nextOfferTick: 10, verdict: null,
+  }
+  save.directorState.chronicleCommitments = serializeChronicleCommitmentState(commitments) as JsonValue
+  save.directorState.expedition = new ExpeditionPlanner(blueprint).serialize()
+  const resume = () => {
+    const restored = normalizeActiveRunSaveV3(JSON.parse(JSON.stringify(save)))
+    assert.ok(restored)
+    return buildInitialGameView({ blueprint, config: save.config, restored }).expedition
+  }
+  const first = resume()
+  assert.equal(first.mode, 'campaign')
+  assert.equal(first.target?.kind, 'rumour')
+  assert.equal(first.target?.id, rumour.id)
+  assert.deepEqual(first, new ExpeditionPlanner(blueprint).buildView({
+    ...input, rumours: buildChronicleRumourViews(blueprint, commitments, 0), chronicleRegions: new Map(),
+  }), 'the first restored frame agrees with the live planner')
+  assert.deepEqual(resume(), first, 'continuing again changes nothing')
+
+  // An explicit atlas choice saved mid-rumour still wins on continue.
+  const explicit = new ExpeditionPlanner(blueprint)
+  assert.ok(input.activeObjectiveId)
+  assert.ok(explicit.select({ kind: 'objective', id: input.activeObjectiveId }, {
+    ...input, rumours: buildChronicleRumourViews(blueprint, commitments, 0),
+  }))
+  save.directorState.expedition = explicit.serialize()
+  assert.equal(resume().target?.id, input.activeObjectiveId)
+
+  // Past the deadline the restored compass is back on the objective, with no stale notice.
+  save.directorState.expedition = new ExpeditionPlanner(blueprint).serialize()
+  save.chronicleState.tick = rumour.deadlineTick
+  const expired = resume()
+  assert.equal(expired.target?.id, input.activeObjectiveId)
+  assert.equal(expired.notice, null)
+  assert.equal(expired.targets.some((target) => target.kind === 'rumour'), false)
 })
 
 test('restored live rumours share the same position and deadline builder, and expired ones stay out', () => {

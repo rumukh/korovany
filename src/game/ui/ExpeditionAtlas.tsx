@@ -10,6 +10,7 @@ function routeMessage(expedition: ExpeditionView): string {
   if (!expedition.target) return copy.noSelection
   if (expedition.guidance?.arrived) return copy.arrive
   if (expedition.bearingReason === 'fog') return copy.fog
+  if (expedition.route?.status === 'direct') return `${Math.ceil(expedition.route.connectorDistance)} ${copy.directMeters}`
   if (!expedition.route || expedition.route.status === 'unavailable') return copy.noRoute
   return `${Math.ceil(expedition.route.roadDistance)} ${copy.roadMeters} + ${Math.ceil(expedition.route.connectorDistance)} ${copy.approachMeters}`
 }
@@ -262,7 +263,7 @@ export function ExpeditionAtlas({ view, onClose, onSelect, onPreference }: Exped
             <div className="expedition-route-summary" aria-live="polite">
               <h3><Compass aria-hidden="true" />{copy.itinerary}</h3>
               <p>{routeMessage(expedition)}</p>
-              {expedition.route?.status === 'road' ? (
+              {expedition.route?.status === 'road' || expedition.route?.status === 'direct' ? (
                 <>
                   {!expedition.guidance?.arrived
                     ? <p className="expedition-next-step">{nextInstruction(expedition)}</p> : null}
@@ -274,7 +275,8 @@ export function ExpeditionAtlas({ view, onClose, onSelect, onPreference }: Exped
                   {expedition.route.unscoutedRegionIds.length > 0 ? (
                     <p>{copy.unknownRegions}: {expedition.route.unscoutedRegionIds.length}.</p>
                   ) : null}
-                  {expedition.route.connectorDistance > 0 ? <p>{copy.approach}</p> : null}
+                  {expedition.route.connectorDistance > 0
+                    ? <p>{expedition.route.status === 'direct' ? copy.directApproach : copy.approach}</p> : null}
                 </>
               ) : null}
               {expedition.notice ? <p>{describeExpeditionNotice(expedition.notice)}</p> : null}

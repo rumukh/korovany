@@ -127,15 +127,18 @@ leg injuries, and cannot cancel a committed finisher. A guard's first frontal co
 within 0.12 seconds of raising the shield can spend 12 stamina instead of health;
 the timing reward rearms no sooner than 0.65 seconds. Arrows never stun their shooter.
 
-Without opening the atlas, the compass follows the active objective's road itinerary
-and crosses rivers on actual bridges. The atlas selects another destination without
-accepting a rumour or changing a campaign commitment; «Убрать маршрут» returns to the
-objective's road. Routes follow rendered road legs and actual bridges; shortest and
-cautious routes differ only when known danger warrants a detour. Dashed mission routes
-through fog reveal transport only. Dotted local approaches and unavailable-road compass
-bearings are not certified walkable paths. The compass stays independent of the `E`
-interaction prompt. Atlas and order selection share the same pause/overlay policy:
-closing one cannot resume an underlying shop or pause, and Escape closes only its owner.
+Without opening the atlas, the compass follows the road itinerary to a taken live rumour,
+or else to the active objective, and crosses rivers on actual bridges. A target within
+60 m on a dry straight line, or within 80 m when the road would double the walk, is
+approached straight instead and labelled as an unchecked approach. The atlas selects
+another destination without accepting a rumour or changing a campaign commitment;
+«Убрать маршрут» returns to the default. Routes follow rendered road legs and actual
+bridges; shortest and cautious routes differ only when known danger warrants a detour.
+Dashed mission routes through fog reveal transport only. Dotted local approaches and
+unavailable-road compass bearings are not certified walkable paths. The compass stays
+independent of the `E` interaction prompt. Atlas and order selection share the same
+pause/overlay policy: closing one cannot resume an underlying shop or pause, and Escape
+closes only its owner.
 
 ## Development
 

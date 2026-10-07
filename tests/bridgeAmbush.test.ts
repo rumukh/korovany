@@ -1174,9 +1174,10 @@ test('a pinned campaign route suppresses distant bridge HUD without removing its
   assert.equal(bridgeView.bridgeAmbush?.active, true)
 })
 
-test('the engine compass takes the reviewed villain over the C2 bridge without an atlas choice', () => {
+/** The reviewed run as an engine: the villain at the B3 treasure with only the E2 fortress left. */
+function reviewedVillain() {
   const value = harness('villain', 20_261_006)
-  const { engine, blueprint, plan, state, player } = value
+  const { engine, blueprint, player } = value
   const finalId = blueprint.objectives.villain.finalNodeId
   const objectives: Objective[] = Reflect.get(engine, 'objectives')
   for (const objective of objectives) {
@@ -1203,6 +1204,17 @@ test('the engine compass takes the reviewed villain over the C2 bridge without a
   const planner: ExpeditionPlanner = Reflect.get(engine, 'expeditionPlanner')
   // The same call `emitView` makes for the compass on every frame.
   const live = () => planner.buildView(invoke<ExpeditionInput>(engine, 'buildExpeditionInput'))
+  const resume = () => {
+    const parsed = normalizeActiveRunSaveV3(JSON.parse(JSON.stringify(
+      invoke<ActiveRunSaveV3>(engine, 'saveGeneratedRun'))))
+    assert.ok(parsed)
+    return { parsed, view: buildInitialGameView({ blueprint, config: parsed.config, restored: parsed }) }
+  }
+  return { ...value, finalId, objectives, start, planner, live, resume }
+}
+
+test('the engine compass takes the reviewed villain over the C2 bridge without an atlas choice', () => {
+  const { engine, blueprint, plan, state, finalId, objectives, start, planner, live, resume } = reviewedVillain()
   const automatic = live()
   assert.equal(automatic.mode, 'campaign')
   assert.equal(automatic.target?.id, finalId)
@@ -1233,20 +1245,52 @@ test('the engine compass takes the reviewed villain over the C2 bridge without a
   assert.deepEqual(cleared.route, automatic.route)
 
   // Save and continue: the restored first frame draws the same road, default and explicit alike.
-  const resume = () => {
-    const parsed = normalizeActiveRunSaveV3(JSON.parse(JSON.stringify(
-      invoke<ActiveRunSaveV3>(engine, 'saveGeneratedRun'))))
-    assert.ok(parsed)
-    return { parsed, view: buildInitialGameView({ blueprint, config: parsed.config, restored: parsed }).expedition }
-  }
   const resumed = resume()
   assert.deepEqual(resumed.parsed.directorState.expedition,
     { version: 1, mode: 'campaign', preference: 'shortest', target: null })
-  assert.deepEqual(resumed.view, live())
+  assert.deepEqual(resumed.view.expedition, live())
   invoke(engine, 'setExpeditionTarget', { kind: 'objective', id: finalId })
   const explicit = resume()
-  assert.equal(explicit.view.mode, 'selected')
-  assert.deepEqual({ ...explicit.view, mode: 'campaign' }, resumed.view)
+  assert.equal(explicit.view.expedition.mode, 'selected')
+  assert.deepEqual({ ...explicit.view.expedition, mode: 'campaign' }, resumed.view.expedition)
+})
+
+test('a taken rumour leads the engine compass, survives save and continue, then hands back', () => {
+  const { engine, finalId, planner, live, resume } = reviewedVillain()
+  const rumour = {
+    id: 'rumour:defend:engine', kind: 'defend' as const, regionId: 'region-0-2', targetRegionId: 'region-0-2',
+    sourceRegionId: null, siteId: null, caravanId: null, faction: null, raisedTick: 0, deadlineTick: 8,
+    progress: 0, actioned: false,
+  }
+  Reflect.get(engine, 'chronicleCommitments').rumours.push(rumour)
+  assert.equal(live().target?.id, finalId, 'an offer alone does not move the compass')
+  assert.equal(resume().view.bridgeAmbush?.active, true, 'with only the fortress left the bridge card leads')
+
+  invoke(engine, 'pinRumour', rumour.id)
+  const taken = live()
+  assert.equal(taken.mode, 'campaign')
+  assert.equal(taken.target?.kind, 'rumour')
+  assert.equal(taken.target?.id, rumour.id)
+  assert.ok(taken.route?.status === 'road' || taken.route?.status === 'direct')
+  assert.deepEqual(validateExpeditionRoute(planner.graph, taken.route), [])
+
+  // Mid-rumour save: the first restored frame leads to the rumour too, and the distant
+  // bridge card stands aside for it exactly as it does for a pinned contract.
+  const midRumour = resume()
+  assert.equal(Reflect.get(Object(midRumour.parsed.directorState.chronicleCommitments), 'pinnedRumourId'), rumour.id)
+  assert.deepEqual(midRumour.view.expedition, taken)
+  assert.equal(midRumour.view.bridgeAmbush?.active, false)
+
+  // Dropping it, or running out its clock, hands the compass back to the fortress road.
+  invoke(engine, 'pinRumour', null)
+  assert.equal(live().target?.id, finalId)
+  invoke(engine, 'pinRumour', rumour.id)
+  assert.equal(live().target?.id, rumour.id)
+  Reflect.get(engine, 'chronicleState').tick = rumour.deadlineTick
+  const expired = live()
+  assert.equal(expired.target?.id, finalId)
+  assert.equal(expired.notice, null)
+  assert.equal(resume().view.expedition.target?.id, finalId)
 })
 
 test('streaming and actor eviction preserve living enemy health and never count absence as defeat', () => {

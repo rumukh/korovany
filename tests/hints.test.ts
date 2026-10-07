@@ -388,6 +388,59 @@ test('the launch view teaches only what is already on screen', () => {
   assert.deepEqual(hintsFrom(withSquad), ['squad'], 'launch taught more than the squad')
 })
 
+test('the expedition line waits for the first default road route, never the launch frame', () => {
+  const base = launchView()
+  // The camp is a short dry straight approach, so the launch compass is not a road itinerary.
+  assert.equal(base.expedition.mode, 'campaign')
+  assert.equal(base.expedition.route?.status, 'direct')
+  const road = (key: string, elapsed: number): GameView => ({
+    ...base, elapsed,
+    expedition: {
+      ...base.expedition,
+      target: base.expedition.target ? { ...base.expedition.target, key } : null,
+      route: base.expedition.route ? { ...base.expedition.route, status: 'road' } : null,
+    },
+  })
+
+  const walked = recordingDirector()
+  walked.director.observe(base)
+  walked.director.observe({ ...base, elapsed: 30 })
+  assert.deepEqual(hintsFrom(walked), [], 'the straight camp approach teaches nothing')
+  walked.director.observe(road('objective:after-camp', 31))
+  assert.deepEqual(hintsFrom(walked), ['expedition'])
+  walked.director.observe(road('objective:later', 60))
+  assert.deepEqual(hintsFrom(walked), ['expedition'], 'once per profile')
+
+  // Negative control: a road on the very first frame, such as a restored run, is no change.
+  const restored = recordingDirector()
+  restored.director.observe(road('objective:after-camp', 0))
+  restored.director.observe(road('objective:after-camp', 30))
+  assert.deepEqual(hintsFrom(restored), [])
+  restored.director.observe(road('objective:later', 31))
+  assert.deepEqual(hintsFrom(restored), ['expedition'], 'its next road target is')
+
+  // An explicit atlas choice that comes first still counts, and the road does not repeat it.
+  const chosen = recordingDirector()
+  chosen.director.observe(base)
+  chosen.director.observe({ ...base, elapsed: 10, expedition: { ...base.expedition, mode: 'selected' } })
+  chosen.director.observe(road('objective:after-camp', 40))
+  assert.deepEqual(hintsFrom(chosen), ['expedition'])
+
+  // Reaching the camp also lights the objectives line; both arrive, with the usual spacing.
+  const camp = recordingDirector()
+  camp.director.observe(base)
+  const done = {
+    ...road('objective:after-camp', 20),
+    objectives: base.objectives.map((objective, index) => index === 0 ? { ...objective, done: true } : objective),
+  }
+  camp.director.observe(done)
+  assert.deepEqual(hintsFrom(camp), ['objectives'])
+  camp.director.observe({ ...done, elapsed: 20 + HINT_MIN_GAP_SECONDS - 0.1 })
+  assert.deepEqual(hintsFrom(camp), ['objectives'])
+  camp.director.observe({ ...done, elapsed: 20 + HINT_MIN_GAP_SECONDS })
+  assert.deepEqual(hintsFrom(camp), ['objectives', 'expedition'])
+})
+
 test('a queued hint survives a save and continue of the same run', () => {
   // A transition trigger cannot rediscover its transition after a restore — the gold was
   // already earned, the square already discovered. Without carrying the queue, a line
