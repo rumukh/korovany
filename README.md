@@ -197,10 +197,10 @@ so: «Про пользователя прослышали…». Every three-min
 and says that too, even when the tier in the corner is already higher: «Время берёт своё…».
 
 Doctrine drafts open at tiers 2, 3 and 4, so a winning run meets two of them on the way to
-its finale. A draft waits for a calm moment, with nothing chasing or swinging at you within
-38 m and no finale under way, and it never opens an overlay: take a card on the HUD or in
-the journal. «Устав дозора» still moves the waves off the clock and onto closed objectives;
-without it, closing an objective never sends a wave.
+its finale. A draft waits for a calm moment: nothing chasing you within 14 m, nothing
+swinging or shooting at you within 38 m, and no finale under way. It never opens an overlay:
+take a card on the HUD or in the journal. «Устав дозора» still moves the waves off the clock
+and onto closed objectives; without it, closing an objective never sends a wave.
 
 A day lasts nine minutes. Dusk falls about four and a half minutes in, and the night lasts
 about two and a half, 28% of the day rather than more than half. The game says so once,

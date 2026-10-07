@@ -14,25 +14,25 @@
  *
  * ---
  *
- * ## The measurement (shipped arms, 30 Hz, 600 s, seeds `1 + 7919 n`, n = 0…39)
+ * ## The measurement (shipped arms, engine window, 30 Hz, 600 s, seeds `1 + 7919 n`, n = 0…39)
  *
  * ```text
  * policy · faction    time (control)       progress (shipped)    progressAll (rejected)
  *                     wins   drafts/win    wins   drafts/win     wins
- * beeline · elf       15/40     0          13/40     2           6/40
- * beeline · guard     16/40     0          17/40     2          13/40
- * beeline · villain   25/40     0          25/40     2          17/40
- * cautious · elf      12/40     0          11/40     2           4/40
- * cautious · guard    14/40     0          16/40     2           9/40
- * cautious · villain  21/40     0          21/40     2          13/40
- * duelist · elf       38/40     0          36/40     2          30/40
- * duelist · guard     38/40     0          36/40     2          29/40
- * duelist · villain   36/40     0          36/40     2          34/40
+ * beeline · elf       14/40     0          11/40     2           3/40
+ * beeline · guard     14/40     0          16/40     2           9/40
+ * beeline · villain   23/40     0          21/40     2          19/40
+ * cautious · elf      12/40     0          10/40     2           4/40
+ * cautious · guard    10/40     0          12/40     2           5/40
+ * cautious · villain  18/40     0          17/40     2          13/40
+ * duelist · elf       35/40     0          36/40     2          26/40
+ * duelist · guard     36/40     0          36/40     2          24/40
+ * duelist · villain   38/40     0          37/40     2          24/40
  * ```
  *
- * Under `progress`, 198 of 211 wins opened two drafts or more before the end, the finale was
+ * Under `progress`, 194 of 196 wins opened two drafts or more before the end, the finale was
  * fought at pacing tier 3 with its boss scaled at the clock's tier 1, and the median win
- * length moved by under ten percent. Without a card taken and with the director silent, a
+ * length moved by ten percent or less. Without a card taken and with the director silent, a
  * `progress` run is the `time` run to the frame; `progressAll` is not.
  */
 

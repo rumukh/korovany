@@ -168,16 +168,28 @@ export const MAX_EQUIPPED_DOCTRINES = 3
 export const DOCTRINE_DRAFT_TIERS = [2, 3, 4] as const
 
 /**
- * W2-1 — how far an engaged hostile has to be before a draft may open, in metres.
+ * W2-1 — a fight, by the score's own two ranges (`desiredMusicIntensity`).
  *
- * The score's own alert range (`desiredMusicIntensity`): the draft waits until the music
- * would go back to walking, so it never lands in the middle of a fight.
+ * A hostile chasing the player is a fight once it is within `DOCTRINE_DRAFT_CALM_RADIUS`
+ * (the score's combat range); one winding up or loosing at the player is a fight anywhere
+ * within `DOCTRINE_DRAFT_ALERT_RADIUS` (its alert range). Measured, not guessed: with the
+ * alert range for both, a scripted player walking to the finale with pursuers 20–35 m behind
+ * often met no calm moment at all, and only 174 of 197 winning runs opened their second
+ * draft; with the combat range for pursuers, 194 of 196 did, none of them mid-swing.
  */
-export const DOCTRINE_DRAFT_CALM_RADIUS = 38
+export const DOCTRINE_DRAFT_CALM_RADIUS = 14
+export const DOCTRINE_DRAFT_ALERT_RADIUS = 38
+
+export interface EngagedHostile {
+  /** Metres from the player. */
+  distance: number
+  /** Its current action — a wind-up, a swing, a shot — is aimed at the player. */
+  targetingPlayer: boolean
+}
 
 export interface DoctrineDraftMoment {
-  /** Distances to every live hostile that is chasing or swinging at the player. */
-  engagedHostileDistances: Iterable<number>
+  /** Every live hostile that is chasing the player or acting against them. */
+  engagedHostiles: Iterable<EngagedHostile>
   /** A finale fight is under way around the player. */
   finaleEngaged: boolean
 }
@@ -186,14 +198,15 @@ export interface DoctrineDraftMoment {
  * W2-1 — whether this is a moment to put a choice in front of the player.
  *
  * A draft is a decision, and a decision offered mid-fight is either ignored or paid for
- * in blood. The threat tier itself does not wait — it is the run's difficulty, announced
- * as the consequence of the step that raised it — but the cards do. No timer and nothing
- * persisted: the check is made fresh every frame, and the anchors it gates only ever rise.
+ * in blood. The threat tier itself does not wait — it is the run's pacing, announced as the
+ * consequence of the step that raised it — but the cards do. No timer and nothing persisted:
+ * the check is made fresh every frame, and the anchors it gates only ever rise.
  */
 export function isDoctrineDraftMomentCalm(moment: DoctrineDraftMoment): boolean {
   if (moment.finaleEngaged) return false
-  for (const distance of moment.engagedHostileDistances) {
-    if (distance <= DOCTRINE_DRAFT_CALM_RADIUS) return false
+  for (const hostile of moment.engagedHostiles) {
+    if (hostile.distance <= DOCTRINE_DRAFT_CALM_RADIUS) return false
+    if (hostile.targetingPlayer && hostile.distance <= DOCTRINE_DRAFT_ALERT_RADIUS) return false
   }
   return true
 }

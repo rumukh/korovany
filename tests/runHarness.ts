@@ -2085,13 +2085,18 @@ export function runHarness(options: RunOptions): RunReport {
   const wavesBy: BalanceMetrics['wavesBy'] = { clock: 0, objective: 0 }
   let finaleTier: number | null = null
   let finaleScalingTier: number | null = null
-  /** `isDraftMomentCalm`: nothing chasing or swinging at the player close by, no finale on. */
+  /** `isDraftMomentCalm`: nothing in a fight with the player close by, no finale on. */
   const draftMomentCalm = (): boolean =>
     isDoctrineDraftMomentCalm({
-      engagedHostileDistances: actors
-        .filter((actor) =>
-          actor.alive && actor.hostileToPlayer && (actor.playerAggro || actor.actionTargetIsPlayer))
-        .map((actor) => Math.hypot(actor.x - player.x, actor.z - player.z)),
+      engagedHostiles: actors
+        .filter((actor) => {
+          const targetingPlayer = actor.actionPhase !== 'idle' && actor.actionTargetIsPlayer
+          return actor.alive && actor.hostileToPlayer && (actor.playerAggro || targetingPlayer)
+        })
+        .map((actor) => ({
+          distance: Math.hypot(actor.x - player.x, actor.z - player.z),
+          targetingPlayer: actor.actionPhase !== 'idle' && actor.actionTargetIsPlayer,
+        })),
       finaleEngaged: finaleState.introduced && !finaleState.suspended && finaleWithinArena(),
     })
   let championDamageBonus = 0

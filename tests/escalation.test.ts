@@ -25,6 +25,7 @@ import {
 } from '../src/game/content/gameCopy.ts'
 import {
   DEFAULT_DOCTRINE_IDS,
+  DOCTRINE_DRAFT_ALERT_RADIUS,
   DOCTRINE_DRAFT_CALM_RADIUS,
   DOCTRINE_DRAFT_TIERS,
   createDoctrineRunState,
@@ -233,18 +234,20 @@ test('the launch view shows the tier the engine restores, on a save with an earn
   assert.equal(getThreatTier(70), 1)
 })
 
-test('the calm predicate refuses a nearby fight and a running finale, and nothing else', () => {
-  assert.equal(isDoctrineDraftMomentCalm({ engagedHostileDistances: [], finaleEngaged: false }), true)
-  assert.equal(
-    isDoctrineDraftMomentCalm({ engagedHostileDistances: [DOCTRINE_DRAFT_CALM_RADIUS + 0.1], finaleEngaged: false }),
-    true,
-  )
-  assert.equal(
-    isDoctrineDraftMomentCalm({ engagedHostileDistances: [80, DOCTRINE_DRAFT_CALM_RADIUS], finaleEngaged: false }),
-    false,
-  )
-  assert.equal(isDoctrineDraftMomentCalm({ engagedHostileDistances: [3], finaleEngaged: false }), false)
-  assert.equal(isDoctrineDraftMomentCalm({ engagedHostileDistances: [], finaleEngaged: true }), false)
+test('the calm predicate refuses a fight at the player and a running finale, and nothing else', () => {
+  const chasing = (distance: number) => ({ distance, targetingPlayer: false })
+  const aiming = (distance: number) => ({ distance, targetingPlayer: true })
+  const calm = (engagedHostiles: Array<{ distance: number; targetingPlayer: boolean }>, finaleEngaged = false) =>
+    isDoctrineDraftMomentCalm({ engagedHostiles, finaleEngaged })
+  assert.equal(calm([]), true)
+  // A pursuer is a fight once it is within the score's combat range, not before.
+  assert.equal(calm([chasing(DOCTRINE_DRAFT_CALM_RADIUS + 0.1)]), true)
+  assert.equal(calm([chasing(DOCTRINE_DRAFT_CALM_RADIUS)]), false)
+  assert.equal(calm([chasing(80), chasing(3)]), false)
+  // One winding up or shooting at the player is a fight anywhere in its alert range.
+  assert.equal(calm([aiming(DOCTRINE_DRAFT_ALERT_RADIUS)]), false)
+  assert.equal(calm([aiming(DOCTRINE_DRAFT_ALERT_RADIUS + 0.1)]), true)
+  assert.equal(calm([], true), false)
 })
 
 // ---------------------------------------------------------------------------
@@ -382,21 +385,23 @@ test('with nothing closed the clock still raises the tier at three minutes, with
 
 test('the draft waits for the fight to end, while the tier does not', () => {
   const { engine, notices } = engineFixture('elf')
-  engine.actors.push(hostile(20))
+  engine.actors.push(hostile(10))
   engine.completeObjective(nodeId('elf', 'start'))
   engine.completeObjective(nodeId('elf', 'branch'))
   for (let index = 0; index < 30; index += 1) frame(engine)
-  assert.equal(engine.threatTier, 2, 'the tier is the run\'s difficulty and rises at once')
+  assert.equal(engine.threatTier, 2, 'the tier is the run\'s pacing and rises at once')
   assert.equal(engine.doctrines.anchors, 0, 'the draft opened mid-fight')
   assert.equal(
     notices.some((notice) => notice.message === describeDoctrineDraftOpened(1, DOCTRINE_DRAFT_TIERS.length)),
     false,
   )
 
-  // Something unengaged nearby is not a fight, and an engaged one beyond the radius is not
-  // close enough to be one.
-  engine.actors[0].playerAggro = false
-  engine.actors.push(hostile(DOCTRINE_DRAFT_CALM_RADIUS + 5))
+  // An archer at 25 m drawing on the player is still a fight; a pursuer at that distance is not.
+  engine.actors[0].mesh.position.set(25, 0, 0)
+  engine.actors[0].action = { target: { kind: 'player' } }
+  frame(engine)
+  assert.equal(engine.doctrines.anchors, 0, 'the draft opened under fire')
+  engine.actors[0].action = null
   frame(engine)
   assert.equal(engine.doctrines.anchors, 1, 'the draft did not open once the fight was over')
   assert.ok(notices.some((notice) => notice.message === describeDoctrineDraftOpened(1, DOCTRINE_DRAFT_TIERS.length)))
@@ -410,23 +415,26 @@ test('the draft waits for the fight to end, while the tier does not', () => {
   finale.engine.completeObjective(nodeId('guard', 'branch'))
   frame(finale.engine)
   assert.equal(finale.engine.doctrines.anchors, 0, 'the draft opened during the finale')
-  // A dead hostile, and one swinging at the player without aggro, are read correctly.
+  // A dead hostile, an unengaged one, and one swinging at the player without aggro.
   const dead = engineFixture('villain')
   dead.engine.actors.push({ ...hostile(5), alive: false })
+  const idle = engineFixture('villain')
+  idle.engine.actors.push(hostile(5, false))
   const swinging = engineFixture('villain')
   swinging.engine.actors.push({ ...hostile(5, false), action: { target: { kind: 'player' } } })
-  for (const { engine: subject } of [dead, swinging]) {
+  for (const { engine: subject } of [dead, idle, swinging]) {
     subject.completeObjective(nodeId('villain', 'start'))
     subject.completeObjective(nodeId('villain', 'branch'))
     frame(subject)
   }
   assert.equal(dead.engine.doctrines.anchors, 1)
+  assert.equal(idle.engine.doctrines.anchors, 1)
   assert.equal(swinging.engine.doctrines.anchors, 0)
 
   // Negative control: without the gate the same fight gets the cards mid-swing.
   const control = engineFixture('elf')
   Reflect.set(control.engine, 'isDraftMomentCalm', () => true)
-  control.engine.actors.push(hostile(20))
+  control.engine.actors.push(hostile(10))
   control.engine.completeObjective(nodeId('elf', 'start'))
   control.engine.completeObjective(nodeId('elf', 'branch'))
   frame(control.engine)

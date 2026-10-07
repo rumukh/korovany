@@ -10152,7 +10152,8 @@ export class GameEngine {
    * drafts now arrive with the first, second and third closed step.
    *
    * W2-1 — and only at a calm moment. The tier rises on the frame it is earned, but the
-   * cards wait until nothing is chasing the player and no finale is under way
+   * cards wait until no hostile is at the player's throat — none chasing within 14 m, none
+   * swinging or shooting at them within 38 m — and no finale is under way
    * (`isDoctrineDraftMomentCalm`), so a choice is never put on the table mid-fight. The
    * draft stays a HUD card and a journal entry: it never opens or closes an overlay.
    *
@@ -10176,16 +10177,20 @@ export class GameEngine {
     this.emitView(true)
   }
 
-  /** W2-1 — no hostile is chasing or swinging at the player nearby, and no finale is on. */
+  /** W2-1 — no hostile is in a fight with the player close by, and no finale is on. */
   private isDraftMomentCalm(): boolean {
-    const engagedHostileDistances: number[] = []
+    const engagedHostiles: { distance: number; targetingPlayer: boolean }[] = []
     for (const actor of this.actors) {
       if (!actor.alive || !actor.hostileToPlayer) continue
-      if (!actor.playerAggro && actor.action?.target.kind !== 'player') continue
-      engagedHostileDistances.push(actor.mesh.position.distanceTo(this.player.position))
+      const targetingPlayer = actor.action?.target.kind === 'player'
+      if (!actor.playerAggro && !targetingPlayer) continue
+      engagedHostiles.push({
+        distance: actor.mesh.position.distanceTo(this.player.position),
+        targetingPlayer,
+      })
     }
     return isDoctrineDraftMomentCalm({
-      engagedHostileDistances,
+      engagedHostiles,
       finaleEngaged:
         this.finale.introduced && !this.finale.suspended && this.finaleWithinArena(),
     })
