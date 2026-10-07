@@ -748,6 +748,14 @@ export const MAX_HEALTH_PER_LEVEL = 15
 export const MAX_STAMINA_PER_LEVEL = 12
 export const MAX_THREAT_TIER = 5
 export const THREAT_TIER_SECONDS = 180
+/**
+ * W2-1 — the highest tier progress alone can reach.
+ *
+ * Four is the last doctrine anchor, so closing objectives pays for every draft. Tier 5 buys
+ * no decision, only the fastest events and the biggest waves, so it stays the clock's: the
+ * price of dawdling rather than of finishing.
+ */
+export const MAX_PROGRESS_THREAT_TIER = 4
 
 export const FACTION_INFO: Record<
   Faction,
@@ -898,8 +906,42 @@ export function getMaxStamina(levels: UpgradeLevels): number {
   return 100 + levels.endurance * MAX_STAMINA_PER_LEVEL
 }
 
-export function getThreatTier(elapsed: number): number {
+/** W2-1 — one tier per settled progress step, capped below the clock's last tier. */
+export function getProgressThreatTier(progressSteps: number): number {
+  const steps = Number.isFinite(progressSteps) ? Math.max(0, Math.floor(progressSteps)) : 0
+  return Math.min(MAX_PROGRESS_THREAT_TIER, 1 + steps)
+}
+
+/*
+ * W2-1 — the threat tier has two readers, and each has one source of truth:
+ *
+ * - `getThreatTier` is the run's **pacing**: the «Угроза n/5» on the HUD, the doctrine
+ *   drafts, how often the director sends an event, and the threat waves' interval and size.
+ *   It is the clock or the run's progress, whichever is further, because finishing things is
+ *   what should bring attention, events and choices.
+ * - `getEnemyScalingTier` is what makes an enemy **tougher**: its health and its damage. It
+ *   is the clock alone, so closing objectives quickly never inflates enemy stats. Escalation
+ *   by progress is meant to come from what is sent, not from how much it can take; when
+ *   enemy composition starts to follow progress, it reads `getThreatTier` and leaves this one
+ *   alone.
+ */
+
+/** W2-1 — the tier enemy health and damage follow: the clock alone, three minutes a tier. */
+export function getEnemyScalingTier(elapsed: number): number {
   return Math.min(MAX_THREAT_TIER, 1 + Math.floor(Math.max(0, elapsed) / THREAT_TIER_SECONDS))
+}
+
+/**
+ * The run's pacing tier: whichever comes first, the clock or the player's progress.
+ *
+ * W2-1 — the clock alone used to set it, three minutes a tier, so a winning run of two or
+ * three minutes ended at tier 1 and never met a draft. Progress now raises it too
+ * (`countProgressSteps`), and the clock stays as the backstop for a run that dawdles. A
+ * caller that passes no steps gets exactly the old value — which is also, always, the enemy
+ * scaling tier.
+ */
+export function getThreatTier(elapsed: number, progressSteps = 0): number {
+  return Math.max(getEnemyScalingTier(elapsed), getProgressThreatTier(progressSteps))
 }
 
 export function createHealthyBody(): BodyState {

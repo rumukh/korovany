@@ -19,7 +19,18 @@ export const PRESSURE_ATTRITION = 0.015
 export const CONTROL_FLIP_COOLDOWN_TICKS = 3
 export const BEAST_GROWTH_FOREST = 0.05
 export const BEAST_GROWTH_FORT = 0.04
-export const BEAST_NIGHT_MULTIPLIER = 1.6
+/**
+ * How much faster beast pressure grows at deep night than at noon.
+ *
+ * W2-1 — 2.2, up from 1.6, because the night got shorter rather than the beasts tamer.
+ * Night used to be 56% of a 240-second day (mean night factor 0.560); it is now 28% of a
+ * 540-second one (mean 0.277). Keeping 1.6 would have cut the world's beast pressure per day
+ * by about an eighth as a side effect of a readability change; 2.2 keeps the mean growth
+ * (1 + 0.6 · 0.560 = 1.336 against 1 + 1.2 · 0.277 = 1.332) and puts it where the notice says
+ * it is — in the night. What it cannot keep is the old opening: the first four and a half
+ * minutes are daylight now, so a short run meets fewer beast raids whatever this number is.
+ */
+export const BEAST_NIGHT_MULTIPLIER = 2.2
 export const BEAST_STORM_MULTIPLIER = 1.3
 export const BEAST_RAID_THRESHOLD = 0.75
 export const BEAST_CONTROL_DECAY = 0.02

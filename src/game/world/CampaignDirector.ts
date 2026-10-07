@@ -35,7 +35,7 @@ import type {
   RumourOutcome,
   WorldEventKind,
 } from '../types.ts'
-import { RUMOUR_KINDS } from '../types.ts'
+import { MAX_THREAT_TIER, RUMOUR_KINDS, getThreatTier } from '../types.ts'
 import {
   CARAVAN_BEAST_THRESHOLD,
   CARAVAN_PROGRESS_PER_TICK,
@@ -324,6 +324,70 @@ export function countRewardedObjectives(objectives: readonly Objective[]): numbe
   )
 }
 
+/**
+ * W2-1 — what the run has settled so far that the threat tier answers to.
+ *
+ * Read from saved state rather than counted as it happens, so a save and a continue can
+ * never count a step twice and an older save needs no migration: the objective list and
+ * the blueprint's graph are already in every checkpoint.
+ */
+export interface ProgressStepSources {
+  graph: Pick<FactionObjectiveGraph, 'nodes' | 'rootNodeIds' | 'finalNodeId'>
+  objectives: readonly Objective[]
+  /**
+   * Caravan beats resolved, whatever their outcome. The hook for W2-2's caravan spine: it
+   * passes its own count here and nothing below has to change. Absent means none.
+   */
+  caravanBeatsResolved?: number
+}
+
+/**
+ * One step per substantive thing the run has settled.
+ *
+ * On the campaign graph that is every **done** node that is neither a root nor the
+ * finale: the required errand, and whichever contract arm closed, whether it was kept or
+ * failed forward (a lost contract still closes its node by arrival). The camp is a root and
+ * free, the arm the run chose past is `skipped` rather than done, and the finale ends the
+ * run, so none of those count. The finale *opening* is deliberately not a step of its own:
+ * it opens on the same frame as its last prerequisite, so counting it would make one action
+ * jump two tiers.
+ */
+export function countProgressSteps(sources: ProgressStepSources): number {
+  const { graph, objectives } = sources
+  let steps = 0
+  for (const node of graph.nodes) {
+    if (graph.rootNodeIds.includes(node.id) || node.id === graph.finalNodeId) continue
+    const objective = objectives.find((entry) => entry.id === node.id)
+    if (objective?.done === true && objective.skipped !== true) steps += 1
+  }
+  const beats = sources.caravanBeatsResolved
+  if (typeof beats === 'number' && Number.isFinite(beats) && beats > 0) {
+    steps += Math.floor(beats)
+  }
+  return steps
+}
+
+/**
+ * W2-1 — the tier a continued run starts at.
+ *
+ * The saved tier is the truth when it is there: it already includes whatever the run had
+ * earned, and the engine raises it again on the first frame if the rules now owe more —
+ * which is how an older save, written when only the clock counted, catches up, with the
+ * notice. A missing or broken value falls back to what the rules derive. Never additive:
+ * adding the derived steps to a saved tier would count every step again on each continue.
+ */
+export function restoreThreatTier(
+  saved: unknown,
+  elapsed: number,
+  progressSteps: number,
+): number {
+  const tier =
+    typeof saved === 'number' && Number.isFinite(saved)
+      ? saved
+      : getThreatTier(elapsed, progressSteps)
+  return Math.min(MAX_THREAT_TIER, Math.max(1, Math.floor(tier)))
+}
+
 /** How close the player has to stand before an `arrive` objective completes itself. */
 export const OBJECTIVE_ARRIVE_RADIUS = 8
 
@@ -367,11 +431,17 @@ export function threatWaveInterval(threatTier: number): number {
   return Math.max(THREAT_WAVE_MIN_INTERVAL, 130 - threatTier * 12)
 }
 
-/** Enemies of the player's faction get tougher with the tier; friends never do. */
+/**
+ * Enemies of the player's faction get tougher with the tier; friends never do.
+ *
+ * W2-1 — the tier passed here is `getEnemyScalingTier`, the clock's, never the pacing tier a
+ * run's progress raises: finishing objectives brings more attention, not tougher enemies.
+ */
 export function enemyHealthMultiplier(threatTier: number, isHostile: boolean): number {
   return isHostile ? 1 + (threatTier - 1) * 0.12 : 1
 }
 
+/** As `enemyHealthMultiplier`, for the damage a hostile deals; the same clock-only tier. */
 export function enemyDamageMultiplier(
   threatTier: number,
   hostileToPlayer: boolean,

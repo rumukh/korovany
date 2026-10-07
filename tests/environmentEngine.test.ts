@@ -8,6 +8,7 @@ import { createCampaignContractState, createChronicleCommitmentState, createGene
 import { createChronicleRegions, createChronicleState, getChronicleProtectedRegionIds, type ChronicleEvent } from '../src/game/world/Chronicle.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import { createWeatherMix, type WeatherMix } from '../src/game/world/WorldEnvironment.ts'
+import { NIGHT_FALL_NOTICE } from '../src/game/content/gameCopy.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 import { RandomStream } from '../src/game/random/RandomStream.ts'
 import type { ZoneId } from '../src/game/types.ts'
@@ -23,10 +24,14 @@ loader.deregister()
 function fixture() {
   const blueprint = generateWorld('environment-toggles-2')
   const events: ChronicleEvent[] = []
+  const notices: string[] = []
   const player = new THREE.Group()
   const engine = Object.assign(Object.create(GameEngine.prototype), {
     generatedBlueprint: blueprint, player, faction: 'elf', actors: [],
     elapsed: 60, health: 100, ended: false, paused: false, hitStopRemaining: 0.03,
+    // W2-1 — the nightfall line goes through the notice channel, so it is captured here and
+    // compared across the toggles along with everything else the world does.
+    callbacks: { onNotice: (message: string) => notices.push(message) },
     weatherEnabled: true, dynamicDayNight: true, reducedMotion: false,
     weatherZone: 'palace', weatherTarget: 'clear', weatherWeights: createWeatherMix('clear'),
     renderer: { domElement: { dataset: {} } },
@@ -58,7 +63,7 @@ function fixture() {
   ]) Reflect.set(engine, method, () => {})
   for (const field of ['shakeClock', 'trauma', 'damageFlash', 'attackCooldown', 'attackAnimation',
     'abilityCooldown', 'caravanCooldown', 'caravanRobbedFlash', 'moraleNoticeCooldown']) Reflect.set(engine, field, 0)
-  return { engine, events }
+  return { engine, events, notices }
 }
 const zones: ZoneId[] = ['palace', 'forest', 'fort', 'neutral']
 
@@ -87,7 +92,7 @@ test('actual live setters cannot snap a partial mix, visit a new biome or spend 
 
 test('actual engine update ordering and chronicle history are identical across live weather/day toggles', () => {
   function run(toggles: boolean, restoreOldSnap = false) {
-    const { engine, events } = fixture()
+    const { engine, events, notices } = fixture()
     const ticks: { elapsed: number; mix: WeatherMix; ambientNight: number; stormPace: number }[] = []
     const updateChronicle = engine.updateChronicle.bind(engine)
     engine.updateChronicle = (delta: number) => {
@@ -109,7 +114,7 @@ test('actual engine update ordering and chronicle history are identical across l
       engine.update(0.05)
     }
     return {
-      ticks, events, state: engine.chronicleState, regions: [...engine.chronicleRegions],
+      ticks, events, notices, state: engine.chronicleState, regions: [...engine.chronicleRegions],
       mix: engine.weatherWeights, elapsed: engine.elapsed, hitStop: engine.hitStopRemaining,
       rng: Object.values(engine.generatedRngStreams).map((stream) => (stream as RandomStream).getState()),
     }
@@ -118,8 +123,48 @@ test('actual engine update ordering and chronicle history are identical across l
   assert.ok(baseline.ticks.length > 40)
   assert.ok(baseline.events.length > 0, 'chronicle must produce real events')
   assert.ok(baseline.ticks.some((tick) => tick.mix.rain > 0.1 && tick.mix.rain < 0.9))
+  // W2-1 — the 400 seconds from 60 s cross the first dusk (about 270 s) once, so the world's
+  // night is announced exactly once, and the toggles below must not add, drop or move it.
+  assert.deepEqual(baseline.notices, [NIGHT_FALL_NOTICE])
   assert.deepEqual(run(true), baseline)
   assert.notDeepEqual(run(true, true).ticks, baseline.ticks, 'reintroducing the setter snap must fail the same comparison')
+})
+
+test('the real update announces nightfall once, and a run continued at night says nothing', () => {
+  // Through dusk, from a save made just before it: the line comes, once.
+  const evening = fixture()
+  evening.engine.elapsed = 265
+  for (let frame = 0; frame < 400; frame++) evening.engine.update(0.05)
+  assert.deepEqual(evening.notices, [NIGHT_FALL_NOTICE])
+
+  // Continued at midnight: the first frame is already dark, so there is no edge to announce.
+  const midnight = fixture()
+  midnight.engine.elapsed = 345
+  for (let frame = 0; frame < 400; frame++) midnight.engine.update(0.05)
+  assert.deepEqual(midnight.notices, [])
+
+  // With the cycle switched off for performance the world's night still falls and is said.
+  const staticSky = fixture()
+  staticSky.engine.elapsed = 265
+  staticSky.engine.setDynamicDayNight(false)
+  for (let frame = 0; frame < 400; frame++) staticSky.engine.update(0.05)
+  assert.deepEqual(staticSky.notices, [NIGHT_FALL_NOTICE])
+
+  // A finished run hears nothing.
+  const ended = fixture()
+  ended.engine.elapsed = 265
+  ended.engine.ended = true
+  for (let frame = 0; frame < 400; frame++) ended.engine.update(0.05)
+  assert.deepEqual(ended.notices, [])
+
+  // Negative control: a level reading of the same night repeats itself on every dark frame.
+  const level = fixture()
+  level.engine.elapsed = 345
+  Reflect.set(level.engine, 'announceNightfall', function (this: { ambientNightFactor: number; callbacks: { onNotice: (message: string) => void } }) {
+    if (this.ambientNightFactor >= 0.45) this.callbacks.onNotice(NIGHT_FALL_NOTICE)
+  })
+  for (let frame = 0; frame < 400; frame++) level.engine.update(0.05)
+  assert.ok(level.notices.length > 300, `the level rule spoke ${level.notices.length} times`)
 })
 
 test('real engine presentation refresh wires final fog, wetness and terrain/density buffers without changing the authoritative mix', () => {

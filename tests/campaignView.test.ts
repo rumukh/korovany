@@ -45,7 +45,11 @@ import {
   isRegionRazed,
   type RegionChronicleState,
 } from '../src/game/world/Chronicle.ts'
-import { createGeneratedObjectives } from '../src/game/world/CampaignDirector.ts'
+import {
+  countProgressSteps,
+  createGeneratedObjectives,
+  restoreThreatTier,
+} from '../src/game/world/CampaignDirector.ts'
 import {
   PLAYER_MELEE_BEATS,
   createPlayerMeleeState,
@@ -431,6 +435,7 @@ test('the launch view reproduces the deleted builder on a restored run', () => {
   let comparisons = 0
   let withRazedRegions = 0
   let withContested = 0
+  let withEarnedTier = 0
 
   for (let index = 0; index < 80; index += 1) {
     const blueprint = generateWorld(21_000 + index * 577)
@@ -445,9 +450,20 @@ test('the launch view reproduces the deleted builder on a restored run', () => {
       const restored = makeRestored(blueprint, config, rng)
       const expected = legacyInitialView(blueprint, config, restored)
       const actual = buildInitialGameView({ blueprint, config, restored })
+      // W2-1 changed one field on purpose. The deleted builder read the tier off the clock
+      // alone; the launch view now shows the tier the engine restores — the saved one, or the
+      // clock and the run's progress, whichever is further — so a save with a closed errand
+      // launches at the tier it earned. The copy above stays verbatim; the rule is pinned here.
+      const launchTier = restoreThreatTier(
+        restored.directorState.threatTier,
+        actual.elapsed,
+        countProgressSteps({ graph: blueprint.objectives[faction], objectives: restored.player.objectives }),
+      )
+      assert.equal(actual.threatTier, launchTier, `seed ${index}, ${faction}: launch tier`)
+      if (launchTier !== expected.threatTier) withEarnedTier += 1
       assert.deepEqual(
         withoutLaterFields(actual),
-        expected,
+        { ...expected, threatTier: launchTier },
         `seed ${index}, ${faction}`,
       )
       comparisons += 1
@@ -460,6 +476,9 @@ test('the launch view reproduces the deleted builder on a restored run', () => {
   // A save with no razed or contested regions would leave two of the flags untested.
   assert.ok(withRazedRegions > 20, `expected razed regions, got ${withRazedRegions}`)
   assert.ok(withContested > 20, `expected contested regions, got ${withContested}`)
+  // And the W2-1 override is exercised rather than vacuous: some saves carry progress the
+  // clock alone would not have paid for.
+  assert.ok(withEarnedTier > 20, `expected saves with an earned tier, got ${withEarnedTier}`)
 })
 
 test('the two bounds sources agree, which the split builders had only assumed', () => {
