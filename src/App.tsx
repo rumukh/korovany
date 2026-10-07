@@ -102,6 +102,7 @@ import { ExpeditionAtlas, ExpeditionCompass, ExpeditionMinimap } from './game/ui
 import { SquadCommandPanel, SquadCommandStrip } from './game/ui/SquadCommandPanel'
 import { FinaleHud, FinaleResult } from './game/ui/FinaleHud'
 import { BridgeAmbushHud } from './game/ui/BridgeAmbushHud'
+import { CaravanLootCue } from './game/ui/CaravanLootCue'
 import { CampaignJournal } from './game/ui/CampaignJournal'
 import type { BridgeAmbushChoice } from './game/world/BridgeAmbush'
 import { CompactMissionHud, CompactWorldNews } from './game/ui/CompactCombatHud'
@@ -2966,7 +2967,12 @@ export function GameScreen({
       <CombatCameraControls mode={view.combatMastery.cameraMode}
         paused={simulationPaused} bowAiming={bowAiming} onCapture={onPointerLock} />
 
-      {view.prompt ? <div className="action-prompt">{view.prompt}</div> : null}
+      {view.prompt || view.caravanLoot ? (
+        <div className={`action-prompt${view.caravanLoot ? ' caravan-looting' : ''}`}>
+          <CaravanLootCue view={view.caravanLoot} />
+          {view.prompt ? <span className="action-prompt-text">{view.prompt}</span> : null}
+        </div>
+      ) : null}
 
       <div className="bottom-hud">
         <BodyPanel view={view} />
