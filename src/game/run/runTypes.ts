@@ -7,6 +7,7 @@ import type {
   Objective,
   UpgradeLevels,
 } from '../types'
+import type { CaravanBeatEnding, CaravanBeatPlacement } from '../world/CaravanBeats.ts'
 import type { ChronicleEventKind, ChronicleState } from '../world/Chronicle.ts'
 import type { RegionDelta } from '../world/RegionRuntime.ts'
 import type { Territory } from '../world/worldTypes.ts'
@@ -163,6 +164,18 @@ export interface RunEpilogue {
   caravansRobbed: number
   eventsCompleted: number
   bestKillStreak: number
+  /**
+   * W2-2 — how each settled caravan beat ended, oldest plan first. Absent on сводки written
+   * before beats existed. Bounded by `MAX_EPILOGUE_CARAVANS`.
+   */
+  caravans?: RunEpilogueCaravan[]
+}
+
+export interface RunEpilogueCaravan {
+  placement: CaravanBeatPlacement
+  /** The square, `C3`-shaped. */
+  region: string
+  ending: CaravanBeatEnding
 }
 
 export interface ActiveRunSaveV3 {

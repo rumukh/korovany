@@ -96,6 +96,9 @@ export const HARNESS_LOCATED_EVENT_REWARDS: Record<ChronicleWorldEventKind, numb
   beastRaid: 95,
 }
 
+/** Matches `CARAVAN_AMBUSH_DEFENDED_REWARD`: what a defended ambush of one's own cart pays. */
+export const HARNESS_CARAVAN_AMBUSH_DEFENDED_REWARD = 90
+
 /** The gold `resolveRandomEventOutcome` pays. A rescue pays in people instead. */
 export const HARNESS_RANDOM_EVENT_REWARDS: Record<RandomWorldEventKind, number> = {
   richCaravan: 180,
@@ -272,6 +275,11 @@ export interface EventPlan {
   spawns: EventSpawn[]
   /** For a located event: the faction its hand-back is paid in. */
   attacker: Faction | null
+  /**
+   * W2-2 — a chronicle ambush of the player's own side's cart. Nothing is taken: the player
+   * fights the raiders off, and the owners pay `HARNESS_CARAVAN_AMBUSH_DEFENDED_REWARD`.
+   */
+  defend?: boolean
 }
 
 function spawn(
@@ -682,9 +690,13 @@ export function planCaravanAmbush(
       }),
     )
   }
-  return locatedPlan('caravanAmbush', situation, 1, position, spawns, {
+  // W1-2 backlog (W2-2) — an ambush of the player's own side's cart is defended, not robbed:
+  // the event is won by putting both raiders down, as `startCaravanAmbushEvent` counts it.
+  const defend = !areAllegiancesHostile(world.faction, owner)
+  return locatedPlan('caravanAmbush', situation, defend ? 2 : 1, position, spawns, {
     cart: { x: position.x, z: position.z, direction: 0 },
     attacker: owner,
+    defend,
   })
 }
 
@@ -904,7 +916,9 @@ export function evaluateEventFrame(plan: EventPlan, view: EventProgressView): Ev
     case 'caravanAmbush':
       // W1-2 — losing the escort is no longer losing the cart: a raider has to finish
       // loading it, which `advanceAmbushLoot` decides and `plundered` reports.
-      return !view.robbed && view.plundered ? 'failed' : 'active'
+      if (!view.robbed && view.plundered) return 'failed'
+      // W2-2 — a defended cart is saved the frame its last raider is down.
+      return plan.defend === true && partAlive(plan, view, 'raider') === 0 ? 'succeeded' : 'active'
     case 'warband':
       return partAlive(plan, view, 'member') === 0 ? 'succeeded' : 'active'
     case 'aftermath':
@@ -961,6 +975,7 @@ export function eventProgress(plan: EventPlan, view: EventProgressView): number 
     case 'factionRaid':
       return plan.target - partAlive(plan, view, 'attacker')
     case 'caravanAmbush':
+      if (plan.defend === true) return plan.target - partAlive(plan, view, 'raider')
       return view.robbed ? 1 : 0
     case 'warband':
       return plan.target - partAlive(plan, view, 'member')

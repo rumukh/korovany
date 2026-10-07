@@ -151,7 +151,8 @@
   color: var(--cp-success);
 }
 
-.bridge-encounter[data-phase="lost"] header > svg {
+.bridge-encounter[data-phase="lost"] header > svg,
+.bridge-encounter[data-phase="escaped"] header > svg {
   color: var(--cp-danger);
 }
 
@@ -182,6 +183,13 @@
   }
 
   .bridge-encounter[data-phase="approach"] .bridge-stage-copy {
+    display: none;
+  }
+
+  /* W2-2 — a narrow field card with up to three choices keeps only the buttons, which already
+     name every outcome and what it pays; the journal card keeps the full text. */
+  .top-hud-side > .bridge-encounter[data-phase="secured"] .bridge-stage-copy,
+  .top-hud-side > .bridge-encounter[data-phase="secured"] .bridge-hint {
     display: none;
   }
 }

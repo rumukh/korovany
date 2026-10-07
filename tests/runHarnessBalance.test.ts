@@ -281,16 +281,19 @@ test('W1-1 in whole runs: a random event up at arrival stands down, and the cont
 })
 
 test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never to the squad', () => {
-  // Seed 47515 under `engage`: the elf and the guard both reach chronicle ambushes whose
-  // raiders get to the cart. In the baseline's `ignore` arm no NPC ever starts a load, so
-  // these are the runs that show the channel working end to end. The pre-W1-2 touch rule
-  // would lose a cart without a load (`lost > loads`), and the old squad rule would show
-  // up in `robbedBySquad`.
-  const reports = (['elf', 'guard'] as const).map((faction) =>
+  // Seed 697277 puts the guard at three chronicle ambushes of enemy carts whose raiders reach
+  // the cargo, and seed 618087 puts the elf at an ambush of an elf cart, where it now fights
+  // the raiders off (W2-2) and breaks the one load they start. In the baseline's `ignore` arm
+  // no NPC ever starts a load, so these are the runs that show the channel working end to end.
+  // Until W2-2 the population was seed 47515's guard, but that was the guard robbing its own
+  // side's carts: it fights for them now, and the loads it used to race went with the defect.
+  // The pre-W1-2 touch rule would lose a cart without a load (`lost > loads`), and the old
+  // squad rule would show up in `robbedBySquad`.
+  const reports = ([['guard', 697277], ['elf', 618087]] as const).map(([faction, seed]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,
       eventPolicy: 'engage',
-      seed: 47515,
+      seed,
       faction,
       policy: 'duelist',
       hz: 30,

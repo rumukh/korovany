@@ -29,6 +29,7 @@ import {
 } from '../src/game/content/gameCopy.ts'
 import {
   MAX_EPILOGUE_BEATS,
+  MAX_EPILOGUE_CARAVANS,
   MAX_EPILOGUE_COMPANIONS,
   MAX_EPILOGUE_DOCTRINES,
   MAX_EPILOGUE_ROUTE,
@@ -907,4 +908,79 @@ test('an empty run reads as an empty run rather than as a broken one', () => {
   assert.ok(copy.map.includes('разведка не доложила'))
   assert.ok(copy.squad.includes('не дошёл никто'))
   assert.equal(copy.text.includes('Летопись'), false)
+})
+
+// ---------------------------------------------------------------------------
+// W2-2 — the caravans the run settled
+// ---------------------------------------------------------------------------
+
+function withCaravanBeats(run: ActiveRunSaveV3, beats: unknown[]): ActiveRunSaveV3 {
+  return { ...run, directorState: { ...run.directorState, caravanBeats: { version: 1, garrisonThinned: false, beats } as never } }
+}
+
+test('the сводка says what became of each caravan, and keeps the beat chronicle out of «Летопись»', () => {
+  const burned = { placement: 'bridge', regionId: 'region-2-1', phase: 'resolved', outcome: 'burn' }
+  const escaped = { placement: 'forest', regionId: 'region-1-0', phase: 'escaped', outcome: null }
+  const pending = { placement: 'pass', regionId: 'region-0-0', phase: 'approach', outcome: null }
+  const base = makeTerminalRun({
+    status: 'victory',
+    ending: { cause: 'objectives' },
+    log: [
+      ...makeTerminalRun().chronicleState.log,
+      // The beat's own entry: a burned cart reads in the chronicle's words as «ограбили
+      // раньше пользователя», which would be a lie about a cart the player burned.
+      { id: 'caravan-beat-bridge-ambush:b-1', tick: 30, kind: 'caravanLost', regionId: 'region-2-1', faction: 'guard', siteId: null },
+    ],
+  })
+  const snapshot = withCaravanBeats({ ...base, config: { ...base.config, faction: 'villain' },
+    achievementRunState: { ...base.achievementRunState, faction: 'villain' } }, [burned, escaped, pending])
+  const epilogue = buildRunEpilogue(snapshot)
+  assert.deepEqual(epilogue.caravans, [
+    { placement: 'bridge', region: 'C2', ending: 'burn' },
+    { placement: 'forest', region: 'B1', ending: 'escaped' },
+  ])
+  assert.ok(epilogue.beats.every((beat) => beat.tick !== 30), 'a beat entry reached «Летопись»')
+  const storage = new MemoryStorage()
+  const finalized = finalizeRunSnapshot(storage, snapshot)
+  assert.deepEqual(historyFrom(storage)[0].epilogue?.caravans, epilogue.caravans)
+  const summary = finalized.summary
+  assert.ok(summary?.epilogue)
+  const copy = describeRunEpilogue(summary, summary.epilogue)
+  assert.equal(copy.caravans, 'Корованы: C2 у старого моста — сожжён; B1 на лесной дороге — ушёл.')
+  assert.ok(copy.text.includes(copy.caravans ?? '—'))
+  // The guard's сводка calls them what the guard does with them.
+  const guard = describeRunEpilogue({ ...summary, faction: 'guard' }, {
+    ...summary.epilogue, caravans: [{ placement: 'bridge', region: 'C2', ending: 'deliver' }],
+  })
+  assert.equal(guard.caravans, 'Обозы: C2 у старого моста — доведён.')
+  // Negative control: a run that settled none says nothing at all.
+  const quiet = buildRunEpilogue(withCaravanBeats(makeTerminalRun(), [pending]))
+  assert.equal(quiet.caravans, undefined)
+  assert.equal(describeRunEpilogue(summary, quiet).caravans, null)
+})
+
+test('an old сводка without caravans still loads, and a malformed one fails the profile', () => {
+  const storage = new MemoryStorage()
+  finalizeRuns(storage, 1)
+  const raw = storage.getItem(PROFILE_SAVE_KEY)
+  assert.ok(raw)
+  const profile = JSON.parse(raw) as ProfileSaveV1
+  assert.equal((profile.runHistory[0].epilogue as RunEpilogue).caravans, undefined)
+  assert.ok(normalizeProfileSaveV1(profile), 'a сводка from before caravans is not a fault')
+  const withCaravans = (caravans: unknown) => ({
+    ...profile,
+    runHistory: profile.runHistory.map((summary) => ({
+      ...summary, epilogue: { ...(summary.epilogue as RunEpilogue), caravans },
+    })),
+  })
+  assert.ok(normalizeProfileSaveV1(withCaravans([{ placement: 'bridge', region: 'C2', ending: 'press' }])))
+  for (const broken of [
+    [{ placement: 'bridge', region: 'C2', ending: 'seize' }],
+    [{ placement: 'river', region: 'C2', ending: 'take' }],
+    [{ placement: 'bridge', region: 'a-very-long-label', ending: 'take' }],
+    Array.from({ length: MAX_EPILOGUE_CARAVANS + 1 }, () => ({ placement: 'bridge', region: 'C2', ending: 'take' })),
+    'two caravans',
+  ]) {
+    assert.equal(normalizeProfileSaveV1(withCaravans(broken)), null, JSON.stringify(broken))
+  }
 })

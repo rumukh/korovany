@@ -38,7 +38,9 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 - **Who gets the cart.** W1-2's `world/CaravanClaim.ts` runs as shipped. Once a cart's escort is down, a looter has to
   stand at it for 3.5 s and any blow that lands breaks the channel. A player who won the escort fight keeps the cart
   for 9 s, the squad never loads it, and an ambush's raiders walk to their cart. The fidelity test drives this wiring
-  beside the engine's `updateCaravanEscort` and the ambush's `update`, frame for frame.
+  beside the engine's `updateCaravanEscort` and the ambush's `update`, frame for frame. Since W2-2 an ambush of the
+  player's own side's cart is defended, not robbed: there is nothing to take, it is won when both raiders are down,
+  and it pays 90 instead of 140, as `startCaravanAmbushEvent` and `resolveLocatedEventOutcome` do.
 - **Contracts as the engine runs them, W1-1 included.** Before the fix landed, the harness reproduced the defect: seed
   31677 as the elf lost its contract to a bounty, and the same run with the director held `silent` kept it. The
   fidelity test written to go red when the fix landed did. Now a random event the player was merely near stands down,
@@ -135,6 +137,10 @@ Over all 360 runs:
   escort fight, and `ignore` never went back for the cargo. Before W1-2, the same sweep lost 35 road carts to the
   elf's and villain's own squad. Under `engage`, chronicle ambush raiders do load their cart, and the W1-2 test in
   `runHarnessBalance.test.ts` shows it.
+- **W2-2's defended ambushes**, measured on the same 360 runs. Under `ignore` they change one run: a duelist guard
+  escorted a second cart, and the other 359 runs are identical. Under `engage`, robberies fell from 499 to 464 and
+  escorts rose from 1 to 20, because the side that owns an ambushed cart now fights for it. Wins went from 104 to
+  107, and no cell moved by more than one. The harness does not model caravan beats themselves yet.
 - **Events.** 365 random events and 1 238 located fights; 15 threat waves; 11 events won without the player.
 - **Rumours.** 451 of 1 222 offers (37 %) were beyond the player's reach the moment they were offered.
 - **Economy.** About 182 gold earned and 9 spent per run. About 54 health healed per run: rations 10 235,
@@ -170,8 +176,8 @@ the review's 88 % against 0 %.
 The harness header lists these with the bias each one introduces. In short: no props, buildings, trees or water as
 colliders. No player bow, shield, rush, evasion, perfect guard or knockback, so only the blow itself knocks a looter
 off a cart. No flanking, separation, commanders or boar charges. The squad only follows. The sustain policy is a
-script that never buys an upgrade. The bridge ambush, civilians, ambient prowlers, campfires, achievements and the
-profile are not modelled. The pinned arms keep a 6.4 m/s walk, a 22 m sense range and a contract grace from before
-W1-1, none of them the engine's.
+script that never buys an upgrade. Caravan beats (the bridge ambush among them), civilians, ambient prowlers,
+campfires, achievements and the profile are not modelled. The pinned arms keep a 6.4 m/s walk, a 22 m sense range and
+a contract grace from before W1-1, none of them the engine's.
 
 A number from this harness is a scripted player's, not a person's.

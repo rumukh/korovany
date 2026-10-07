@@ -43,6 +43,7 @@ import {
   getChronicleProtectedRegionIds,
   getChronicleSettlementSiteIds,
   getCaravanRegionId,
+  isCaravanBeatChronicleEvent,
   isProtectedSite,
   isRegionRazed,
   resolveEscortedCaravanDelivery,
@@ -564,13 +565,19 @@ export function buildChronicleFeedSignature(
   return `${tick}:${discoveredCount}:${log.length}:${log[log.length - 1]?.id ?? ''}`
 }
 
-/** The events the feed shows: discovered regions only, newest first, capped. */
+/**
+ * The events the feed shows: discovered regions only, newest first, capped.
+ *
+ * W2-2 — a caravan beat's own entries stay out. The feed is what the world did without the
+ * player, and the beat already has its notice and its card.
+ */
 export function selectChronicleFeedEvents(
   log: readonly ChronicleEvent[],
   discoveredRegionIds: ReadonlySet<string>,
 ): ChronicleEvent[] {
   return log
-    .filter((event) => discoveredRegionIds.has(String(event.regionId)))
+    .filter((event) =>
+      discoveredRegionIds.has(String(event.regionId)) && !isCaravanBeatChronicleEvent(event))
     .slice(-CHRONICLE_FEED_LIMIT)
     .reverse()
 }

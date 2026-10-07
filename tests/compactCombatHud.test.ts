@@ -87,7 +87,7 @@ function fixture(mode: HudMode, faction: 'elf' | 'guard' | 'villain' = 'guard'):
     onBowAimDown: noop, onBowAimUp: noop,
     onInteract: noop, onCommand: noop, onOpenSquadCommand: noop, onCloseSquadCommand: noop,
     onIssueSquadCommand: () => false, onOpenJournal: noop, onCloseJournal: noop,
-    onBridgeChoice: noop, onTrackBridge: noop,
+    onBeatChoice: noop, onTrackBeat: noop,
     onPinRumour: noop, onPinObjective: noop, onTakeDoctrine: noop,
     onPointerLock: noop, onInput: noop, onRetryFinalization: noop, onRestart: noop,
     musicMuted: false, sfxVolume: 0.5, dynamicDayNight: true, weatherEnabled: true,

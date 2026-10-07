@@ -6,7 +6,7 @@
  * - `world/CaravanClaim.ts`, the rules, frame by frame.
  * - `GameEngine`'s road cart (`updateCaravanEscort`, `damageActor`, `interact`,
  *   `getGeneratedPrompt`) and the chronicle's ambushed cart (`startCaravanAmbushEvent`,
- *   `finishEvent`), assembled field by field the way `bridgeAmbush.test.ts` does. Only
+ *   `finishEvent`), assembled field by field the way `caravanBeats.test.ts` does. Only
  *   presentation and unrelated world plumbing are stubbed.
  *
  * Every claim carries a negative control: the same scene with the one thing the claim is
@@ -19,7 +19,10 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import * as THREE from 'three'
 import {
+  CARAVAN_AMBUSH_CONFISCATED_OUTCOME,
+  CARAVAN_AMBUSH_DEFENCE_PROMPT,
   CARAVAN_CLAIM_NOTICE,
+  CARAVAN_CONFISCATE_PROMPT,
   describeCaravanAlreadyRobbed,
   describeCaravanEmptyPrompt,
   describeCaravanLootInterrupted,
@@ -748,7 +751,7 @@ function chronicleAmbush(faction: Faction, owner: Faction, defender: Faction, pl
       const index = actors.findIndex((actor) => actor.id === actorId)
       if (index >= 0) actors.splice(index, 1)
     },
-    focusBridgeAmbushChoice: () => false,
+    focusCaravanBeatChoice: () => false,
   })
   const situation: PendingMaterialization = {
     id: 'ambush:caravan-test', kind: 'caravanAmbush', regionId: 'region-b', sourceRegionId: null,
@@ -868,4 +871,72 @@ test('companions never load a chronicle cart either', () => {
   value.raiders[0].mesh.position.set(1, 0, 1)
   value.run(FRAME)
   assert.equal(value.event.lootSite?.claim.looterId, value.raiders[0].id)
+})
+
+test("a chronicle ambush of the player's own side's cart is defended, never robbed", () => {
+  // W1-2 backlog: the palace guard stood beside a guard cart and was offered «Забрать груз».
+  const value = chronicleAmbush('guard', 'guard', 'villain', 6)
+  const event = value.event as typeof value.event & {
+    onInteract(): boolean
+    getPrompt(): string | null
+    target: number
+  }
+  assert.equal(event.lootSite?.defend, true)
+  assert.equal(event.target, value.raiders.length)
+  value.run(FRAME)
+  value.player.position.set(2, 0, 0)
+  assert.equal(event.onInteract(), false, 'there is nothing for the guard to take')
+  assert.equal(event.getPrompt(), CARAVAN_AMBUSH_DEFENCE_PROMPT)
+  assert.equal(event.state, 'active')
+  for (const raider of value.raiders) {
+    raider.alive = false
+    raider.hp = 0
+  }
+  value.run(FRAME)
+  assert.equal(event.state, 'succeeded')
+  assert.deepEqual(event.handBack(), [], 'a defended cart rolls on with its cargo')
+  assert.equal(value.chronicleState.caravans.length, 1)
+  invoke(value.engine, 'finishEvent', event, true)
+  assert.equal(value.tally.gold, 90, 'the owners pay the defenders, less than the cargo is worth')
+  assert.equal(value.tally.robbed, 0, 'a defence is not a robbery')
+  assert.ok(value.notices.some((notice) => notice.includes('Корован отбит')))
+
+  // Lost the other way: the escort falls, nobody stops a raider, the cart is gone.
+  const lost = chronicleAmbush('guard', 'guard', 'villain')
+  lost.run(FRAME)
+  fell(lost.escorts)
+  lost.raiders[0].mesh.position.set(1.5, 0, 0)
+  lost.run(CARAVAN_LOOT_CHANNEL_SECONDS + 0.2)
+  assert.equal(lost.event.state, 'failed')
+  assert.deepEqual(lost.event.handBack().map((entry) => entry.kind), ['caravanLost'])
+
+  // Negative control: an elf at the same guard cart takes the cargo, as before.
+  const robbed = chronicleAmbush('elf', 'guard', 'villain', 6)
+  const robbedEvent = robbed.event as typeof robbed.event & { onInteract(): boolean }
+  assert.equal(robbed.event.lootSite?.defend, false)
+  robbed.run(FRAME)
+  hit(robbed.engine, robbed.escorts[0], 'elf')
+  fell(robbed.escorts)
+  robbed.run(FRAME)
+  robbed.player.position.set(2, 0, 0)
+  assert.equal(robbedEvent.onInteract(), true)
+  assert.equal(robbed.event.state, 'succeeded')
+  invoke(robbed.engine, 'finishEvent', robbed.event, true)
+  assert.equal(robbed.tally.gold, 140)
+  assert.equal(robbed.tally.robbed, 1)
+
+  // The guard at an enemy's cart raids it for the palace: same 140, a confiscation in words.
+  const raid = chronicleAmbush('guard', 'elf', 'villain', 6)
+  const raidEvent = raid.event as typeof raid.event & { onInteract(): boolean; getPrompt(): string | null }
+  assert.equal(raid.event.lootSite?.defend, false)
+  raid.run(FRAME)
+  hit(raid.engine, raid.escorts[0], 'guard')
+  fell(raid.escorts)
+  raid.run(FRAME)
+  raid.player.position.set(2, 0, 0)
+  assert.equal(raidEvent.getPrompt(), CARAVAN_CONFISCATE_PROMPT)
+  assert.equal(raidEvent.onInteract(), true)
+  invoke(raid.engine, 'finishEvent', raid.event, true)
+  assert.equal(raid.tally.gold, 140)
+  assert.ok(raid.notices.includes(CARAVAN_AMBUSH_CONFISCATED_OUTCOME))
 })
