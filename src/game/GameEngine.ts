@@ -325,6 +325,7 @@ import {
   equipDoctrine,
   getDoctrineDefinition,
   getDoctrineOffer,
+  isDoctrineDraftMomentCalm,
   normalizeDoctrineRunState,
   pendingDoctrineDraftIndex,
   resolveDoctrineEffects,
@@ -529,6 +530,7 @@ import {
   campaignObjectivesComplete,
   commitChronicleTicks,
   completeObjectiveEntry,
+  countProgressSteps,
   createCampaignContractState,
   createChronicleCommitmentState,
   createGeneratedObjectives,
@@ -557,6 +559,7 @@ import {
   playerObjectiveRatio,
   resolveActiveObjectiveNode,
   resolveContract,
+  restoreThreatTier,
   rollEventCooldown,
   selectChronicleAnnouncements,
   selectChronicleFeedEvents,
@@ -2869,16 +2872,10 @@ export class GameEngine {
     )
     this.generatedRunStatus = restoredRun?.status ?? 'active'
     this.campaignCompleted = this.objectives.every((objective) => objective.done)
-    this.threatTier = THREE.MathUtils.clamp(
-      Math.floor(
-        this.readSerializableNumber(
-          restoredDirector,
-          'threatTier',
-          getThreatTier(this.elapsed),
-        ),
-      ),
-      1,
-      MAX_THREAT_TIER,
+    this.threatTier = restoreThreatTier(
+      restoredDirector?.threatTier,
+      this.elapsed,
+      this.campaignProgressSteps(),
     )
     this.eventCooldown =
       Math.min(
@@ -10043,12 +10040,34 @@ export class GameEngine {
     }
   }
 
+  /**
+   * W2-1 — the steps the threat tier answers to, read off the saved objective list.
+   *
+   * Derived every time rather than counted as completions happen, so a checkpoint and a
+   * continue cannot count a step twice. W2-2's caravan beats join through
+   * `countProgressSteps`'s own input.
+   */
+  private campaignProgressSteps(): number {
+    return countProgressSteps({
+      graph: this.generatedBlueprint.objectives[this.faction],
+      objectives: this.objectives,
+    })
+  }
+
+  /** W2-1 — the tier the rules owe the run right now: the clock or the progress, whichever is further. */
+  private threatTierTarget(): number {
+    return getThreatTier(this.elapsed, this.campaignProgressSteps())
+  }
+
   private updateThreat(): void {
-    const nextTier = getThreatTier(this.elapsed)
+    const nextTier = this.threatTierTarget()
     if (nextTier > this.threatTier) {
       this.threatTier = nextTier
+      // W2-1 — a tier the clock has not reached yet was earned, and the line says so, so
+      // the player learns that finishing things is what brings the guests.
+      const cause = nextTier > getThreatTier(this.elapsed) ? 'progress' : 'time'
       this.callbacks.onNotice(
-        describeThreatTier(this.threatTier, MAX_THREAT_TIER),
+        describeThreatTier(this.threatTier, MAX_THREAT_TIER, cause),
         'warning',
       )
       this.playSound('event')
@@ -10080,10 +10099,16 @@ export class GameEngine {
   /**
    * Roadmap 1.6 — opens a draft when the threat tier reaches one of its anchors.
    *
-   * The anchors are tiers 2, 3 and 4, which `getThreatTier` puts at three, six and nine
-   * minutes. Anchoring on the tier rather than on a timer of this feature's own is
-   * deliberate: the tier already exists, is already persisted, already paces the run, and —
-   * the load-bearing part — it decoupled this initiative from 1.4 entirely.
+   * The anchors are tiers 2, 3 and 4. Anchoring on the tier rather than on a timer of this
+   * feature's own is deliberate: the tier already exists, is already persisted, already
+   * paces the run, and — the load-bearing part — it decoupled this initiative from 1.4
+   * entirely. W2-1 made the tier follow the run's progress as well as the clock, so the
+   * drafts now arrive with the first, second and third closed step.
+   *
+   * W2-1 — and only at a calm moment. The tier rises on the frame it is earned, but the
+   * cards wait until nothing is chasing the player and no finale is under way
+   * (`isDoctrineDraftMomentCalm`), so a choice is never put on the table mid-fight. The
+   * draft stays a HUD card and a journal entry: it never opens or closes an overlay.
    *
    * A player who walks past an open offer meets it again rather than losing it, so the
    * announcement fires when a draft *becomes* pending and not on every frame it stays that
@@ -10093,6 +10118,7 @@ export class GameEngine {
    */
   private updateDoctrineDraft(): void {
     if (this.ended) return
+    if (!this.isDraftMomentCalm()) return
     if (!advanceDoctrineAnchors(this.doctrines, this.threatTier)) return
     const index = pendingDoctrineDraftIndex(this.doctrines)
     if (index === null) return
@@ -10102,6 +10128,21 @@ export class GameEngine {
     )
     this.playSound('objective')
     this.emitView(true)
+  }
+
+  /** W2-1 — no hostile is chasing or swinging at the player nearby, and no finale is on. */
+  private isDraftMomentCalm(): boolean {
+    const engagedHostileDistances: number[] = []
+    for (const actor of this.actors) {
+      if (!actor.alive || !actor.hostileToPlayer) continue
+      if (!actor.playerAggro && actor.action?.target.kind !== 'player') continue
+      engagedHostileDistances.push(actor.mesh.position.distanceTo(this.player.position))
+    }
+    return isDoctrineDraftMomentCalm({
+      engagedHostileDistances,
+      finaleEngaged:
+        this.finale.introduced && !this.finale.suspended && this.finaleWithinArena(),
+    })
   }
 
   /**
@@ -14236,7 +14277,9 @@ export class GameEngine {
       // Roadmap 1.6 — «Устав дозора». The wave the clock is no longer throwing arrives here
       // instead, so the run's pressure is paced by what the player finishes rather than by how
       // long they have been out. Tier 1 is left alone for the same reason the scheduler leaves
-      // it alone: the first three minutes are not a wave's business.
+      // it alone: a run that has neither closed a step nor been out three minutes is not a
+      // wave's business. W2-1 — the wave is sized by the tier the run had *before* this
+      // closure; the tier the closure earns arrives on the next frame, with its own line.
       const spawned = this.spawnThreatWave(this.elapsed)
       if (spawned > 0) {
         this.callbacks.onNotice(describeThreatWave(spawned, this.threatTier), 'warning')

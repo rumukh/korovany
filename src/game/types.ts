@@ -701,6 +701,14 @@ export const MAX_HEALTH_PER_LEVEL = 15
 export const MAX_STAMINA_PER_LEVEL = 12
 export const MAX_THREAT_TIER = 5
 export const THREAT_TIER_SECONDS = 180
+/**
+ * W2-1 — the highest tier progress alone can reach.
+ *
+ * Four is the last doctrine anchor, so closing objectives pays for every draft. Tier 5
+ * buys no decision, only harder enemies, so it stays the clock's: reaching it by being
+ * efficient would make a quick run harder than a slow one.
+ */
+export const MAX_PROGRESS_THREAT_TIER = 4
 
 export const FACTION_INFO: Record<
   Faction,
@@ -851,8 +859,26 @@ export function getMaxStamina(levels: UpgradeLevels): number {
   return 100 + levels.endurance * MAX_STAMINA_PER_LEVEL
 }
 
-export function getThreatTier(elapsed: number): number {
-  return Math.min(MAX_THREAT_TIER, 1 + Math.floor(Math.max(0, elapsed) / THREAT_TIER_SECONDS))
+/** W2-1 — one tier per settled progress step, capped below the clock's last tier. */
+export function getProgressThreatTier(progressSteps: number): number {
+  const steps = Number.isFinite(progressSteps) ? Math.max(0, Math.floor(progressSteps)) : 0
+  return Math.min(MAX_PROGRESS_THREAT_TIER, 1 + steps)
+}
+
+/**
+ * The run's threat tier: whichever comes first, the clock or the player's progress.
+ *
+ * W2-1 — the clock alone used to set it, three minutes a tier, so a winning run of two or
+ * three minutes ended at tier 1 and never met a draft. Progress now raises it too
+ * (`countProgressSteps`), and the clock stays as the backstop for a run that dawdles. A
+ * caller that passes no steps gets exactly the old value.
+ */
+export function getThreatTier(elapsed: number, progressSteps = 0): number {
+  const timeTier = Math.min(
+    MAX_THREAT_TIER,
+    1 + Math.floor(Math.max(0, elapsed) / THREAT_TIER_SECONDS),
+  )
+  return Math.max(timeTier, getProgressThreatTier(progressSteps))
 }
 
 export function createHealthyBody(): BodyState {

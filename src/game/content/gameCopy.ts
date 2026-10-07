@@ -854,7 +854,7 @@ export const DOCTRINE_EQUIPPED_HINT = 'Устав принят и не меня�
 export const DOCTRINE_MENU_EYEBROW = 'Уставы'
 export const DOCTRINE_MENU_TITLE = 'Правила, а не числа — по три на забег'
 export const DOCTRINE_MENU_NOTE =
-  'Открытые уставы попадают в раздачу: чем их больше, тем реальнее выбор на третьей минуте.'
+  'Открытые уставы попадают в раздачу: чем их больше, тем реальнее выбор на первом же закрытом пункте.'
 
 export function describeDoctrineDraftOpened(index: number, total: number): string {
   return `Раздача уставов ${String(index)}/${String(total)}: выбери, по какому правилу идти дальше.`
@@ -1179,7 +1179,18 @@ export function describeZoneDiscovered(zone: ZoneId): string {
   return `Открыта область: «${ZONE_DISCOVERY_NAMES[zone]}».`
 }
 
-export function describeThreatTier(tier: number, maxTier: number): string {
+/**
+ * The threat-tier line. W2-1 — a tier the run *earned* says so, because the rule to learn
+ * is that closing objectives is what brings the guests; the clock's own rise keeps its line.
+ */
+export function describeThreatTier(
+  tier: number,
+  maxTier: number,
+  cause: 'time' | 'progress' = 'time',
+): string {
+  if (cause === 'progress') {
+    return `Про пользователя прослышали: угроза ${tier}/${maxTier}. Враги сильнее, событий и набегов больше.`
+  }
   return `Угроза растёт: уровень ${tier}/${maxTier}. Враги сильнее, событий и набегов больше.`
 }
 
@@ -1753,7 +1764,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'warning',
   },
   doctrines: {
-    text: 'Устав меняет правило, а не число: что-то даёт и что-то забирает. Раздача трижды за забег — на третьей, шестой и девятой минуте, — и принятое до конца похода не меняется.',
+    text: 'Устав меняет правило, а не число: что-то даёт и что-то забирает. Раздача приходит с угрозой — за закрытые пункты, а кто тянет, тому по часам, — и принятое уже не меняется.',
     tone: 'info',
   },
   squad: {
@@ -1761,7 +1772,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'success',
   },
   threat: {
-    text: 'Угроза в углу растёт от времени, а не от подвигов. Чем дольше забег, тем злее гости.',
+    text: 'Угроза в углу растёт за каждый закрытый пункт, а если тянуть — и по часам, раз в три минуты. Чем она выше, тем злее гости, зато с ней приходят уставы.',
     tone: 'warning',
   },
   ability: {

@@ -157,12 +157,46 @@ export const MAX_EQUIPPED_DOCTRINES = 3
 /**
  * When a draft opens, in `threatTier`.
  *
- * `getThreatTier` is `min(5, 1 + floor(elapsed / 180))`, so tiers 2, 3 and 4 are three, six
- * and nine minutes. The anchor is deliberately the tier and not a timer of this feature's
- * own: the tier already exists, is already persisted in `directorState` and already paces
- * the run, so the draft lands on beats the player is already feeling.
+ * The anchor is deliberately the tier and not a timer of this feature's own: the tier
+ * already exists, is already persisted in `directorState` and already paces the run, so the
+ * draft lands on beats the player is already feeling.
+ *
+ * W2-1 — `getThreatTier` is the clock or the run's progress, whichever is further, so the
+ * three drafts arrive with the first, second and third closed step. The clock is only the
+ * backstop now: a run that closes nothing still meets them at three, six and nine minutes.
  */
 export const DOCTRINE_DRAFT_TIERS = [2, 3, 4] as const
+
+/**
+ * W2-1 — how far an engaged hostile has to be before a draft may open, in metres.
+ *
+ * The score's own alert range (`desiredMusicIntensity`): the draft waits until the music
+ * would go back to walking, so it never lands in the middle of a fight.
+ */
+export const DOCTRINE_DRAFT_CALM_RADIUS = 38
+
+export interface DoctrineDraftMoment {
+  /** Distances to every live hostile that is chasing or swinging at the player. */
+  engagedHostileDistances: Iterable<number>
+  /** A finale fight is under way around the player. */
+  finaleEngaged: boolean
+}
+
+/**
+ * W2-1 — whether this is a moment to put a choice in front of the player.
+ *
+ * A draft is a decision, and a decision offered mid-fight is either ignored or paid for
+ * in blood. The threat tier itself does not wait — it is the run's difficulty, announced
+ * as the consequence of the step that raised it — but the cards do. No timer and nothing
+ * persisted: the check is made fresh every frame, and the anchors it gates only ever rise.
+ */
+export function isDoctrineDraftMomentCalm(moment: DoctrineDraftMoment): boolean {
+  if (moment.finaleEngaged) return false
+  for (const distance of moment.engagedHostileDistances) {
+    if (distance <= DOCTRINE_DRAFT_CALM_RADIUS) return false
+  }
+  return true
+}
 
 /** Cards on the table at one draft. Fewer only when the pool has run short. */
 export const DOCTRINE_OFFER_SIZE = 3
