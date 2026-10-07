@@ -104,6 +104,25 @@ to change the seed or starting boon; graphics and audio controls live under **Н
 The field HUD keeps immediate vitals and navigation visible. Open **Поход** for the
 full campaign details, or **Отряд** for individual companion health and orders.
 
+## Contracts
+
+Each campaign forks into two contract arms. Pin one with **Взяться** on the **Подряды** board,
+in the HUD or the journal, and walk to its site: the contract starts when you arrive, and
+the game's own random events cannot take it away. None is rolled while a contract is on the
+ground, or while the un-started contract you are heading for is within 120 m. A random event
+still running when you arrive is called off with no penalty, no reward and no failed-event
+record, unless you are in the middle of it: a cart you have robbed, or a fight in which you
+traded blows within the last 10 seconds and 60 m. That one you finish first, on its own
+terms, while the contract waits with its grace paused. Located chronicle fights are handed
+back, farthest first, when the contract needs their actors.
+
+Only a genuine inability to stage the contract spends its 12-second start grace: an actor
+budget that cannot be reclaimed, or no walkable ground at the site. The notice then names
+the reason. Lingering by the arm you did not take costs nothing, and the second arm waits
+without losing patience while the first is still on the ground. A lost contract still fails
+forward: walk to its site and the node closes without the payout. The bridge ambush never
+takes a contract's fighters to make room for its own; on a crowded road it waits and retries.
+
 ## The bridge ambush
 
 New runs place an optional caravan encounter on a real generated bridge. It does not

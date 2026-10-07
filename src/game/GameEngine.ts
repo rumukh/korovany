@@ -262,8 +262,12 @@ import {
   describeContractAbandoned,
   describeContractFailed,
   describeContractKept,
+  describeContractQueued,
   describeContractStarted,
   describeContractTitle,
+  describeContractWaitsForEvent,
+  describeEventHandbackForContract,
+  describeRandomEventStoodDown,
   describeRationEaten,
   describeRazedSite,
   describeRout,
@@ -297,6 +301,7 @@ import {
   FINALE_RESTORE_WARNING,
   type LocatedEventCopyContext,
   type ContractCopyContext,
+  type ContractStartBlock,
   type RumourCopyContext,
 } from './content/gameCopy'
 import { HintDirector } from './content/hints'
@@ -1083,6 +1088,13 @@ interface WorldEvent {
   getPrompt?(): string | null
   /** Folds the live fight back into chronicle state instead of cancelling it. */
   handBack?(): ChronicleEvent[]
+  /**
+   * W1-1 — the last time the player traded blows with one of its owned actors, in
+   * `elapsed` seconds. A contract waits for an event the player is in the middle of.
+   */
+  playerExchangeAt?: number
+  /** W1-1 — the player has acted on it: robbed its cart, cut its captive loose. */
+  playerInteracted?: boolean
   cleanup(): void
 }
 
@@ -1091,6 +1103,15 @@ type WorldEventConfig = Omit<
   'cleanup' | 'anchor' | 'regionId' | 'situationId' | 'slots'
 > &
   Partial<Pick<WorldEvent, 'anchor' | 'regionId' | 'situationId' | 'slots'>>
+
+/**
+ * W1-1 — what one attempt to start a contract on arrival came to. Only a
+ * `ContractStartBlock` spends start grace. `queued` waits behind the contract already on
+ * the ground, `engaged` behind a random event the player is in the middle of, `settling`
+ * one frame for an event that has just resolved; all three pause the grace.
+ */
+type ContractStartOutcome = 'started' | 'queued' | 'engaged' | 'settling' | ContractStartBlock
+type ContractWaitReason = 'queued' | 'engaged'
 
 interface Palette {
   bg: THREE.Color
@@ -1435,6 +1456,33 @@ const DEFEND_HOME_MAX_DISTANCE = 95
  * standing on the site would spawn its escort on top of them.
  */
 const CONTRACT_TRIGGER_RADIUS = 26
+/**
+ * W1-1 — how close to the un-started contract the player is heading for the event director
+ * stops rolling new player-anchored events.
+ *
+ * 120 m covers the site's whole 80 m square wherever the site sits in it (the diagonal is
+ * 113 m), and it is about fifteen seconds of walking at 8.2 m/s — shorter than any timed
+ * random event lives, so an event rolled inside it would still be running on arrival.
+ * Distance rather than square membership, so a site on a square's edge is not "near" from
+ * one side and "far" from a step away on the other.
+ */
+const CONTRACT_QUIET_RADIUS = 120
+/**
+ * W1-1 — how long after the last blow traded with a random event's actors the player still
+ * counts as in the middle of it, so an arriving contract waits instead of erasing the fight.
+ *
+ * A broken actor runs for `MORALE_ROUT_SECONDS` (7 s) before it turns to fight again, and
+ * ten seconds is that rout plus about three to close back in: a fight is not over because
+ * its mark is fleeing. It also outlasts `AGGRO_MEMORY_DURATION` (6 s), so by the time the
+ * player counts as disengaged the event's own actors have stopped hunting them too.
+ */
+const EVENT_ENGAGEMENT_WINDOW = 10
+/**
+ * W1-1 — beyond this from an event's marker the player has walked away from it, whatever
+ * happened last. Twice the bow's 30 m reach and past the 45 m `MORALE_NOTICE_RANGE` within
+ * which the game treats a fight as one the player can see.
+ */
+const EVENT_ENGAGEMENT_RADIUS = 60
 const BOW_DAMAGE = 18
 const BOW_MIN_DAMAGE = 10
 const BOW_RANGE = 30
@@ -2094,6 +2142,11 @@ export class GameEngine {
   private finaleTelegraphAction: FinaleAction | null = null
   /** The contract event currently on the ground, by objective node id. */
   private activeContractNodeId: string | null = null
+  /**
+   * W1-1 — the waits already explained on this visit to a contract's site. Runtime only:
+   * it gates notices, not a timer or a reward.
+   */
+  private contractWaitExplained: { nodeId: string; reasons: Set<ContractWaitReason> } | null = null
   /**
    * Roadmap 1.6 — the doctrine ledger: the pool this run may draft from, what it has taken,
    * and how many draft anchors the threat tier has crossed.
@@ -3812,7 +3865,10 @@ export class GameEngine {
       this.emitView(true)
       return
     }
-    if (this.activeEvents.some((event) => event.onInteract?.() === true)) {
+    const touched = this.activeEvents.find((event) => event.onInteract?.() === true)
+    if (touched) {
+      // W1-1 — a robbed cart or a cut rope is a commitment an arriving contract waits for.
+      touched.playerInteracted = true
       this.emitView(true)
       return
     }
@@ -5732,9 +5788,10 @@ export class GameEngine {
    *
    * - the builder went down on the ground and the contract is now `active`, with its own
    *   bounded clock;
-   * - the clock ran out, or the engine stood on the site for the whole start grace without
-   *   being able to afford the event — the contract **fails forward**, and from that moment
-   *   the node completes by walking to its site;
+   * - the clock ran out, or the engine stood on the site for the whole start grace
+   *   genuinely unable to stage the event — no chronicle room even after the game's own
+   *   events made way, or no walkable ground — so the contract **fails forward**, and from
+   *   that moment the node completes by walking to its site;
    * - the event resolved on its own terms, which `finishEvent` records.
    *
    * The site is one of this faction's objective sites, so `chronicleRumourReserved` already
@@ -5769,6 +5826,11 @@ export class GameEngine {
     // The contract only *starts* on the arm the player took on, which is what makes the
     // pin a decision rather than a label. Once it is on the ground its clock runs whether
     // or not the pin moves — a fight you walked away from is still happening.
+    //
+    // W1-1 — and only a genuine inability to stage it spends the start grace. Standing
+    // beside an arm the player did not take, waiting behind the contract already on the
+    // ground and a random event of the game's own making are none of them that.
+    let stalled: ContractStartBlock | null = null
     if (
       progress.status === 'offered' &&
       onSite &&
@@ -5776,25 +5838,75 @@ export class GameEngine {
       objectivePrerequisitesDone(node, this.objectives) &&
       this.getActiveGeneratedObjective()?.id === node.id
     ) {
-      if (this.startContractEvent(node, template, site)) {
+      const outcome = this.startContractEvent(node, template, site)
+      if (outcome === 'started') {
+        this.contractWaitExplained = null
         beginContract(this.campaignContracts, node, template)
         this.callbacks.onNotice(describeContractStarted(template.id), 'warning')
         this.playSound('event')
         this.emitView(true)
         return
       }
+      if (outcome === 'queued' || outcome === 'engaged') {
+        this.explainContractWait(node, template, outcome)
+      }
+      // A wait is not a stall and not a departure: the grace is paused, neither spent nor
+      // refreshed, and an `offered` contract has no other clock to run.
+      if (outcome === 'queued' || outcome === 'engaged' || outcome === 'settling') return
+      stalled = outcome
+    } else if (this.contractWaitExplained?.nodeId === node.id) {
+      this.contractWaitExplained = null
     }
 
-    const tick = advanceContract(progress, template, delta, onSite)
+    const tick = advanceContract(progress, template, delta, stalled !== null)
     if (tick.kind === 'expired' || tick.kind === 'abandoned') {
       this.failContractForward(
         node,
         template,
         tick.kind === 'expired'
           ? describeContractFailed(template.id, this.contractCopyContext(node))
-          : describeContractAbandoned(template.id, this.contractCopyContext(node)),
+          : describeContractAbandoned(
+              template.id,
+              this.contractCopyContext(node),
+              stalled ?? 'crowded',
+            ),
       )
     }
+  }
+
+  /**
+   * W1-1 — says once per visit why the contract the player reached is not starting yet:
+   * the other arm is still on the ground, or a random event the player is in the middle of
+   * has to finish first. Nothing is spent while it waits. The running contract's clock, the
+   * event's own clock, or the player walking away from the event is what bounds the wait.
+   */
+  private explainContractWait(
+    node: FactionObjectiveNode,
+    template: FactionContractTemplate,
+    reason: ContractWaitReason,
+  ): void {
+    if (this.contractWaitExplained?.nodeId !== node.id) {
+      this.contractWaitExplained = { nodeId: node.id, reasons: new Set() }
+    }
+    if (this.contractWaitExplained.reasons.has(reason)) return
+    let message: string | null = null
+    if (reason === 'engaged') {
+      const event = this.playerAnchoredEvent
+      message = event ? describeContractWaitsForEvent(template.id, event.title) : null
+    } else {
+      const runningId =
+        this.activeEvents.find((event) => event.contractNodeId)?.contractNodeId ??
+        this.activeContractNodeId
+      const running = findContractTemplate(
+        this.generatedBlueprint.objectives[this.faction].nodes.find(
+          (candidate) => candidate.id === runningId,
+        )?.contract,
+      )
+      message = running ? describeContractQueued(template.id, running.id) : null
+    }
+    if (!message) return
+    this.contractWaitExplained.reasons.add(reason)
+    this.callbacks.onNotice(message, 'info')
   }
 
   /**
@@ -5844,18 +5956,42 @@ export class GameEngine {
    * is not a hole in the guarantee, it is the reason `startGraceSeconds` exists: the
    * contract stays `offered`, the grace runs out in front of the player, and the node
    * fails forward into an arrival.
+   *
+   * W1-1 — the game's own events make way for it, never the other way round. A random
+   * event the player was merely near is stood down without a penalty, and the chronicle's
+   * located fights are handed back farthest first when the builder needs their slots. A
+   * random event the player is in the middle of is the exception: the contract waits for it
+   * (`engaged`) rather than make a fight vanish under the player's blade. What is left to
+   * say no is genuine, and it is named: `crowded` when the actor budget cannot be
+   * reclaimed, `noGround` when the builder found nowhere to stand. Waiting behind the
+   * contract already on the ground is not a no but a queue, and the running contract's
+   * clock is what bounds it.
    */
   private startContractEvent(
     node: FactionObjectiveNode,
     template: FactionContractTemplate,
     site: { x: number; z: number },
-  ): boolean {
-    if (this.activeContractNodeId !== null) return false
-    if (this.playerAnchoredEvent) return false
+  ): ContractStartOutcome {
+    if (
+      this.activeContractNodeId !== null ||
+      this.activeEvents.some((event) => event.contractNodeId)
+    ) {
+      return 'queued'
+    }
+    const interrupted = this.playerAnchoredEvent
+    // Resolved this frame and not yet paid: `updateEvents` finishes it first, and the
+    // contract starts on the next frame instead of racing that payout.
+    if (interrupted && interrupted.state !== 'active') return 'settling'
+    // In the middle of it: the player finishes what they started, on the event's own terms.
+    if (interrupted && this.isPlayerEngagedWith(interrupted)) return 'engaged'
+    const required = EVENT_REQUIRED_SLOTS[template.eventKind]
+    if (!this.chronicleRoomOnceEventsMakeWay(required, interrupted)) return 'crowded'
+    if (interrupted) this.standDownRandomEvent(interrupted)
+    this.reclaimChronicleSlotsForContract(required)
     const origin = new THREE.Vector3(site.x, 0, site.z)
     origin.y = this.groundHeightAt(origin.x, origin.z)
     const event = this.buildContractEvent(node, template, origin)
-    if (!event) return false
+    if (!event) return this.chronicleCapacity() < required ? 'crowded' : 'noGround'
     event.contractNodeId = node.id
     event.title = describeContractTitle(template.id)
     // The contract's clock replaces the builder's, when the builder had one at all. It is
@@ -5863,7 +5999,97 @@ export class GameEngine {
     event.timer = template.timeoutSeconds
     this.activeEvents.push(event)
     this.activeContractNodeId = node.id
-    return true
+    return 'started'
+  }
+
+  /**
+   * W1-1 — ends a random player-anchored event because the player reached their contract.
+   *
+   * The interruption is the game's own, so the event is closed the way a save closes one:
+   * it and everything it put on the ground go, no stat is written, nothing is paid or
+   * failed, and the director's cooldown is floored exactly as `saveGeneratedRun` floors it,
+   * without a draw from the event stream. A random event has no chronicle situation to be
+   * handed back to, which is why this is a stand-down rather than a hand-back. It only ever
+   * happens to an event the player is not engaged in (`isPlayerEngagedWith`).
+   */
+  private standDownRandomEvent(event: WorldEvent): void {
+    this.releaseEvent(event)
+    this.eventCooldown = Math.max(this.eventCooldown, this.eventCooldownRange().min)
+    this.callbacks.onNotice(describeRandomEventStoodDown(event.title), 'info')
+  }
+
+  /**
+   * W1-1 — whether the player is in the middle of `event`: within
+   * `EVENT_ENGAGEMENT_RADIUS` of its marker, and either they have acted on it or they
+   * traded blows with one of its actors in the last `EVENT_ENGAGEMENT_WINDOW` seconds.
+   *
+   * Acting on it — a robbed cart, a cut rope — lasts until the event resolves, because what
+   * it pays depends on terms the event keeps: the escape distance or its own clock. Every
+   * event the player can act on is bounded that way. A fight lasts only while blows are
+   * traded, which is what bounds the two events that have no clock, the champion and the
+   * captive: walk away or stop fighting, and the contract takes over.
+   */
+  private isPlayerEngagedWith(event: WorldEvent): boolean {
+    const away = Math.hypot(
+      event.markerPos.x - this.player.position.x,
+      event.markerPos.z - this.player.position.z,
+    )
+    if (away > EVENT_ENGAGEMENT_RADIUS) return false
+    if (event.playerInteracted === true) return true
+    return (
+      event.playerExchangeAt !== undefined &&
+      this.elapsed - event.playerExchangeAt <= EVENT_ENGAGEMENT_WINDOW
+    )
+  }
+
+  /** W1-1 — stamps the event owning `actorId`, if any, with a blow traded with the player. */
+  private notePlayerExchange(actorId: string): void {
+    for (const event of this.activeEvents) {
+      if (event.ownedActorIds.includes(actorId)) event.playerExchangeAt = this.elapsed
+    }
+  }
+
+  /** Chronicle slots a builder could take right now, if the categories below it yielded. */
+  private chronicleCapacity(): number {
+    this.actorBudget.sync(this.actorUsageByCategory())
+    return this.actorBudget.capacityFor('chronicle')
+  }
+
+  /**
+   * W1-1 — whether a contract could have `required` chronicle slots once the game's own
+   * events made way: the interrupted random event, then every located fight that is not a
+   * contract. Arithmetic on a scratch ledger, so nothing is stood down or handed back for a
+   * start that would fail anyway.
+   */
+  private chronicleRoomOnceEventsMakeWay(
+    required: number,
+    interrupted: WorldEvent | null,
+  ): boolean {
+    const usage = this.actorUsageByCategory()
+    for (const event of [
+      ...(interrupted ? [interrupted] : []),
+      ...this.locatedEvents.filter((located) => !located.contractNodeId),
+    ]) {
+      usage.chronicle -= this.actors.filter(
+        (actor) =>
+          actor.budgetCategory === 'chronicle' && event.ownedActorIds.includes(actor.id),
+      ).length
+    }
+    const ledger = new ActorBudget()
+    ledger.sync(usage)
+    return ledger.capacityFor('chronicle') >= required
+  }
+
+  /** W1-1 — hands located fights back to the chronicle, farthest first, until it fits. */
+  private reclaimChronicleSlotsForContract(required: number): void {
+    for (const event of this.locatedEventsByDistance()) {
+      if (this.chronicleCapacity() >= required) return
+      if (event.contractNodeId) continue
+      this.dematerializeEvent(
+        event,
+        describeEventHandbackForContract(this.regionGridLabel(event.regionId)),
+      )
+    }
   }
 
   private buildContractEvent(
@@ -11242,6 +11468,9 @@ export class GameEngine {
       // chronicle before plucking individual fighters out of one.
       for (const event of this.locatedEventsByDistance()) {
         if (freed >= count) break
+        // W1-1 — the player's contract is never the slot another spawn is paid for with.
+        // Whoever asked — the bridge ambush, an encounter, a wave — retries instead.
+        if (event.contractNodeId) continue
         const owned = event.ownedActorIds.filter((actorId) =>
           this.actors.some((actor) => actor.id === actorId),
         ).length
@@ -11252,10 +11481,18 @@ export class GameEngine {
     }
     for (const actor of this.yieldOrderedActors(category)) {
       if (freed >= count) break
+      if (this.isContractOwnedActor(actor.id)) continue
       this.removeActorById(actor.id)
       freed += 1
     }
     return freed
+  }
+
+  /** W1-1 — alive or dead, since a contract may count its own corpses. */
+  private isContractOwnedActor(actorId: string): boolean {
+    return this.activeEvents.some(
+      (event) => Boolean(event.contractNodeId) && event.ownedActorIds.includes(actorId),
+    )
   }
 
   private yieldOrderedActors(category: ActorBudgetCategory): Actor[] {
@@ -11350,6 +11587,24 @@ export class GameEngine {
     )
   }
 
+  /**
+   * W1-1 — true while the event director must not roll a new player-anchored event: a
+   * contract is on the ground, or the objective the player is heading for is a contract
+   * that has not started and its site is within `CONTRACT_QUIET_RADIUS` of them.
+   */
+  private contractHoldsRandomEvents(): boolean {
+    if (this.activeContractNodeId !== null) return true
+    if (this.activeEvents.some((event) => event.contractNodeId)) return true
+    const node = this.getActiveGeneratedObjective()
+    if (!node || getContractStatus(this.campaignContracts, node) !== 'offered') return false
+    const site = this.generatedWorld.getSitePosition(node.siteId)
+    return (
+      site !== undefined &&
+      Math.hypot(site.x - this.player.position.x, site.z - this.player.position.z) <=
+        CONTRACT_QUIET_RADIUS
+    )
+  }
+
   private isRegionSimulated(regionId: string | null): boolean {
     return regionId !== null && this.simulatedGeneratedRegions.has(regionId)
   }
@@ -11393,6 +11648,12 @@ export class GameEngine {
     if (this.playerAnchoredEvent) return
     this.eventCooldown = Math.max(0, this.eventCooldown - delta)
     if (this.eventCooldown > 0) return
+    // W1-1 — the director keeps out of the player's contract. It waits the way it waits
+    // when it can afford nothing, and draws nothing from the event stream while it does.
+    if (this.contractHoldsRandomEvents()) {
+      this.eventCooldown = EVENT_RETRY
+      return
+    }
     if (!this.startRandomEvent()) this.eventCooldown = EVENT_RETRY
   }
 
@@ -11487,13 +11748,16 @@ export class GameEngine {
       : '??'
   }
 
-  /** Hands a live fight back to the chronicle rather than deleting it. */
-  private dematerializeEvent(event: WorldEvent): void {
+  /**
+   * Hands a live fight back to the chronicle rather than deleting it. `notice` replaces
+   * the walked-away line when the player did not walk away (W1-1: a contract needed room).
+   */
+  private dematerializeEvent(event: WorldEvent, notice?: string): void {
     if (!this.activeEvents.includes(event)) return
     const chronicleEvents = event.handBack?.() ?? []
     this.releaseEvent(event)
     this.callbacks.onNotice(
-      describeEventHandback(this.regionGridLabel(event.regionId)),
+      notice ?? describeEventHandback(this.regionGridLabel(event.regionId)),
       'info',
     )
     if (chronicleEvents.length > 0) this.handleChronicleEvents(chronicleEvents)
@@ -13106,6 +13370,8 @@ export class GameEngine {
     canInjure: boolean,
     options: DamagePlayerOptions,
   ): DamageResult {
+    // W1-1 — a blow at the player, landed or not, keeps them in the middle of its event.
+    if (options.sourceActorId) this.notePlayerExchange(options.sourceActorId)
     const fallbackDirection = new THREE.Vector3(0, 0, 1)
     const normalizedIncoming = incomingDirection.clone()
     normalizedIncoming.y = 0
@@ -13254,6 +13520,7 @@ export class GameEngine {
         direction,
       }
     }
+    if (directPlayerKill) this.notePlayerExchange(target.id)
     if (
       directPlayerKill &&
       target.aiMode !== 'captive' &&

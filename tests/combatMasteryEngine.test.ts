@@ -198,7 +198,7 @@ function fixture(faction: Faction = 'elf', collision = new CollisionWorld({
     elapsed: 0, melee: createPlayerMeleeState(), combatMastery: createCombatMasteryState(),
     finale: createFinaleState(createFinaleIdentity(blueprint, faction)),
     finaleTelegraphs: [], finaleTelegraphAction: null,
-    actors: [attacker], generatedWorld: { collision, bounds: collision.getWorldBounds() }, doctrineEffects: { forcedMarch: false },
+    actors: [attacker], activeEvents: [], generatedWorld: { collision, bounds: collision.getWorldBounds() }, doctrineEffects: { forcedMarch: false },
     onGround: true, verticalVelocity: 0, airborneTime: 0, jumpAccentArmed: true,
     wasSprinting: false, isSprinting: false, reducedMotion: false, damageFlash: 0,
     playerPose: { stride: 0, attack: 0, anticipation: 0, recovery: 0, flinch: 0, stagger: 0 },
