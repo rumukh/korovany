@@ -46,7 +46,12 @@ test('the harness produces a stable run report for a fixed seed', () => {
   assert.equal(report.kills, 2)
   assert.equal(report.regionsVisited, 10)
   assert.equal(report.chronicleTicks, 17)
-  assert.equal(report.chronicleHistory.length, 16)
+  // W2-1 moved this one, and only the chronicle's half of the run: the night used to fall at
+  // 69 s, so ticks 9 to 17 ran at night and the beasts grew at the night rate. The nine-minute
+  // day keeps this whole 138-second run in daylight, so the beast raid at tick 16 and the two
+  // carts lost on beast ground (ticks 15 and 17) do not happen — one of them arrives instead.
+  // The player's own run, down to the fourth decimal below, is unchanged.
+  assert.equal(report.chronicleHistory.length, 14)
   assert.equal(report.weatherTargetChanges, 6)
   assert.equal(report.finalWeather, 'clear')
 
@@ -91,12 +96,13 @@ test('the harness produces a stable run report for a fixed seed', () => {
   ])
 
   // Event exposure: how much of the world's own history this run was in a position to see.
+  // W2-1: two fewer events and one fewer materializable situation, for the reason above.
   assert.deepEqual(report.eventExposure, {
-    chronicleEvents: 16,
+    chronicleEvents: 14,
     witnessed: 1,
-    offScreen: 15,
-    materializable: 18,
-    materializedNearPlayer: 18,
+    offScreen: 13,
+    materializable: 17,
+    materializedNearPlayer: 17,
   })
 
   // Region dwell sums to the run, minus nothing: every frame is spent somewhere.

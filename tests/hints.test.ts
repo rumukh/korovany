@@ -207,7 +207,11 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
     },
   }),
   squad: (base) => ({ ...base, squad: 2 }),
-  threat: (base) => ({ ...base, threatTier: 2 }),
+  // W2-1 — the clock's own tier: three minutes in, nothing earned, so the HUD and the
+  // enemies agree, and only `threat` speaks.
+  threat: (base) => ({ ...base, threatTier: 2, elapsed: 180 }),
+  // W2-1 — a tier the run earned before the clock got there: only `threatEarned` speaks.
+  threatEarned: (base) => ({ ...base, threatTier: 2 }),
   ability: (base) => ({ ...base, ability: { ...base.ability, cooldown: 1.4 } }),
   melee: (base) => ({ ...base, melee: { ...base.melee, beat: 1 } }),
   evade: (base) => ({ ...base, combatMastery: { ...base.combatMastery, evadeActive: true } }),

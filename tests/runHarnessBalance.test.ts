@@ -49,7 +49,11 @@
  *   has the ablation.
  * - **F1, unchanged.** 302 of 360 runs end inside three minutes and the median doctrine
  *   drafts reached is zero in every cell but cautious elf and guard, where a third of the
- *   runs stall to the time limit.
+ *   runs stall to the time limit. **W2-1 has since fixed the drafts half:** the tier follows
+ *   the run's progress as well as the clock, so the same runs reach two drafts, while enemy
+ *   stats stay on the clock and the win counts stay within noise. The table above is the
+ *   clock-only rule (`escalation: 'time'`); `tests/runHarnessEscalation.test.ts` holds the
+ *   comparison.
  * - **F2, corrected.** Every run reached its contract and started it: 360 started, 346
  *   kept, none abandoned. The first baseline's 239 `crowded` abandonments came from the
  *   harness simulating the whole 3x3 where the engine simulates only the plus inside it
@@ -116,15 +120,18 @@ test('the shipped baseline: three factions, three policies, inside the measured 
   assert.ok(beeline >= 0.1 && beeline <= 0.9, `beeline won ${beeline}`)
   assert.ok(duelist >= beeline, `duelist ${duelist} should win at least as often as beeline ${beeline}`)
 
-  // Runs are short: a winning run is still the review's two-to-three-minute errand, so the
-  // tier and draft clocks barely start (F1).
+  // Runs are short: a winning run is still the review's two-to-three-minute errand (F1).
+  // W2-1 fixed F1's other half: the tier now follows the run's progress as well as the
+  // clock, so the errand and the contract arm deal the first two drafts on the way to the
+  // finale. Enemy health and damage stay on the clock, which is why the win bands above
+  // did not have to move.
   for (const cell of [...byPolicy('beeline'), ...byPolicy('duelist')]) {
     if (cell.outcomes.victory === 0) continue
     assert.ok(
       cell.victoryLength.p50 >= 45 && cell.victoryLength.p50 <= 240,
       `${cell.policy}/${cell.faction} median win ${cell.victoryLength.p50}`,
     )
-    assert.ok(cell.draftsReached.median <= 1, `${cell.policy}/${cell.faction} drafts`)
+    assert.ok(cell.draftsReached.median >= 2, `${cell.policy}/${cell.faction} drafts`)
   }
 
   // Both ends of a run kill: the road's encounters and the finale's director.
@@ -292,14 +299,19 @@ test('W1-1 in whole runs: a random event up at arrival stands down, and the cont
 })
 
 test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never to the squad', () => {
-  // Under `engage`, the elf on seed 31677 and the guard on seed 182138 each reach a chronicle
+  // Under `engage`, the elf on seed 7920 and the guard on seed 47515 each reach a chronicle
   // ambush whose raiders load their cart. In the baseline's `ignore` arm no NPC ever starts a
   // load, so these are the runs that show the channel working end to end. The pre-W1-2
   // touch rule would lose a cart without a load (`lost > loads`), and the old squad rule
   // would show up in `robbedBySquad`.
+  //
+  // Were 31677 and 182138 until W2-1, re-picked by the same rule — the first seed in the
+  // stride on which each faction's raiders start a load. W2-1 moved what the shipped arms
+  // run into: the tier on the HUD now follows progress, so events, waves and drafts come
+  // sooner, and the night moved, so the chronicle's carts meet different ground.
   const reports = ([
-    [31677, 'elf'],
-    [182138, 'guard'],
+    [7920, 'elf'],
+    [47515, 'guard'],
   ] as const).map(([seed, faction]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,

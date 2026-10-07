@@ -58,7 +58,6 @@ import {
   createMeleeView,
   getMaxHealth,
   getMaxStamina,
-  getThreatTier,
   normalizeUpgradeLevels,
   type AbilityView,
   type BodyState,
@@ -86,6 +85,7 @@ import type { CaravanLootView } from './CaravanClaim.ts'
 import {
   CHAMPION_DAMAGE_CAP,
   contractPayout,
+  countProgressSteps,
   createGeneratedObjectives,
   findContractTemplate,
   getContractProgress,
@@ -94,6 +94,7 @@ import {
   normalizeCampaignContractState,
   normalizeChronicleCommitmentState,
   resolveActiveObjectiveNode,
+  restoreThreatTier,
   rumourProgressShare,
   rumourSecondsRemaining,
   type CampaignContractState,
@@ -1026,7 +1027,14 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     activeEvent: null,
     lootToast: null,
     campaignCompleted: objectives.every((objective) => objective.done),
-    threatTier: getThreatTier(elapsed),
+    // W2-1 — the tier the engine restores, not one re-derived from the clock: the saved
+    // value already holds whatever the run earned, so the chip does not drop on launch and
+    // jump back on the first frame.
+    threatTier: restoreThreatTier(
+      restored?.directorState.threatTier,
+      elapsed,
+      countProgressSteps({ graph: blueprint.objectives[config.faction], objectives }),
+    ),
     upgrades,
   }
 }
