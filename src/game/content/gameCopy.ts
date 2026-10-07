@@ -568,6 +568,13 @@ export interface ContractCopyContext {
   siteLabel: string | null
 }
 
+/**
+ * W1-1 — why a contract the player reached could not be put on the ground. Only genuine
+ * reasons are listed: the game's own random events and a contract already on the ground
+ * never spend the start grace, so neither can be why one is abandoned.
+ */
+export type ContractStartBlock = 'crowded' | 'noGround'
+
 export const CONTRACT_PANEL_TITLE = 'Подряды'
 export const CONTRACT_PANEL_HINT = 'Возьмёшь один — второй закроется сам. Это дорога, а не очередь.'
 /** The line under a plain campaign node, so a required errand does not read as optional. */
@@ -748,13 +755,44 @@ export function describeContractFailed(
   }
 }
 
-/** The contract could not even be put on the ground, and its patience ran out. */
+/**
+ * The contract could not even be put on the ground, and its patience ran out.
+ *
+ * W1-1 — and it says why. Only a genuine reason can get here now, so the line names it
+ * instead of shrugging at the hour and the place.
+ */
 export function describeContractAbandoned(
   id: ContractId,
   context: ContractCopyContext,
+  reason: ContractStartBlock,
 ): string {
   const site = context.siteLabel ?? DEFAULT_SITE_LABEL
-  return `«${CONTRACT_TITLES[id]}» так и не собрался — не тот час, не то место. Точка «${site}» в квадрате ${context.regionLabel} всё равно твоя: дойди и закрывай пункт.`
+  const why =
+    reason === 'crowded'
+      ? 'вокруг и так слишком людно, места под подряд не осталось'
+      : 'у точки не нашлось ровной земли под подряд'
+  return `«${CONTRACT_TITLES[id]}» так и не собрался: ${why}. Точка «${site}» в квадрате ${context.regionLabel} всё равно твоя: дойди и закрывай пункт.`
+}
+
+/**
+ * W1-1 — the player reached one arm while the other is still on the ground. Nothing is
+ * lost and no patience is spent: one contract at a time, and the running one has a clock.
+ */
+export function describeContractQueued(id: ContractId, running: ContractId): string {
+  return `«${CONTRACT_TITLES[id]}» ждёт своей очереди: пока идёт «${CONTRACT_TITLES[running]}», второй подряд не начать.`
+}
+
+/**
+ * W1-1 — a random event called off because the player reached the contract they chose.
+ * The interruption is the game's own, so it costs nothing and pays nothing.
+ */
+export function describeRandomEventStoodDown(title: string): string {
+  return `«${title}» — отбой: пользователь пришёл по подряду. Ни штрафа, ни награды.`
+}
+
+/** W1-1 — a located fight handed back to the chronicle to make room for the contract. */
+export function describeEventHandbackForContract(regionLabel: string): string {
+  return `Подряду нужны люди: бой в квадрате ${regionLabel} ушёл в хронику, чем кончился — прочитаешь там.`
 }
 
 export function describeObjectivePinned(text: string): string {
