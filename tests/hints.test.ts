@@ -114,6 +114,10 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
       active: true,
     },
   }),
+  caravanLoot: (base) => ({
+    ...base,
+    caravanLoot: { progress: 0.4, looter: 'raider', defend: false, distance: 18 },
+  }),
   chronicle: (base) => ({
     ...base,
     chronicle: [

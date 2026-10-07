@@ -166,6 +166,13 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
       view.bridgeAmbush.active === true,
   },
   {
+    hint: 'caravanLoot',
+    viewFields: ['caravanLoot'],
+    // The first bar the player can actually watch fill, so the line explains a race that
+    // is still on rather than the empty cart it left behind.
+    firstSighting: (view) => view.caravanLoot !== null,
+  },
+  {
     hint: 'chronicle',
     viewFields: ['chronicle'],
     firstSighting: (view) => view.chronicle.length > 0,

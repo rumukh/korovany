@@ -210,8 +210,8 @@ import {
   COMBAT_MASTERY_SAVE_WARNING,
   describeEvadeRefused,
   describePointerLockFailure,
-  CARAVAN_ALREADY_ROBBED_NOTICE,
   CARAVAN_AMBUSH_NOTICE,
+  CARAVAN_CLAIM_NOTICE,
   CARAVAN_DEFENSE_COOLDOWN_NOTICE,
   CARAVAN_DEFENSE_NOT_EARNED_NOTICE,
   CARAVAN_DEFENDED_BY_PLAYER_NOTICE,
@@ -231,7 +231,10 @@ import {
   chronicleEventTone,
   describeBeastProwler,
   describeCaravanPlundered,
+  describeCaravanAlreadyRobbed,
   describeCaravanDefenseAid,
+  describeCaravanEmptyPrompt,
+  describeCaravanLootInterrupted,
   describeCaravanRobbed,
   describeBridgeAmbushDelivered,
   describeBridgeAmbushSeized,
@@ -495,6 +498,22 @@ import {
   serializeCombatMastery,
   settleCombatMastery,
 } from './world/CombatMastery.ts'
+import {
+  advanceCaravanClaim,
+  buildCaravanLootView,
+  cancelCaravanLoot,
+  caravanLootProgress,
+  createCaravanClaimState,
+  interruptCaravanLoot,
+  noteCaravanEscortHit,
+  CARAVAN_LOOT_CUE_RANGE,
+  type CaravanClaimState,
+  type CaravanClaimStep,
+  type CaravanLooterKind,
+  type CaravanLooterSample,
+  type CaravanLootView,
+  type CaravanRobber,
+} from './world/CaravanClaim.ts'
 import {
   EVENT_RETRY,
   advanceContract,
@@ -1005,6 +1024,20 @@ interface ActorKillContext {
   directPlayerKill: boolean
 }
 
+/**
+ * W1-2 — one cart that NPCs can take, as the claim rules see it: the road cart, or a
+ * chronicle ambush's cart. Owned by whoever owns the cart, never saved.
+ */
+interface CaravanLootSite {
+  readonly claim: CaravanClaimState
+  readonly cart: THREE.Object3D
+  /** The player's side protects this cart, so it gets no claim and its cue says defend. */
+  readonly defend: boolean
+  isEscort(actorId: string): boolean
+  /** Seconds until the next handful of coins leaves the cart while it is being loaded. */
+  sparkle: number
+}
+
 interface InteractableOutlineBinding {
   binding: OutlineBinding
   positionRoot: THREE.Object3D
@@ -1042,6 +1075,8 @@ interface WorldEvent {
   markerPos: THREE.Vector3
   ownedActorIds: string[]
   ownedProps: THREE.Object3D[]
+  /** W1-2 — set on events whose cart NPCs can take, so the claim rules can see it. */
+  lootSite?: CaravanLootSite
   update?(delta: number): void
   onKill?(actor: Actor, context: ActorKillContext): void
   onInteract?(): boolean
@@ -1509,6 +1544,18 @@ const CARAVAN_PLUNDER_RANGE = 3.4
 const CARAVAN_PLUNDER_COOLDOWN = 55
 const CARAVAN_DEFENSE_CREDIT_RANGE = 20
 const CARAVAN_DEFENSE_AID_COOLDOWN = 30
+/**
+ * W1-2 — an idle raider walks at a point this far past the cart. Order posts stop an
+ * actor 3.5 m short of where they point, which would park it just outside the 3.4 m
+ * reach of the tailgate; aiming past the cart lets it arrive.
+ */
+const CARAVAN_LOOT_APPROACH_OVERSHOOT = 2.2
+/** Seconds between two handfuls of coins leaving a cart that is being loaded. */
+const CARAVAN_LOOT_SPARKLE_INTERVAL = 0.45
+/** How much of the cargo is gone when a looter finishes, matching the robbed cart. */
+const CARAVAN_LOOT_CARGO_SHARE = 0.65
+/** How loud the positioned tell is when somebody starts loading a cart. */
+const CARAVAN_LOOT_TELL_INTENSITY = 0.55
 const BRIDGE_AMBUSH_OWNER_ID = 'bridge-ambush'
 const BRIDGE_AMBUSH_CARGO_TARGET_ID = 'bridge-ambush:cargo'
 const BRIDGE_AMBUSH_SPAWN_RETRY_SECONDS = 2
@@ -2341,6 +2388,10 @@ export class GameEngine {
   private caravanEscortRespawnAt = 0
   private caravanDefenseCredit = false
   private caravanAidCooldown = 0
+  /** W1-2 — who may load the road cart once its escort is down, and who is loading it. */
+  private ordinaryCaravanLootSite: CaravanLootSite | null = null
+  /** Who emptied the road cart, so an empty cart says so. Unknown again after a continue. */
+  private caravanRobbedBy: CaravanRobber | null = null
   /** Rate limit for rout and rally notices, so a squad breaking is one line, not five. */
   private moraleNoticeCooldown = 0
   private readonly activeEvents: WorldEvent[] = []
@@ -3795,7 +3846,7 @@ export class GameEngine {
         return
       }
       if (this.caravanCooldown > 0) {
-        this.callbacks.onNotice(CARAVAN_ALREADY_ROBBED_NOTICE, 'warning')
+        this.callbacks.onNotice(describeCaravanAlreadyRobbed(this.caravanRobbedBy ?? null), 'warning')
         this.emitView(true)
         return
       }
@@ -3804,6 +3855,9 @@ export class GameEngine {
       this.achievements.recordCaravanRobbed(false)
       this.caravanCooldown = 40
       this.caravanRobbedFlash = 1
+      this.caravanRobbedBy = 'player'
+      // W1-2 — the player got there first: whoever was loading is now loading an empty cart.
+      if (this.ordinaryCaravanLootSite) cancelCaravanLoot(this.ordinaryCaravanLootSite.claim)
       this.callbacks.onNotice(describeCaravanRobbed(95), 'success')
       this.playSound('coin')
       this.spawnAmbush()
@@ -6061,6 +6115,12 @@ export class GameEngine {
       }
     }
     if (kind === 'caravan') {
+      // W1-2 — while somebody else loads the cart the HUD cue says so, and an emptied cart
+      // says who emptied it. Only the palace guard needs the early word: it cannot rob.
+      const looting = (this.ordinaryCaravanLootSite?.claim.looterId ?? null) !== null
+      if (this.faction === 'guard' && (looting || this.caravanCooldown > 0)) {
+        return looting ? '' : describeCaravanEmptyPrompt(this.caravanRobbedBy ?? null)
+      }
       if (this.faction === 'guard') {
         if (this.caravanDefenseCredit && this.caravanAidCooldown <= 0 && this.health < this.maxHealth) {
           return '[E] Получить перевязку за защиту корована'
@@ -6073,7 +6133,7 @@ export class GameEngine {
       }
       if (this.isOrdinaryCaravanGuarded()) return 'Живая охрана не даёт взять груз'
       return this.caravanCooldown > 0
-        ? 'Корован уже ограбили'
+        ? describeCaravanEmptyPrompt(this.caravanRobbedBy ?? null)
         : '[E] ГРАБИТЬ КОРОВАН'
     }
     if (kind === 'ration') {
@@ -7102,6 +7162,15 @@ export class GameEngine {
       // soldier falls back on his rally point and can be talked round.
       if (actor.routTimer > 0) {
         this.updateRoutingActor(actor, delta)
+        continue
+      }
+      // W1-2 — a looter at a cart is busy with the cargo, not the fight: it stays put and
+      // keeps loading until a hit, a rout or an escort takes it off the job.
+      const lootCart = this.caravanLootCartFor(actor)
+      if (lootCart) {
+        this.faceActorToward(actor, lootCart, delta)
+        this.settleActorLocomotion(actor, delta)
+        this.animateActorCharacter(actor, delta, 0)
         continue
       }
 
@@ -8876,7 +8945,11 @@ export class GameEngine {
       regionId !== null &&
       this.simulatedGeneratedRegions.has(regionId)
     const panic = this.updateCaravanEscort(delta, regionId, streaming)
-    if (streaming) {
+    // W1-2 — a cart somebody is loading stands still: the looter has the oxen by the yoke,
+    // and a channel against a cart rolling away at panic speed could never be interrupted.
+    const loot = this.ordinaryCaravanLootSite
+    const held = loot !== null && loot.claim.looterId !== null
+    if (streaming && !held) {
       let destination =
         this.caravanDirection > 0
           ? this.generatedCaravanPatrolEnd
@@ -8936,14 +9009,36 @@ export class GameEngine {
     }
     const cargo = this.caravan.getObjectByName('cargo')
     if (cargo instanceof THREE.Mesh) {
-      const scale = this.caravanCooldown > 0 ? 0.35 : 1
-      cargo.scale.y = THREE.MathUtils.lerp(cargo.scale.y, scale, delta * 5)
-      const material = cargo.material
-      if (material instanceof THREE.MeshStandardMaterial) {
-        material.emissive.copy(this.caravanRobbedFlash > 0 ? this.palette.warning : this.palette.bg)
-        material.emissiveIntensity = this.caravanRobbedFlash
-      }
+      const loading = loot ? caravanLootProgress(loot.claim) : 0
+      this.presentCaravanCargo(
+        cargo,
+        this.caravanCooldown > 0 ? 1 - CARAVAN_LOOT_CARGO_SHARE : 1 - loading * CARAVAN_LOOT_CARGO_SHARE,
+        held,
+        this.caravanRobbedFlash,
+        delta,
+      )
     }
+  }
+
+  /**
+   * W1-2 — the cargo is the world half of the looting cue: it sinks as it is carried off
+   * and glows the warning colour while somebody is at it, so the race reads from the road
+   * before the HUD bar is even looked at.
+   */
+  private presentCaravanCargo(
+    cargo: THREE.Mesh,
+    targetScale: number,
+    looting: boolean,
+    flash: number,
+    delta: number,
+  ): void {
+    cargo.scale.y = THREE.MathUtils.lerp(cargo.scale.y, targetScale, Math.min(1, delta * 5))
+    const material = cargo.material
+    if (!(material instanceof THREE.MeshStandardMaterial)) return
+    const pulse = looting ? 0.3 + 0.3 * (0.5 + 0.5 * Math.sin(this.elapsed * 9)) : 0
+    const glow = Math.max(flash, pulse)
+    material.emissive.copy(glow > 0 ? this.palette.warning : this.palette.bg)
+    material.emissiveIntensity = glow
   }
 
   /**
@@ -8977,11 +9072,25 @@ export class GameEngine {
     if (this.caravanEscortIds.length < before) {
       this.caravanEscortRespawnAt = this.elapsed + CARAVAN_ESCORT_RESPAWN_DELAY
     }
+    // W1-2 — the moment the last guard goes down is the moment the claim is decided.
+    const escortFell = before > 0 && this.caravanEscortIds.length === 0
+    const loot = (this.ordinaryCaravanLootSite ??= {
+      claim: createCaravanClaimState(),
+      cart: this.caravan,
+      defend: !hostile(this.faction, CARAVAN_ALLEGIANCE),
+      isEscort: (actorId) => this.caravanEscortIds.includes(actorId),
+      sparkle: 0,
+    })
 
     // Off-screen or in an unsimulated square: no guards, no panic, no cost.
     if (!streaming || this.player.position.distanceTo(this.caravan.position) > CARAVAN_ESCORT_RANGE) {
       for (const id of this.caravanEscortIds) this.removeActorById(id)
       this.caravanEscortIds = []
+      // Nobody loads a cart the world is not simulating, and a claim does not outlive the
+      // fight it was won in.
+      cancelCaravanLoot(loot.claim)
+      loot.claim.claim = 0
+      loot.claim.wasGuarded = false
       return false
     }
 
@@ -9018,22 +9127,31 @@ export class GameEngine {
       if (guarding.length > 0) {
         this.announceSighting(guarding[0], raider.id, raider.mesh.position)
       }
-      const escortGuarding = guarding.some(
-        (guard) =>
-          guard.routTimer <= 0 &&
-          guard.mesh.position.distanceToSquared(this.caravan.position) <=
-            CARAVAN_GUARDED_RANGE * CARAVAN_GUARDED_RANGE,
-      )
-      if (
-        !escortGuarding &&
-        this.caravanCooldown <= 0 &&
-        raider.mesh.position.distanceToSquared(this.caravan.position) <=
-          CARAVAN_PLUNDER_RANGE * CARAVAN_PLUNDER_RANGE
-      ) {
-        this.plunderCaravan(raider)
-      }
     }
+    // W1-2 — the cart is no longer taken by whatever touches it first. A looter has to
+    // stand at it for a full channel, the player's squad never loads it, and a player who
+    // won the escort fight keeps it for a moment. Panic above still counts every hostile,
+    // companions included: a driver does not ask whose side the knife is on.
+    const step = this.advanceCaravanLoot(loot, delta, {
+      guarded: this.isOrdinaryCaravanGuarded(),
+      escortFell,
+      empty: this.caravanCooldown > 0,
+      mayLoot: (actor) => this.mayLootOrdinaryCaravan(actor),
+    })
+    if (step.plundered) this.plunderCaravan(step.plundered.kind)
     return this.caravanPanicTimer > 0
+  }
+
+  /**
+   * Who may load the road cart: anything hostile to the palace guard's cart except its own
+   * escort, the player's squad and a finale's actors. Beasts eat; everybody else carries.
+   */
+  private mayLootOrdinaryCaravan(actor: Actor): boolean {
+    return actor.alive &&
+      hostile(actor.allegiance, CARAVAN_ALLEGIANCE) &&
+      !this.caravanEscortIds.includes(actor.id) &&
+      !isSquadMember(actor, this.faction) &&
+      !finaleOwnsActor(this.finale.identity, actor)
   }
 
   private livingCaravanEscorts(): Actor[] {
@@ -9095,18 +9213,212 @@ export class GameEngine {
     this.caravanEscortIds.push(guard.id)
   }
 
-  /** Escort down, raider at the tailgate: the cart is gone whoever the player is. */
-  private plunderCaravan(raider: Actor): void {
+  /** Escort down and a looter's channel run out: the cart is gone whoever the player is. */
+  private plunderCaravan(looter: CaravanLooterKind): void {
     this.caravanCooldown = CARAVAN_PLUNDER_COOLDOWN
     this.caravanDefenseCredit = false
     this.caravanRobbedFlash = 1
+    this.caravanRobbedBy = looter
     this.playSound('event')
     if (this.player.position.distanceTo(this.caravan.position) < 60) {
       this.callbacks.onNotice(
-        describeCaravanPlundered(isBeastRole(raider.role)),
+        describeCaravanPlundered(looter === 'beast'),
         'warning',
       )
     }
+  }
+
+  /**
+   * W1-2 — one frame of one cart's claim, for the road cart and a chronicle ambush alike.
+   * The rules are `world/CaravanClaim.ts`; this samples the world for them and plays the
+   * claim notice, the tell and the coins. Paying out is the caller's, because the two
+   * carts lose different things.
+   */
+  private advanceCaravanLoot(
+    site: CaravanLootSite,
+    delta: number,
+    world: {
+      guarded: boolean
+      escortFell: boolean
+      empty: boolean
+      mayLoot: (actor: Actor) => boolean
+    },
+  ): CaravanClaimStep {
+    const cart = site.cart.position
+    const looterId = site.claim.looterId
+    const current = looterId === null
+      ? undefined
+      : this.actors.find((actor) => actor.id === looterId)
+    const step = advanceCaravanClaim(site.claim, {
+      delta,
+      elapsed: this.elapsed,
+      guarded: world.guarded,
+      escortFell: world.escortFell,
+      empty: world.empty,
+      playerRobs: !site.defend,
+      playerDistance: Math.hypot(this.player.position.x - cart.x, this.player.position.z - cart.z),
+      looter: current ? this.sampleCaravanLooter(current, cart, false) : null,
+      candidate: looterId !== null || world.guarded || world.empty
+        ? null
+        : this.findCaravanLooter(cart, world.mayLoot),
+      plunderRange: CARAVAN_PLUNDER_RANGE,
+    })
+    if (step.claimOpened) this.callbacks.onNotice(CARAVAN_CLAIM_NOTICE, 'success')
+    if (step.started) {
+      site.sparkle = 0
+      this.playSound('attackTell', {
+        position: cart,
+        intensity: CARAVAN_LOOT_TELL_INTENSITY,
+        variantSeed: this.stableSeed(`${step.started}:caravan-loot`),
+      })
+    }
+    if (site.claim.looterId !== null) this.presentCaravanLooting(site, delta)
+    return step
+  }
+
+  /**
+   * One actor next to one cart. A looter already at work only has to stay on its feet; a
+   * candidate also has to be idle, so nothing starts loading in the middle of a fight —
+   * which is also what keeps a looter the player just hit from going straight back to it.
+   */
+  private sampleCaravanLooter(
+    actor: Actor,
+    cart: THREE.Vector3,
+    candidate: boolean,
+  ): CaravanLooterSample {
+    const steady = actor.alive &&
+      actor.routTimer <= 0 &&
+      actor.reaction !== 'stagger' &&
+      actor.knockbackVelocity.lengthSq() <= KNOCKBACK_STEER_THRESHOLD * KNOCKBACK_STEER_THRESHOLD
+    const idle = actor.aiMode === 'normal' &&
+      actor.action === null &&
+      actor.reaction === 'none' &&
+      actor.targetId === null &&
+      actor.retaliationTimer <= 0 &&
+      actor.rageTimer <= 0 &&
+      !(actor.hostileToPlayer && actor.playerAggro) &&
+      actor.chargeWindup <= 0 &&
+      actor.chargeTimer <= 0
+    return {
+      id: actor.id,
+      distance: Math.hypot(actor.mesh.position.x - cart.x, actor.mesh.position.z - cart.z),
+      ready: candidate ? steady && idle : steady,
+      beast: isBeastRole(actor.role),
+    }
+  }
+
+  /** The nearest idle actor within reach of the cart that `mayLoot` lets near the cargo. */
+  private findCaravanLooter(
+    cart: THREE.Vector3,
+    mayLoot: (actor: Actor) => boolean,
+  ): CaravanLooterSample | null {
+    let best: CaravanLooterSample | null = null
+    for (const actor of this.actors) {
+      if (!actor.alive || !mayLoot(actor)) continue
+      const sample = this.sampleCaravanLooter(actor, cart, true)
+      if (!sample.ready || sample.distance > CARAVAN_PLUNDER_RANGE) continue
+      if (!best || sample.distance < best.distance) best = sample
+    }
+    return best
+  }
+
+  /** A handful of coins leaving the cart on a beat, while the player is close enough to see. */
+  private presentCaravanLooting(site: CaravanLootSite, delta: number): void {
+    site.sparkle -= delta
+    if (site.sparkle > 0) return
+    site.sparkle = CARAVAN_LOOT_SPARKLE_INTERVAL
+    if (this.paused || this.ended) return
+    const cart = site.cart.position
+    if (
+      Math.hypot(this.player.position.x - cart.x, this.player.position.z - cart.z) >
+      CARAVAN_LOOT_CUE_RANGE
+    ) {
+      return
+    }
+    const point = new THREE.Vector3(cart.x, cart.y + 2.7, cart.z)
+    this.getSecondaryEffects().emit('shard', point, null, this.palette.warning, 4, this.visualPolicy)
+  }
+
+  /** The cart this actor is loading, or null. The hold, the pose and the cue read this. */
+  private caravanLootCartFor(actor: Actor): THREE.Vector3 | null {
+    const ordinary = this.ordinaryCaravanLootSite
+    if (ordinary && ordinary.claim.looterId === actor.id) return ordinary.cart.position
+    // Read defensively: an engine assembled field by field for a test has no event list.
+    for (const event of this.activeEvents ?? []) {
+      const site = event.lootSite
+      if (site && site.claim.looterId === actor.id) return site.cart.position
+    }
+    return null
+  }
+
+  /**
+   * W1-2 — any hit that lands on a looter makes it drop the load, whoever swung, and a
+   * player's hit on an escort is remembered for the claim. A palace guard who knocks a
+   * looter off the road cart has defended it: that is what the quartermaster pays for.
+   */
+  private noteCaravanLootHit(target: Actor, result: DamageResult, byPlayer: boolean): void {
+    if (!result.applied || !(result.dealt > 0)) return
+    const ordinary = this.ordinaryCaravanLootSite
+    const sites: CaravanLootSite[] = ordinary ? [ordinary] : []
+    for (const event of this.activeEvents ?? []) if (event.lootSite) sites.push(event.lootSite)
+    for (const site of sites) {
+      if (byPlayer && site.isEscort(target.id)) noteCaravanEscortHit(site.claim, this.elapsed)
+      if (!interruptCaravanLoot(site.claim, target.id) || !byPlayer) continue
+      this.callbacks.onNotice(describeCaravanLootInterrupted(site.defend), 'success')
+      if (site === ordinary && this.faction === 'guard' && this.caravanCooldown <= 0) {
+        this.caravanDefenseCredit = true
+      }
+    }
+  }
+
+  /**
+   * A chronicle ambush's raiders do not wander off once the escort is down: idle ones walk
+   * to the cart, which is how a cart nobody contests is still lost. During the player's
+   * claim they stand back instead.
+   */
+  private directCaravanRaiders(
+    raiderIds: readonly string[],
+    site: CaravanLootSite,
+    approach: boolean,
+  ): void {
+    const cart = site.cart.position
+    for (const actor of this.actors) {
+      if (!actor.alive || !raiderIds.includes(actor.id) || actor.id === site.claim.looterId) continue
+      if (!approach) {
+        if (actor.order?.kind === 'assault') actor.order = null
+        continue
+      }
+      const dx = cart.x - actor.mesh.position.x
+      const dz = cart.z - actor.mesh.position.z
+      const length = Math.hypot(dx, dz)
+      const scale = length > 0.001 ? CARAVAN_LOOT_APPROACH_OVERSHOOT / length : 0
+      const order = actor.order ?? {
+        kind: 'assault' as const,
+        position: new THREE.Vector3(),
+        timer: COMMANDER_ORDER_DURATION,
+      }
+      order.kind = 'assault'
+      order.position.set(cart.x + dx * scale, cart.y, cart.z + dz * scale)
+      order.timer = COMMANDER_ORDER_DURATION
+      actor.order = order
+    }
+  }
+
+  /** The cue the HUD shows: the nearest cart somebody else is loading within sight. */
+  private buildCaravanLootCue(): CaravanLootView | null {
+    let best: CaravanLootView | null = null
+    const ordinary = this.ordinaryCaravanLootSite
+    const sites: CaravanLootSite[] = ordinary ? [ordinary] : []
+    for (const event of this.activeEvents) if (event.lootSite) sites.push(event.lootSite)
+    for (const site of sites) {
+      const cart = site.cart.position
+      const view = buildCaravanLootView(site.claim, {
+        playerDistance: Math.hypot(this.player.position.x - cart.x, this.player.position.z - cart.z),
+        defend: site.defend,
+      })
+      if (view && (!best || view.distance < best.distance)) best = view
+    }
+    return best
   }
 
   private updateProjectiles(delta: number): void {
@@ -11357,6 +11669,9 @@ export class GameEngine {
       const reward = LOCATED_EVENT_REWARDS[event.kind as ChronicleWorldEventKind]
       this.gold += reward
       this.achievements.recordGoldEarned(reward)
+      // W1-2 — taking a chronicle cart's cargo is robbing a caravan. Counted here, where an
+      // event settles exactly once, so «Грабить корованы» and the run's tally see it once.
+      if (event.kind === 'caravanAmbush') this.achievements.recordCaravanRobbed(false)
     }
     const context = this.locatedEventCopy.get(event.id) ?? {
       regionLabel: this.regionGridLabel(event.regionId),
@@ -12189,6 +12504,17 @@ export class GameEngine {
     this.locatedEventCopy.set(id, copyContext)
     const copy = describeLocatedEvent('caravanAmbush', copyContext)
     let robbed = false
+    // W1-2 — the raiders take the cargo only by loading it at the cart, and a player who
+    // won the escort fight keeps it for a moment. Companions are never on `raiderIds`.
+    let plundered = false
+    let escortsStanding = escortIds.length
+    const lootSite: CaravanLootSite = {
+      claim: createCaravanClaimState(),
+      cart,
+      defend: !hostile(this.faction, owner),
+      isEscort: (actorId) => escortIds.includes(actorId),
+      sparkle: 0,
+    }
     let event: WorldEvent
     event = this.createWorldEvent({
       id,
@@ -12207,22 +12533,40 @@ export class GameEngine {
       markerPos: cart.position.clone(),
       ownedActorIds: [...escortIds, ...raiderIds],
       ownedProps: [cart],
+      lootSite,
       update: (delta) => {
         event.markerPos.copy(cart.position)
         wagonPresenter(cart)?.update(delta, 0, this.characterHeightSample)
-        // A caravan whose escort is gone is a caravan somebody else is taking.
-        if (
-          !robbed &&
-          this.countAliveActors(escortIds) === 0 &&
-          this.countAliveActors(raiderIds) > 0
-        ) {
+        if (robbed || plundered) return
+        // A caravan whose escort is gone is a caravan somebody else is taking — at the
+        // cart, over a channel the player can see and break, not the instant it happens.
+        const standing = this.countAliveActors(escortIds)
+        const guarded = this.actors.some((actor) =>
+          actor.alive && actor.routTimer <= 0 && escortIds.includes(actor.id))
+        const step = this.advanceCaravanLoot(lootSite, delta, {
+          guarded,
+          escortFell: escortsStanding > 0 && standing === 0,
+          empty: false,
+          mayLoot: (actor) => raiderIds.includes(actor.id),
+        })
+        escortsStanding = standing
+        this.directCaravanRaiders(raiderIds, lootSite, !guarded && lootSite.claim.claim <= 0)
+        const cargo = cart.getObjectByName('cargo')
+        if (cargo instanceof THREE.Mesh) {
+          const loading = caravanLootProgress(lootSite.claim)
+          this.presentCaravanCargo(cargo, 1 - loading * CARAVAN_LOOT_CARGO_SHARE,
+            lootSite.claim.looterId !== null, 0, delta)
+        }
+        if (step.plundered) {
+          plundered = true
           event.state = 'failed'
         }
       },
       onInteract: () => {
-        if (robbed) return false
+        if (robbed || plundered) return false
         if (this.player.position.distanceTo(cart.position) >= 7) return false
         robbed = true
+        cancelCaravanLoot(lootSite.claim)
         event.progress = 1
         const cargo = cart.getObjectByName('cargo')
         if (cargo instanceof THREE.Mesh) cargo.scale.y = 0.38
@@ -12231,7 +12575,7 @@ export class GameEngine {
         return true
       },
       getPrompt: () =>
-        !robbed && this.player.position.distanceTo(cart.position) < 7
+        !robbed && !plundered && this.player.position.distanceTo(cart.position) < 7
           ? '[E] Забрать груз корована'
           : null,
       handBack: () =>
@@ -12242,7 +12586,7 @@ export class GameEngine {
           outcome: {
             caravanId: situation.caravanId ?? '',
             regionId: situation.regionId,
-            intact: !robbed && this.countAliveActors(escortIds) > 0,
+            intact: !robbed && !plundered && this.countAliveActors(escortIds) > 0,
           },
         }),
     })
@@ -13006,6 +13350,7 @@ export class GameEngine {
       options.attackKind,
       options.knockback ?? 0,
     )
+    this.noteCaravanLootHit(target, result, directPlayerKill)
     if (killed) {
       this.killActor(
         target,
@@ -13818,6 +14163,7 @@ export class GameEngine {
       bridgeAmbush,
       bridgeAmbushX: this.bridgeAmbushState?.cargoX ?? null,
       bridgeAmbushZ: this.bridgeAmbushState?.cargoZ ?? null,
+      caravanLoot: this.buildCaravanLootCue(),
       finale: buildFinaleView(this.finale, this.finaleRelevant()),
       shopPriceMultiplier: this.activeShopPriceMultiplier,
       squad: this.actors.filter((actor) => isSquadMember(actor, this.faction)).length,
@@ -18331,6 +18677,11 @@ export class GameEngine {
       anticipation = action.stage === 'tell' ? 0.3 + progress * 0.7 : 0
       attack = action.stage === 'contact' ? 1 - progress * 0.4 : 0
       recovery = action.stage === 'recovery' ? 1 - progress : 0
+    }
+    if (!actor.action && actor.alive && this.caravanLootCartFor(actor)) {
+      // W1-2 — loading is work: a steady heave at the cargo, readable from across the road.
+      attack = Math.max(0, Math.sin(this.elapsed * 6.5 + actor.phase)) *
+        (this.reducedMotion ? REDUCED_MOTION_COMBAT_SCALE : 1) * 0.7
     }
     const pose = this.scratchPose
     pose.stride = actor.reaction === 'stagger' ? 0 : actor.stride

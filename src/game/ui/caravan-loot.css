@@ -1,0 +1,84 @@
+.action-prompt.caravan-looting {
+  border-color: var(--cp-danger);
+}
+
+.caravan-loot-cue {
+  display: block;
+}
+
+.caravan-loot-cue:not(:last-child) {
+  margin-bottom: 0.4rem;
+}
+
+.caravan-loot-title {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.4rem;
+}
+
+.caravan-loot-title svg {
+  color: var(--cp-danger);
+  flex-shrink: 0;
+  height: 1rem;
+  width: 1rem;
+}
+
+.caravan-loot-title strong {
+  color: var(--cp-danger);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.caravan-loot-title small {
+  color: var(--cp-text-soft);
+  white-space: nowrap;
+}
+
+.caravan-loot-meter {
+  background: var(--cp-surface-soft);
+  border: 1px solid var(--cp-border);
+  border-radius: 999px;
+  display: block;
+  height: 0.38rem;
+  margin-top: 0.35rem;
+  min-width: 15rem;
+  overflow: hidden;
+}
+
+.caravan-loot-meter i {
+  background: var(--cp-danger);
+  display: block;
+  height: 100%;
+  transform-origin: left center;
+  transition: transform 90ms linear;
+  width: 100%;
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  /* The narrow prompt lane is 5.5rem tall and also has to carry the E prompt: the cue
+     keeps its line and its bar, and drops the decorative icon and the distance. */
+  .caravan-loot-cue:not(:last-child) {
+    margin-bottom: 0.25rem;
+  }
+
+  .caravan-loot-title {
+    justify-content: center;
+  }
+
+  .caravan-loot-title svg,
+  .caravan-loot-title small {
+    display: none;
+  }
+
+  .caravan-loot-meter {
+    margin-top: 0.25rem;
+    min-width: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caravan-loot-meter i {
+    transition: none;
+  }
+}
