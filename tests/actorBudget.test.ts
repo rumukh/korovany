@@ -185,3 +185,87 @@ test('capacity reports what a category could take if lower priorities gave way',
   )
   assert.equal(budget.capacityFor('ambient'), 0)
 })
+
+test('W1-6: an own-share reservation never borrows and never asks anyone to yield', () => {
+  const yielded: Array<[ActorBudgetCategory, number]> = []
+  const budget = new ActorBudget((category, count) => {
+    yielded.push([category, count])
+    return count
+  })
+  budget.reserve('squad', ACTOR_BUDGET.squad)
+  // Campaign fills its own eight, and no ninth, however empty the world below it is.
+  for (let index = 0; index < ACTOR_BUDGET.campaign; index += 1) {
+    assert.equal(budget.reserveOwn('campaign', 1), true)
+  }
+  assert.equal(budget.ownAvailableFor('campaign'), 0)
+  assert.equal(budget.availableFor('campaign'), ACTOR_BUDGET.chronicle + ACTOR_BUDGET.ambient)
+  assert.equal(budget.reserveOwn('campaign', 1), false)
+  assert.equal(budget.getUsed('campaign'), ACTOR_BUDGET.campaign)
+
+  // A full world does not make it evict: it waits, even with own room left on paper.
+  const crowded = new ActorBudget((category, count) => {
+    yielded.push([category, count])
+    return count
+  })
+  crowded.sync({ squad: 5, campaign: 6, chronicle: 8, ambient: 6 })
+  assert.equal(crowded.total, MAX_ACTORS)
+  assert.equal(crowded.ownAvailableFor('campaign'), 0)
+  assert.equal(crowded.reserveOwn('campaign', 1), false)
+  assert.equal(crowded.getUsed('chronicle'), ACTOR_BUDGET.chronicle)
+  assert.deepEqual(yielded, [])
+
+  // Negative control: the ordinary reservation borrows past the own share in the first
+  // world, and in the full one it makes the lower categories give way.
+  assert.equal(budget.reserve('campaign', 1), true)
+  assert.equal(budget.getUsed('campaign'), ACTOR_BUDGET.campaign + 1)
+  assert.equal(crowded.reserve('campaign', 1), true)
+  assert.deepEqual(yielded, [['ambient', 1]])
+})
+
+test('W1-6: with every category inside its own share, an own-share slot leaves the room below untouched', () => {
+  let state = 4242
+  const roll = (limit: number): number => {
+    state = (state * 1103515245 + 12345) % 2147483648
+    return Math.floor((state / 2147483648) * (limit + 1))
+  }
+  let checked = 0
+  let borrowingShrank = 0
+  for (let step = 0; step < 4000; step += 1) {
+    const usage = {
+      squad: roll(ACTOR_BUDGET.squad),
+      campaign: roll(ACTOR_BUDGET.campaign),
+      chronicle: roll(ACTOR_BUDGET.chronicle),
+      ambient: roll(ACTOR_BUDGET.ambient),
+    }
+    const own = new ActorBudget()
+    own.sync(usage)
+    const before = {
+      chronicle: own.capacityFor('chronicle'),
+      ambient: own.capacityFor('ambient'),
+      chronicleOwn: own.ownAvailableFor('chronicle'),
+    }
+    if (!own.reserveOwn('campaign', 1)) {
+      assert.equal(usage.campaign, ACTOR_BUDGET.campaign, `refused with own room at ${JSON.stringify(usage)}`)
+      continue
+    }
+    checked += 1
+    assert.deepEqual(
+      {
+        chronicle: own.capacityFor('chronicle'),
+        ambient: own.capacityFor('ambient'),
+        chronicleOwn: own.ownAvailableFor('chronicle'),
+      },
+      before,
+      `an own-share slot shrank the room below at ${JSON.stringify(usage)}`,
+    )
+    // Negative control: past its own share, the borrowing reservation takes that room.
+    const borrowing = new ActorBudget()
+    borrowing.sync({ ...usage, campaign: ACTOR_BUDGET.campaign })
+    const capacity = borrowing.capacityFor('chronicle')
+    if (borrowing.reserve('campaign', 1) && borrowing.capacityFor('chronicle') < capacity) {
+      borrowingShrank += 1
+    }
+  }
+  assert.ok(checked > 1000, `only ${String(checked)} admissions were checked`)
+  assert.ok(borrowingShrank > 500, `the borrowing control shrank the room only ${String(borrowingShrank)} times`)
+})
