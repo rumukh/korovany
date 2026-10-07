@@ -26,6 +26,8 @@ import {
   resolveFinaleContactTargets,
   serializeFinaleState,
   suspendFinale,
+  finaleGarrisonThinTarget,
+  thinFinaleGarrison,
   type FinaleAction,
   type FinaleAttackId,
   type FinaleAuthority,
@@ -512,4 +514,49 @@ test('the view is identity-scoped, copied, and absent for an unseen or completed
     restored: undefined,
   })
   assert.equal(initial.finale, null)
+})
+
+test('W2-2: a burned supply cart thins one escort not standing in the world, once, and saves', () => {
+  const { state, identity } = fixture('villain')
+  assert.equal(identity.escortIds.length, 2)
+  const absent = () => false
+  assert.equal(finaleGarrisonThinTarget(state, absent), identity.escortIds[1], 'the preview changes nothing')
+  assert.equal(state.escorts.every((escort) => !escort.defeated), true)
+  const thinned = thinFinaleGarrison(state, absent)
+  assert.equal(thinned, identity.escortIds[1])
+  assert.equal(finaleCanSpawn(state, identity.escortIds[1]), false)
+  assert.equal(finaleCanSpawn(state, identity.escortIds[0]), true)
+  assert.equal(finaleCanSpawn(state, identity.bossId), true, 'the boss is never thinned')
+  const restored = normalizeFinaleState(serializeFinaleState(state), identity, EMPTY_AUTHORITY)
+  assert.equal(restored.rejected, false)
+  assert.equal(finaleCanSpawn(restored.state, identity.escortIds[1]), false, 'the thinned escort stays gone')
+  const view = buildFinaleView(restored.state, true)
+  assert.equal(view, null, 'a finale nobody has met yet shows no card')
+
+  // A guard the player saw at the gate on an earlier visit is not standing there now, so it
+  // can still be sent away; its saved body goes with it, and the save still loads.
+  const seen = fixture('villain')
+  for (const id of seen.identity.escortIds) captureFinaleBody(seen.state, id, { ...seen.body })
+  assert.equal(finaleGarrisonThinTarget(seen.state, absent), seen.identity.escortIds[1])
+  assert.equal(thinFinaleGarrison(seen.state, absent), seen.identity.escortIds[1])
+  assert.equal(seen.state.escorts[1].body, null)
+  assert.equal(normalizeFinaleState(serializeFinaleState(seen.state), seen.identity, EMPTY_AUTHORITY).rejected, false)
+  // One guard on the field: the other goes.
+  const half = fixture('villain')
+  const onField = (id: string) => id === half.identity.escortIds[1]
+  assert.equal(thinFinaleGarrison(half.state, onField), half.identity.escortIds[0])
+
+  // Negative controls: a finale already introduced, both guards on the field, or a defeated
+  // finale keep their garrison, and the preview answers exactly as the thinning does.
+  const begun = fixture('villain')
+  begun.state.introduced = true
+  assert.equal(finaleGarrisonThinTarget(begun.state, absent), null)
+  assert.equal(thinFinaleGarrison(begun.state, absent), null)
+  const standing = fixture('villain')
+  assert.equal(finaleGarrisonThinTarget(standing.state, () => true), null)
+  assert.equal(thinFinaleGarrison(standing.state, () => true), null)
+  const won = fixture('villain')
+  won.state.defeated = true
+  assert.equal(finaleGarrisonThinTarget(won.state, absent), null)
+  assert.equal(thinFinaleGarrison(won.state, absent), null)
 })

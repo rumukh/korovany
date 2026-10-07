@@ -284,5 +284,5 @@ blocked or distant members instead of teleporting or reviving them. Those limita
 are intentional disclosures, not claims that all navigation cases have been solved.
 
 The caravan claim is deliberately not saved, because it belongs to live escorts and looters.
-A continue still respawns the road cart's escorts at once, so a fight won before a save is
-fought again; persisting the escort fight itself would be a separate change.
+The road cart's escort deaths and their respawn timer are saved since W2-2, so a continue
+brings back only the guards who were still standing; the claim itself stays unsaved.

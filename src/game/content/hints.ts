@@ -160,11 +160,13 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
   },
   {
     hint: 'bridgeAmbush',
-    viewFields: ['bridgeAmbush'],
+    // W2-2 — the id stays so a player who already met the bridge is not taught again; the
+    // field is the whole beat list now, and the line names every side's verb.
+    viewFields: ['caravanBeats'],
     firstSighting: (view) =>
-      view.bridgeAmbush !== null &&
-      view.bridgeAmbush.phase !== 'unavailable' &&
-      view.bridgeAmbush.active === true,
+      view.caravanBeats.active !== null &&
+      view.caravanBeats.active.phase !== 'unavailable' &&
+      view.caravanBeats.active.active,
   },
   {
     hint: 'caravanLoot',

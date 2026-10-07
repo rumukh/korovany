@@ -106,8 +106,8 @@
  *    up to `HARNESS_SERVICE_DETOUR` to a healer or trader when hurt, buys medicine and
  *    prostheses and never an upgrade; loot flies to the player on the magnet's timing
  *    rather than its arc. Eyes are lost with no effect on sight.
- * 9. **Not modelled at all:** the bridge ambush, civilians, ambient prowlers, campfires, the
- *    elf's forest allies, achievements and the profile.
+ * 9. **Not modelled at all:** caravan beats (the bridge ambush among them), civilians, ambient
+ *    prowlers, campfires, the elf's forest allies, achievements and the profile.
  * 10. **The pinned arms keep what every pinned number was measured with.**
  *    `HARNESS_PLAYER_SPEED` is 6.4 m/s where `updatePlayer` walks at 8.2; the legacy
  *    encounter stand-in senses at 22 m and hunts at 24 m where the engine's soldiers sense
@@ -406,6 +406,7 @@ import {
   HARNESS_EVENT_REQUIRED_SLOTS,
   HARNESS_EVENT_WEIGHTS,
   HARNESS_FIRST_EVENT_AT,
+  HARNESS_CARAVAN_AMBUSH_DEFENDED_REWARD,
   HARNESS_LOCATED_EVENT_REWARDS,
   HARNESS_LOOT_BURST_TIME,
   HARNESS_LOOT_FORCE_MAGNET_AGE,
@@ -3001,7 +3002,12 @@ export function runHarness(options: RunOptions): RunReport {
           outcome: {
             caravanId: situation.caravanId ?? '',
             regionId: situation.regionId,
-            intact: !live.robbed && !live.loot?.plundered && aliveShare(live, 'escort') > 0,
+            // W2-2 — a defended cart goes on unless it was loaded, if its escort or the
+            // player saw the raiders off.
+            intact: live.plan.defend === true
+              ? !live.loot?.plundered &&
+                (aliveShare(live, 'raider') === 0 || aliveShare(live, 'escort') > 0)
+              : !live.robbed && !live.loot?.plundered && aliveShare(live, 'escort') > 0,
           },
         })
         return
@@ -3137,6 +3143,12 @@ export function runHarness(options: RunOptions): RunReport {
     const kind = live.plan.kind
     if (kind !== 'richCaravan' && kind !== 'caravanAmbush') return
     const key = live.contractNodeId ? 'contract' : kind
+    if (succeeded && live.plan.defend === true) {
+      // W2-2 — the player's side owns this cart: saving it is an escort, never a robbery.
+      caravanMetrics.escorted += 1
+      bump(caravanMetrics.escortedBy, 'ambushDefended')
+      return
+    }
     if (succeeded) {
       caravanMetrics.robbed += 1
       bump(caravanMetrics.robbedBy, key)
@@ -3182,7 +3194,12 @@ export function runHarness(options: RunOptions): RunReport {
       }
       handBack(live)
       if (succeeded) {
-        earnGold(HARNESS_LOCATED_EVENT_REWARDS[kind as ChronicleWorldEventKind], source)
+        earnGold(
+          live.plan.defend === true
+            ? HARNESS_CARAVAN_AMBUSH_DEFENDED_REWARD
+            : HARNESS_LOCATED_EVENT_REWARDS[kind as ChronicleWorldEventKind],
+          source,
+        )
       }
     }
     caravanOutcome(live, succeeded)
@@ -3270,7 +3287,10 @@ export function runHarness(options: RunOptions): RunReport {
         rescueCaptive(live)
         return true
       }
-      if (kind === 'caravanAmbush' && live.cart && !live.robbed && !live.loot?.plundered) {
+      if (
+        kind === 'caravanAmbush' && live.cart && !live.robbed && !live.loot?.plundered &&
+        live.plan.defend !== true
+      ) {
         if (Math.hypot(live.cart.x - player.x, live.cart.z - player.z) >= HARNESS_CART_INTERACT_RANGE) {
           continue
         }
@@ -4370,7 +4390,7 @@ export function runHarness(options: RunOptions): RunReport {
         pressWithin: null,
       }
     }
-    if (kind === 'caravanAmbush' && live.cart && !live.robbed) {
+    if (kind === 'caravanAmbush' && live.cart && !live.robbed && live.plan.defend !== true) {
       return { point: live.cart, actor: null, pressWithin: HARNESS_CART_INTERACT_RANGE - 0.5 }
     }
     if (kind === 'rescue') {
@@ -4385,7 +4405,8 @@ export function runHarness(options: RunOptions): RunReport {
       }
       return null
     }
-    const parts = eventKillParts(kind)
+    // W2-2 — a defended ambush is won on its raiders, not at the cart.
+    const parts = kind === 'caravanAmbush' && live.plan.defend === true ? ['raider'] : eventKillParts(kind)
     let best: HarnessActor | null = null
     let bestDistance = Number.POSITIVE_INFINITY
     live.plan.spawns.forEach((entry, index) => {

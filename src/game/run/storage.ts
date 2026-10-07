@@ -7,7 +7,14 @@ import {
 import { REGION_DELTA_VERSION } from '../world/RegionRuntime.ts'
 import { isSquadRole, isSquadSlot } from '../world/SquadCommand.ts'
 import {
+  CARAVAN_BEAT_OUTCOMES,
+  CARAVAN_BEAT_PLACEMENTS,
+  type CaravanBeatEnding,
+  type CaravanBeatPlacement,
+} from '../world/CaravanBeats.ts'
+import {
   MAX_EPILOGUE_BEATS,
+  MAX_EPILOGUE_CARAVANS,
   MAX_EPILOGUE_COMPANIONS,
   MAX_EPILOGUE_DOCTRINES,
   MAX_EPILOGUE_ROUTE,
@@ -36,6 +43,7 @@ import type {
   RunEndCause,
   RunEpilogue,
   RunEpilogueBeat,
+  RunEpilogueCaravan,
   RunEpilogueCompanion,
   RunEpilogueControl,
   RunEpilogueWound,
@@ -740,6 +748,32 @@ function normalizeEpilogueControl(value: unknown): RunEpilogueControl | null {
   return control
 }
 
+const CARAVAN_ENDINGS: readonly string[] = [...CARAVAN_BEAT_OUTCOMES, 'lost', 'escaped']
+
+/** W2-2 — absent on every сводка written before caravan beats; malformed fails as the rest does. */
+function normalizeEpilogueCaravans(value: unknown): RunEpilogueCaravan[] | null | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.length > MAX_EPILOGUE_CARAVANS) return null
+  const caravans: RunEpilogueCaravan[] = []
+  for (const entry of value) {
+    if (!isRecord(entry)) return null
+    const region = normalizeRegionLabel(entry.region)
+    if (
+      !region ||
+      !(CARAVAN_BEAT_PLACEMENTS as readonly string[]).includes(String(entry.placement)) ||
+      !CARAVAN_ENDINGS.includes(String(entry.ending))
+    ) {
+      return null
+    }
+    caravans.push({
+      placement: entry.placement as CaravanBeatPlacement,
+      region,
+      ending: entry.ending as CaravanBeatEnding,
+    })
+  }
+  return caravans
+}
+
 /**
  * A сводка is optional and bounded.
  *
@@ -773,6 +807,7 @@ function normalizeEpilogue(value: unknown): RunEpilogue | null | undefined {
   const caravansRobbed = normalizeNonNegative(value.caravansRobbed, MAX_COUNTER, true)
   const eventsCompleted = normalizeNonNegative(value.eventsCompleted, MAX_COUNTER, true)
   const bestKillStreak = normalizeNonNegative(value.bestKillStreak, MAX_COUNTER, true)
+  const caravans = normalizeEpilogueCaravans(value.caravans)
   if (
     routeTotal === null ||
     regionsTotal === null ||
@@ -790,7 +825,8 @@ function normalizeEpilogue(value: unknown): RunEpilogue | null | undefined {
     elapsed === null ||
     caravansRobbed === null ||
     eventsCompleted === null ||
-    bestKillStreak === null
+    bestKillStreak === null ||
+    caravans === null
   ) {
     return null
   }
@@ -813,6 +849,7 @@ function normalizeEpilogue(value: unknown): RunEpilogue | null | undefined {
     caravansRobbed,
     eventsCompleted,
     bestKillStreak,
+    ...(caravans === undefined ? {} : { caravans }),
   }
 }
 
