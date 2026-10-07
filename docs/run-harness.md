@@ -27,6 +27,7 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `encounterModel` | `harness` | `shipped`: `createGeneratedEncounterPlans` and the finale | `harness` |
 | `regionWindow` | `square`; `engine` with shipped encounters or fought events | `engine`: the plus | `square` |
 | `commanders` | `inert`: a body and a swing | `shipped`: W1-6's call for men | `legacy`: the call before W1-6 |
+| `escalation` (W2-1) | `time` | `progress`: pacing follows progress, enemy stats the clock | `time`; `progressAll` |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
   through `selectSquadIntent` and `getSquadFollowSpeed`, fight through the squad's own `selectThreat` pass and the
@@ -109,6 +110,9 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   deadline, and the share beyond reach.
 - **Companions:** started, recruited, lost and to whom, standing when the finale opened and at the end, their kills.
 - **Doctrine drafts reached** and the **maximum threat tier**, whatever the doctrine arm.
+- **W2-1:** every tier rise with its cause (`time` or `progress`), when each draft actually opened and how many of
+  them the 30 s ceiling opened outside a calm moment (`draftsForced`), the finale's pacing tier and the clock's tier
+  its boss was scaled by, and threat waves by trigger (clock or closed objective).
 - **Damage by system** (encounter, finale, random, contract or located event, threat wave, caravan, bleeding) and the
   **system behind each death**.
 - **Encounters:** how many the generator fielded, the bodies it spawned, how many stood on the road at once on
@@ -237,6 +241,40 @@ give 53/60 against 0/60: the review's 88 % against 0 %.
   the old rule crowds out 16 of the guard's 80, and 11 with every hostile pack cleared; the shipped rule crowds out
   one, the same seed 1 site. A person who fights, heals or looks around by the palace before taking the contract
   pays the old rule's price; a script does not.
+
+## W2-1: escalation by progress
+
+Since W2-1 the shipped arms carry `escalation: 'progress'`: the pacing tier (the HUD's «Угроза», the drafts, the
+director's cadence and the threat waves) is the clock or the run's progress, whichever is further, and enemy health
+and damage stay on the clock's tier. `time` is the rule before it, and `progressAll` is the design that was measured
+and rejected: progress scaling enemy stats as well. Same seeds, the engine's window, 30 Hz, 600 s, 40 seeds per cell:
+
+| Policy · faction | `time` wins | `progress` wins | Drafts per win | `progressAll` wins |
+| --- | ---: | ---: | ---: | ---: |
+| beeline · elf | 14/40 | 11/40 | 2 | 3/40 |
+| beeline · guard | 14/40 | 16/40 | 2 | 9/40 |
+| beeline · villain | 23/40 | 21/40 | 2 | 19/40 |
+| cautious · elf | 12/40 | 10/40 | 2 | 4/40 |
+| cautious · guard | 10/40 | 12/40 | 2 | 5/40 |
+| cautious · villain | 18/40 | 17/40 | 2 | 13/40 |
+| duelist · elf | 35/40 | 36/40 | 2 | 26/40 |
+| duelist · guard | 36/40 | 36/40 | 2 | 24/40 |
+| duelist · villain | 38/40 | 37/40 | 2 | 24/40 |
+
+- Per policy, out of 120: beeline 51, 48 and 31; cautious 40, 39 and 22; duelist 109, 109 and 74.
+- Under `time` the median win opened no draft. Under `progress`, 194 of 196 wins opened two or more before the end.
+  Drafts in wins wait for calm: after the tier that dealt them the median delay is 0 s, the p90 3.1 s, the longest
+  15.7 s.
+- Calm alone had no ceiling. Four guard runs pinned in a fight from 360 s to the 600 s timeout (seeds 79191 and
+  142543, beeline and cautious) never opened their third and fourth drafts. With the 30 s ceiling those eight open
+  at 390 s and 570 s, `draftsForced` counts them, and the other 356 runs are the same in every recorded field: no win
+  count moved, under `progress` or `progressAll`.
+- The finale is fought at pacing tier 3 with its boss scaled at the clock's tier 1. Under `progressAll` the same boss
+  had a quarter more health, and the finale's defeats are most of the gap in that column.
+- Run length moved by ten percent or less in every cell.
+- «Устав дозора» stays distinct. Runs that held it threw 268 waves on closures; runs without it threw none.
+- `tests/runHarnessEscalation.test.ts` holds these in whole runs. With no card taken and the director silent, a
+  `progress` run is the `time` run to the frame, and a `progressAll` run is not.
 
 ## What it still does not model
 

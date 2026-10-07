@@ -23,6 +23,7 @@
 
 import {
   DEFAULT_UPGRADE_LEVELS,
+  getEnemyScalingTier,
   type BodyPart,
   type GameView,
   type NoticeTone,
@@ -226,7 +227,17 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
   {
     hint: 'threat',
     viewFields: ['threatTier', 'elapsed'],
-    firstSighting: (view) => view.threatTier > 1,
+    // W2-1 — the first tier above 1 that the clock paid for. A tier the run earned first is
+    // `threatEarned`'s lesson instead, so a player meets one of the two, each true then.
+    firstSighting: (view) => view.threatTier > 1 && view.threatTier <= getEnemyScalingTier(view.elapsed),
+  },
+  {
+    hint: 'threatEarned',
+    viewFields: ['threatTier', 'elapsed'],
+    // W2-1 — the first frame the HUD's tier is ahead of the clock's: the moment "the threat
+    // rose" and "the enemies got tougher" stop being the same sentence. A new id on purpose,
+    // so a profile taught the clock-only rule hears the new one too.
+    firstSighting: (view) => view.threatTier > getEnemyScalingTier(view.elapsed),
   },
   {
     hint: 'ability',

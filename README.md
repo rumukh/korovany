@@ -190,6 +190,38 @@ earns its bounded caravan aid. The chronicle's ambushed carts follow the same ru
 taking their cargo counts toward caravan achievements. An emptied road cart says who
 emptied it. None of this is saved: a continue brings the escorts and the raiders back.
 
+## Threat, doctrines and night
+
+The threat tier in the corner rises with whichever comes first: the clock, one tier every
+three minutes, or the run's progress. The required errand and the contract arm you settle,
+kept or failed forward, are a step each, and each step raises the tier by one, up to 4;
+only the clock reaches 5. The camp, the arm you chose past and the finale are not steps. A
+higher tier means more frequent events, bigger and faster threat waves once those start at
+four minutes, and the doctrine drafts below. Enemy health and damage follow the clock's
+tier alone, so a tier you earned brings attention, not tougher enemies, and its notice says
+so: «Про пользователя прослышали…». Every three-minute mark still makes enemies tougher
+and says that too, even when the tier in the corner is already higher: «Время берёт своё…».
+
+Doctrine drafts open at tiers 2, 3 and 4, so a winning run meets two of them on the way to
+its finale. A draft waits for a calm moment: nothing chasing you within 14 m, nothing
+swinging or shooting at you within 38 m, and no finale under way. A fight that never ends
+cannot hold it for ever: after 30 s of waiting it opens anyway, unless a finale is under way
+or something is already swinging or shooting at you from within 14 m. It never opens an overlay:
+take a card on the HUD or in the journal. «Устав дозора» still moves the waves off the clock
+and onto closed objectives; without it, closing an objective never sends a wave.
+
+A day lasts nine minutes. Dusk falls about four and a half minutes in, and the night lasts
+about two and a half, 28% of the day rather than more than half. The game says so once,
+when the villagers gather at their fires («Смеркается…»); a run continued at night does
+not hear it again. Beasts grow faster at night (×2.2, was ×1.6), which keeps their pressure
+per day unchanged, but the opening is daylight now and meets fewer beast raids. Turning the
+day/night display off changes the lighting only, never the world's night.
+
+None of this adds to a save. The tier comes from the saved tier and the saved objectives,
+so suspend/continue never counts a step twice, and an older save catches up on its first
+frame, with the notice. The draft's 30 s wait is not saved either: a continue starts it
+again, which can hold a draft back by one more wait but never deals an extra one.
+
 ## Profile rewards
 
 A finished run pays profile coins once, when it is archived: 45 for a victory or

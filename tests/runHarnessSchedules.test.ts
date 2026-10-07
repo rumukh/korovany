@@ -102,16 +102,22 @@ test('the 30, 60 and 144 Hz arms agree on the run, and not on chronicle history'
   //
   // It is a real finding about the harness rather than about the player: nothing here says
   // a *browser* frame rate flips a real run, because a real player's route depends on their
-  // input rather than on a scripted beeline. It is pinned at 1 so that a second one is
-  // visible immediately.
+  // input rather than on a scripted beeline.
+  //
+  // **W2-1 put it back to zero, and the reason is the night, not the schedule.** What killed
+  // `31677`/guard at 144 Hz was a bear: the old 240-second day fell dark 69 s in, the beasts
+  // grew at the night rate, and the encounter on that route came out beast-led (91 of its
+  // 115 damage). The nine-minute day keeps this 134-second run in daylight, the encounter is
+  // the faction's own, and all three arms win (127.7 s / 87.7 hp, 132.6 / 76.1, 134.1 / 72.1).
+  // Pinned at 0 so a returning divergence is visible immediately.
   assert.equal(
     outcomeDivergences,
-    1,
+    0,
     `outcomes diverged on ${outcomeDivergences} of ${seeds.length} seeds`,
   )
   assert.equal(
     progressDivergences,
-    1,
+    0,
     `campaign progress diverged on ${progressDivergences} of ${seeds.length} seeds`,
   )
 
