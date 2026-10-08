@@ -227,6 +227,7 @@ import {
   CARAVAN_BEAT_REOPENED_NOTICE,
   CARAVAN_BEAT_SQUAD_FULL_NOTICE,
   CARAVAN_BEATS_SAVE_WARNING,
+  CARAVAN_SPINE_GATE_OPEN_NOTICE,
   RICH_CARAVAN_CONFISCATE_DESCRIPTION,
   CARAVAN_CONFISCATE_PROMPT,
   RICH_CARAVAN_CONFISCATED_NOTICE,
@@ -241,6 +242,10 @@ import {
   describeCaravanBeatNoGround,
   describeCaravanBeatOutcome,
   describeCaravanBeatSecuredNotice,
+  describeCaravanBeatStagingGaveUp,
+  describeCaravanBeatTitle,
+  describeCaravanOfferChosen,
+  describeCaravanOffersDeclined,
   describeCaravanPlundered,
   describeCaravanAlreadyRobbed,
   describeCaravanDefenseAid,
@@ -594,6 +599,7 @@ import {
   skipExclusiveAlternatives,
   threatWaveInterval,
   type CampaignContractState,
+  type CampaignGate,
   type ChronicleCommitmentState,
   type ChronicleRumour,
   type FactionContractTemplate,
@@ -621,6 +627,7 @@ import {
   CARAVAN_BEAT_DELIVERY_SPEED,
   CARAVAN_BEAT_DELIVERY_STALL_SECONDS,
   CARAVAN_BEAT_SQUAD_CAP,
+  CARAVAN_BEAT_STAGING_GIVE_UP_SECONDS,
   advanceCaravanBeatAbandon,
   buildCaravanBeatsView,
   caravanBeatCanChoose,
@@ -634,11 +641,15 @@ import {
   caravanBeatReservesStagingPoint,
   caravanBeatReward,
   caravanBeatThinsGarrison,
-  createCaravanBeatPlans,
-  createCaravanBeatsState,
+  caravanSpineGate,
+  caravanSpineHoldsCamp,
+  caravanSpineLeads,
+  caravanSpineProgressBeats,
+  chooseCaravanOffer as recordCaravanOfferChoice,
+  declineOtherCaravanOffers,
+  isCaravanBeatDormant,
   isCaravanBeatEngaged,
   isCaravanBeatLaneOutcome,
-  restoreCaravanBeatsState,
   serializeCaravanBeatsState,
   type CaravanBeatAbandonEnding,
   type CaravanBeatCombatantState,
@@ -649,6 +660,7 @@ import {
   type CaravanBeatsState,
   type CaravanBeatsView,
 } from './world/CaravanBeats'
+import { createCaravanSpine, restoreCaravanSpine } from './world/CaravanSpine'
 import { chooseGeneratedInteraction } from './world/GeneratedInteraction'
 import {
   FINALE_ATTACKS,
@@ -1094,6 +1106,11 @@ interface CaravanBeatRuntime {
   cart: THREE.Group
   spawnRetryAt: number
   capacityNoticeShown: boolean
+  /**
+   * PR B — the last staging attempt was refused for room, so the cart's saved stall clock runs
+   * while the player waits by it. Never saved: a continue re-asks within one retry.
+   */
+  stagingRefused?: boolean
   /** W1-2 — a secured cart left standing can be loaded by passers-by, over a channel. */
   lootSite: CaravanLootSite
   /** Seconds a walked cart has not moved although the player was beside it. */
@@ -1677,9 +1694,9 @@ function caravanBeatCargoTargetId(beatId: string): string {
   return `caravan-beat:${beatId}:cargo`
 }
 
-/** An escorted, escaped or released cart has left the road; nothing is drawn where it stood. */
+/** An escorted, escaped, released or declined cart has left the road; nothing is drawn there. */
 function caravanBeatCartGone(state: CaravanBeatState): boolean {
-  return state.phase === 'unavailable' || state.phase === 'escaped' ||
+  return state.phase === 'unavailable' || state.phase === 'escaped' || state.phase === 'declined' ||
     (state.phase === 'resolved' && state.outcome === 'release')
 }
 const KNOCKBACK_DAMPING = 11
@@ -2155,6 +2172,11 @@ export class GameEngine {
   private caravanBeatPlans: CaravanBeatPlan[] = []
   /** Null for a run saved before any beat existed, which keeps its original campaign. */
   private caravanBeats: CaravanBeatsState | null = null
+  /**
+   * PR B — whether the finale's gate was open on the last frame, so its opening is said once.
+   * Null until the first frame reads it; never saved, so a continue says nothing.
+   */
+  private caravanGateWasOpen: boolean | null = null
   private readonly caravanBeatRuntime = new Map<string, CaravanBeatRuntime>()
   private readonly generatedEncounterPlans = new Map<string, GeneratedEncounterPlan[]>()
   private readonly generatedActivationSpawns = new Map<string, Set<string>>()
@@ -2696,19 +2718,18 @@ export class GameEngine {
     }
     this.generatedBlueprint = blueprint
     this.expeditionPlanner = new ExpeditionPlanner(blueprint, restoredRun?.directorState.expedition)
-    this.caravanBeatPlans = createCaravanBeatPlans(blueprint, faction)
     if (restoredRun) {
-      const restoredBeats = restoreCaravanBeatsState(
-        restoredRun.directorState,
-        blueprint,
-        faction,
-        this.caravanBeatPlans,
-      )
+      // PR B — the saved block says which caravans this run has: a spine's, or the crossing
+      // alone for a run saved before it, which keeps the campaign it started with.
+      const restoredBeats = restoreCaravanSpine(restoredRun.directorState, blueprint, faction)
+      this.caravanBeatPlans = restoredBeats.plans
       this.caravanBeats = restoredBeats.state
       if (restoredBeats.rejected) this.callbacks.onNotice(CARAVAN_BEATS_SAVE_WARNING, 'warning')
       if (restoredBeats.reopened) this.callbacks.onNotice(CARAVAN_BEAT_REOPENED_NOTICE, 'info')
     } else {
-      this.caravanBeats = createCaravanBeatsState(this.caravanBeatPlans)
+      const spine = createCaravanSpine(blueprint, faction)
+      this.caravanBeatPlans = spine.plans
+      this.caravanBeats = spine.state
       if (this.caravanBeatPlans.length === 0) {
         this.callbacks.onNotice(BRIDGE_AMBUSH_UNAVAILABLE_NOTICE, 'warning')
       }
@@ -2874,7 +2895,8 @@ export class GameEngine {
     const boon = restoredRun ? null : configuredBoon
     this.objectives =
       generatedPlayer?.objectives.map((objective) => ({ ...objective })) ??
-      createGeneratedObjectives(blueprint, faction)
+      // W2-2, PR B — every new run's camp is the choice between two caravans.
+      createGeneratedObjectives(blueprint, faction, { caravanSpine: this.caravanBeats?.spine === true })
     const finaleIdentity = createFinaleIdentity(blueprint, faction)
     const finaleDelta = this.generatedWorld.regions.getSavedDelta(finaleIdentity.regionId)
     const finaleRestore = normalizeFinaleState(restoredRun?.directorState.finale, finaleIdentity, {
@@ -5403,10 +5425,16 @@ export class GameEngine {
     const entries = this.caravanBeatEntries()
     if (entries.length === 0) return
     const visible = this.generatedWorld.regions.getVisibleRegionIds().map(String)
+    const plans = this.caravanBeatPlans ?? []
     for (const entry of entries) {
       const { plan, state, runtime } = entry
       if (!runtime || state.phase === 'unavailable') continue
       const cart = runtime.cart
+      // PR B — a road beat waits for the camp's choice, and the offer not taken has gone.
+      if (state.phase === 'declined' || isCaravanBeatDormant(plan, plans, this.caravanBeats)) {
+        cart.visible = false
+        continue
+      }
       cart.visible = visible.includes(plan.regionId) && !caravanBeatCartGone(state)
       if (state.phase !== 'delivering') {
         wagonPresenter(cart)?.update(delta, 0, this.characterHeightSample)
@@ -5419,7 +5447,20 @@ export class GameEngine {
       }
       const simulated = this.simulatedGeneratedRegions.has(plan.regionId)
       if (state.phase === 'approach') {
-        if (away <= CARAVAN_BEAT_ACTIVATION_RADIUS && simulated && this.elapsed >= runtime.spawnRetryAt) {
+        const waiting = away <= CARAVAN_BEAT_ACTIVATION_RADIUS && simulated
+        // The road was too crowded at the last try: the cart's saved clock runs while the
+        // player waits by it, and at its end the cart goes through without its fight.
+        if (waiting && runtime.stagingRefused) {
+          state.stagingStalled = Math.min(
+            CARAVAN_BEAT_STAGING_GIVE_UP_SECONDS,
+            state.stagingStalled + Math.max(0, delta),
+          )
+          if (state.stagingStalled >= CARAVAN_BEAT_STAGING_GIVE_UP_SECONDS) {
+            this.giveUpCaravanBeatStaging(entry)
+            continue
+          }
+        }
+        if (waiting && this.elapsed >= runtime.spawnRetryAt) {
           this.materializeCaravanBeat(entry)
         }
         continue
@@ -5494,14 +5535,17 @@ export class GameEngine {
       }
       placements.set(combatant.id, position)
     }
-    if (!this.reserveActorSlots('campaign', missing.length)) {
+    if (!this.requestBeatStagingRoom(missing.length)) {
       runtime.spawnRetryAt = this.elapsed + CARAVAN_BEAT_SPAWN_RETRY_SECONDS
+      if (state.phase === 'approach') runtime.stagingRefused = true
       if (!runtime.capacityNoticeShown) {
         runtime.capacityNoticeShown = true
         this.callbacks.onNotice(CARAVAN_BEAT_CAPACITY_NOTICE, 'info')
       }
       return false
     }
+    runtime.stagingRefused = false
+    state.stagingStalled = 0
 
     const firstEnemy = state.combatants.find((candidate) => candidate.enemy)
     for (const combatant of missing) {
@@ -5566,6 +5610,16 @@ export class GameEngine {
       !this.isPlayerEngagedWith(interrupted)
     ) {
       this.standDownRandomEvent(interrupted, describeRandomEventStoodDownForCaravan(interrupted.title))
+    }
+    // PR B — the camp's caravan met first is the one taken; any other still waiting goes.
+    const beats = this.caravanBeats
+    if (beats && entry.plan.slot === 'offer') {
+      const declined = declineOtherCaravanOffers(this.caravanBeatPlans ?? [], beats, entry.plan.id)
+      for (const id of declined) {
+        const other = this.caravanBeatRuntime?.get(id)
+        if (other) other.cart.visible = false
+      }
+      if (declined.length > 0) this.callbacks.onNotice(describeCaravanOffersDeclined(this.faction), 'info')
     }
   }
 
@@ -5922,7 +5976,18 @@ export class GameEngine {
   }
 
   private generatedPrerequisitesDone(node: FactionObjectiveNode): boolean {
-    return objectivePrerequisitesDone(node, this.objectives)
+    return objectivePrerequisitesDone(node, this.objectives) &&
+      (node.id !== this.generatedBlueprint.objectives[this.faction].finalNodeId ||
+        this.campaignGate().finaleOpen)
+  }
+
+  /**
+   * W2-2, PR B — the caravan spine's gate on the finale, asked by every campaign question the
+   * engine has: readiness, the active node, the board, the finale's spawn and its completion.
+   * A run without a spine is always open.
+   */
+  private campaignGate(): CampaignGate {
+    return { finaleOpen: caravanSpineGate(this.caravanBeats ?? null).open }
   }
 
   private getActiveGeneratedObjective(): FactionObjectiveNode | null {
@@ -5934,6 +5999,7 @@ export class GameEngine {
       this.faction,
       this.objectives,
       this.campaignContracts.pinnedNodeId,
+      this.campaignGate(),
     )
   }
 
@@ -5942,6 +6008,7 @@ export class GameEngine {
       this.generatedBlueprint,
       this.faction,
       this.objectives,
+      this.campaignGate(),
     )
   }
 
@@ -6055,6 +6122,12 @@ export class GameEngine {
       chronicleRegions: this.chronicleRegions, contestedRegionIds: this.chronicleContestedRegionIds,
     }
     const walkSpeed = PLAYER_WALK_SPEED * playerLegMobility(this.body)
+    const travel = (point: { x: number; z: number }) =>
+      this.expeditionPlanner.measureTravel(knowledge, player, point, walkSpeed)
+    const plans = this.caravanBeatPlans ?? []
+    const beats = this.caravanBeats ?? null
+    // PR B — the caravan the compass follows on its own, measured by road like the cards.
+    const leads = caravanSpineLeads(plans, beats, (point) => travel(point).meters)
     return {
       faction: this.faction,
       player,
@@ -6066,17 +6139,16 @@ export class GameEngine {
         objectives: this.objectives, contracts: this.campaignContracts,
         sitePosition: (id) => this.generatedWorld.getSitePosition(id) ?? null,
         championDamageBonus: this.championDamageBonus,
-        travel: (point) => this.expeditionPlanner.measureTravel(knowledge, player, point, walkSpeed),
+        travel,
+        gate: this.campaignGate(),
       }),
       rumours: this.buildRumourViews(),
       discoveredRegionIds,
       chronicleRegions: this.chronicleRegions,
       contestedRegionIds: this.chronicleContestedRegionIds,
-      caravanBeats: caravanBeatExpeditionTargets(
-        this.faction,
-        this.caravanBeatPlans ?? [],
-        this.caravanBeats ?? null,
-      ),
+      caravanBeats: caravanBeatExpeditionTargets(this.faction, plans, beats, travel),
+      leadingCaravanBeatId: leads.leading,
+      trailingCaravanBeatId: leads.trailing,
     }
   }
 
@@ -6084,11 +6156,18 @@ export class GameEngine {
   private buildCaravanBeatsView(expedition: ExpeditionView): CaravanBeatsView {
     const plans = this.caravanBeatPlans ?? []
     const market = plans[0]?.marketRegionId ?? null
+    const player = { x: this.player.position.x, z: this.player.position.z }
+    const knowledge = {
+      faction: this.faction,
+      discoveredRegionIds: new Set(this.generatedWorld.discoveredRegionIds.map(String)),
+      chronicleRegions: this.chronicleRegions, contestedRegionIds: this.chronicleContestedRegionIds,
+    }
+    const walkSpeed = PLAYER_WALK_SPEED * playerLegMobility(this.body)
     return buildCaravanBeatsView({
       blueprint: this.generatedBlueprint,
       faction: this.faction,
       objectives: this.objectives,
-      player: { x: this.player.position.x, z: this.player.position.z },
+      player,
       heading: this.cameraYaw,
       expedition,
       squadSize: this.actors.filter((actor) => isSquadMember(actor, this.faction)).length,
@@ -6100,6 +6179,11 @@ export class GameEngine {
       marketSupply: market === null
         ? null
         : this.chronicleRegions.get(market)?.supply ?? SUPPLY_BASELINE,
+      // W2-3 — the same memoised walk the contract cards quote. Read defensively: an engine
+      // assembled field by field for a test may have no discovered squares.
+      travel: this.generatedWorld.discoveredRegionIds
+        ? (point) => this.expeditionPlanner.measureTravel(knowledge, player, point, walkSpeed)
+        : undefined,
     }, plans, this.caravanBeats ?? null)
   }
 
@@ -10388,7 +10472,14 @@ export class GameEngine {
       node ? getContractStatus(this.campaignContracts, node) : null,
       node === null ? null : findContractTemplate(node.contract),
     )
-    if (node && node.id !== this.finale.identity.objectiveId && (node.kind === 'arrive' || failedForward)) {
+    // W2-2, PR B — in a spine run the camp is not reached, it is decided: standing at it
+    // closes nothing while its two caravans wait.
+    const campHeld = node !== null && node.id === this.campNode()?.id &&
+      caravanSpineHoldsCamp(this.caravanBeatPlans ?? [], this.caravanBeats ?? null)
+    if (
+      node && !campHeld && node.id !== this.finale.identity.objectiveId &&
+      (node.kind === 'arrive' || failedForward)
+    ) {
       const site = this.generatedWorld.getSitePosition(node.siteId)
       if (
         site &&
@@ -10402,6 +10493,8 @@ export class GameEngine {
         this.completeGeneratedObjective(node)
       }
     }
+    this.settleCaravanOpening()
+    this.announceCaravanGate()
     const finalNode = this.generatedBlueprint.objectives[this.faction].nodes.find(
       (candidate) => candidate.id === this.finale.identity.objectiveId,
     )
@@ -10412,6 +10505,109 @@ export class GameEngine {
       this.campaignCompleted = true
       this.endGame('victory')
     }
+  }
+
+  /** W2-2, PR B — the camp's node: the root that stands on the side's start. */
+  private campNode(): FactionObjectiveNode | null {
+    const graph = this.generatedBlueprint.objectives[this.faction]
+    return graph.nodes.find((node) =>
+      graph.rootNodeIds.includes(node.id) && node.siteId === this.generatedBlueprint.starts[this.faction]) ?? null
+  }
+
+  /**
+   * W2-2, PR B — the camp's node closes on the frame the chosen caravan settles. Read off the
+   * saved beats every frame rather than on the event, so a continue that stopped between the
+   * two closes it on its first frame, and nothing can close it twice.
+   */
+  private settleCaravanOpening(): void {
+    const state = this.caravanBeats
+    if (!state?.spine || caravanSpineHoldsCamp(this.caravanBeatPlans ?? [], state)) return
+    const camp = this.campNode()
+    if (camp && !this.objectives.some((objective) => objective.id === camp.id && objective.done)) {
+      this.completeGeneratedObjective(camp)
+    }
+  }
+
+  /** W2-2, PR B — says once, on the frame it happens, that the caravans opened the finale. */
+  private announceCaravanGate(): void {
+    const state = this.caravanBeats
+    if (!state?.spine) return
+    const open = caravanSpineGate(state).open
+    if (this.caravanGateWasOpen === false && open) {
+      this.callbacks.onNotice(CARAVAN_SPINE_GATE_OPEN_NOTICE, 'success')
+      this.playSound('objective')
+    }
+    this.caravanGateWasOpen = open
+  }
+
+  /**
+   * W2-2, PR B — the one seam a caravan beat stages through.
+   *
+   * First W1-1's make-way: a random event the player is not in the middle of stands down for
+   * the cart, as it would the moment the cart's fight began, so its fighters leave as a whole
+   * rather than being plucked out of it one by one by the reservation. Then a campaign
+   * reservation, which makes ambient and chronicle bodies give way. Refused, the caller waits
+   * on the road and retries (`CARAVAN_BEAT_SPAWN_RETRY_SECONDS`) with an honest wait on its
+   * card, and after `CARAVAN_BEAT_STAGING_GIVE_UP_SECONDS` lets the cart through without its
+   * fight.
+   *
+   * W1-6's `makeRoomForStaging(category, count)` (far, idle, out-of-view friendly packs
+   * stepping back) joins here when it lands: one call before the reservation.
+   */
+  private requestBeatStagingRoom(count: number): boolean {
+    // Read defensively: an engine assembled field by field for a test has no event list.
+    const interrupted = this.activeEvents ? this.playerAnchoredEvent : null
+    if (
+      interrupted &&
+      interrupted.state === 'active' &&
+      !interrupted.contractNodeId &&
+      !this.isPlayerEngagedWith(interrupted)
+    ) {
+      this.standDownRandomEvent(interrupted, describeRandomEventStoodDownForCaravan(interrupted.title))
+    }
+    return this.reserveActorSlots('campaign', count)
+  }
+
+  /**
+   * W2-2, PR B — fail-forward for a crowded road. A cart that waited by the player for its
+   * whole `CARAVAN_BEAT_STAGING_GIVE_UP_SECONDS` goes through without its fight: closed as
+   * unavailable, with no reward and no market write. It counts for the camp and for the
+   * finale's gate, so a crowded road can delay a run but never strand it.
+   */
+  private giveUpCaravanBeatStaging(entry: CaravanBeatEntry): void {
+    const { plan, state, runtime } = entry
+    state.phase = 'unavailable'
+    state.unavailableReason = describeCaravanBeatStagingGaveUp(plan.placement)
+    state.cargoHealth = 0
+    state.combatants = []
+    state.stagingStalled = 0
+    if (runtime) {
+      runtime.cart.visible = false
+      runtime.stagingRefused = false
+    }
+    this.eventPropTargets.delete(caravanBeatCargoTargetId(plan.id))
+    this.callbacks.onNotice(state.unavailableReason, 'warning')
+    this.emitView(true)
+  }
+
+  /**
+   * W2-2, PR B — «Взяться»: the player says which of the camp's caravans they will take. The
+   * compass follows it, after an atlas choice and a taken rumour as always. Meeting a cart is
+   * still what decides, so walking up to the other one takes that one instead.
+   */
+  chooseCaravanOffer(beatId: string): boolean {
+    if (this.ended || !this.caravanBeats) return false
+    const plans = this.caravanBeatPlans ?? []
+    if (!recordCaravanOfferChoice(plans, this.caravanBeats, beatId)) return false
+    const plan = plans.find((entry) => entry.id === beatId)
+    if (plan) {
+      this.callbacks.onNotice(
+        describeCaravanOfferChosen(describeCaravanBeatTitle(plan.placement, this.faction, plan.role)),
+        'info',
+      )
+    }
+    this.emitView(true)
+    return true
   }
 
   /**
@@ -10425,6 +10621,8 @@ export class GameEngine {
     return countProgressSteps({
       graph: this.generatedBlueprint.objectives[this.faction],
       objectives: this.objectives,
+      // W2-2, PR B — every caravan the run met, whatever became of it, is a step.
+      caravanBeatsResolved: caravanSpineProgressBeats(this.caravanBeats ?? null),
     })
   }
 
@@ -12078,9 +12276,14 @@ export class GameEngine {
    * player reached the cart.
    */
   private caravanBeatHoldsRandomEvents(): boolean {
-    for (const { state, runtime } of this.caravanBeatEntries()) {
+    const plans = this.caravanBeatPlans ?? []
+    // PR B — the run's first decision is between two caravans, not between a caravan and
+    // whatever the director rolled at the camp.
+    if (caravanSpineHoldsCamp(plans, this.caravanBeats ?? null)) return true
+    for (const { plan, state, runtime } of this.caravanBeatEntries()) {
       if (isCaravanBeatEngaged(state)) return true
       if (state.phase !== 'approach' || !runtime) continue
+      if (isCaravanBeatDormant(plan, plans, this.caravanBeats ?? null)) continue
       if (this.player.position.distanceTo(runtime.cart.position) <= CONTRACT_QUIET_RADIUS) return true
     }
     return false

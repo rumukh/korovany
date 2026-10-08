@@ -164,7 +164,16 @@ export interface ExpeditionInput {
     position: ExpeditionPoint
     task: string
     stake: string
+    payout?: ChoicePayoutView | null
+    travel?: ChoiceTravelView | null
   }[]
+  /**
+   * W2-2, PR B — the camp's chosen caravan, which the compass follows ahead of the active
+   * objective while the camp's choice is open.
+   */
+  leadingCaravanBeatId?: string | null
+  /** …and the gate's next caravan, which it follows when no objective is left before it. */
+  trailingCaravanBeatId?: string | null
 }
 
 export function createExpeditionState(): ExpeditionState {
@@ -674,6 +683,8 @@ export function buildExpeditionTargets(blueprint: WorldBlueprint, input: Expedit
       timeRemaining: null,
       exclusive: false,
       committed: false,
+      payout: target.payout ?? null,
+      travel: target.travel ?? null,
     })
   }
   for (const site of blueprint.sites) {
@@ -807,11 +818,18 @@ export class ExpeditionPlanner {
       this.decisionKey = ''
     }
     const selected = this.state.target
+    const caravan = (id: string | null | undefined) => id
+      ? targets.find((entry) => entry.kind === 'caravanBeat' && entry.id === id)
+      : undefined
     const target = this.state.mode === 'selected'
       ? targets.find((entry) => selected !== null && entry.key === expeditionTargetKey(selected)) ?? null
-      // A taken live rumour is a time-boxed commitment, so it leads until it resolves.
+      // A taken live rumour is a time-boxed commitment, so it leads until it resolves. W2-2,
+      // PR B — then the camp's chosen caravan, then the active objective, then the caravan the
+      // finale's gate still waits on.
       : targets.find((entry) => entry.kind === 'rumour' && entry.committed) ??
-        targets.find((entry) => entry.kind === 'objective' && entry.id === input.activeObjectiveId) ?? null
+        caravan(input.leadingCaravanBeatId) ??
+        targets.find((entry) => entry.kind === 'objective' && entry.id === input.activeObjectiveId) ??
+        caravan(input.trailingCaravanBeatId) ?? null
     const knowledge = buildExpeditionKnowledge(input, this.blueprint)
     const attached = attachments(this.graph, input.player)[0]
     const reach = target ? distance(input.player, target.position) : Infinity

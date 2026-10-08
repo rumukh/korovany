@@ -101,7 +101,7 @@ import { CombatCameraControls, CombatEvadeButton, CombatMasteryHud } from './gam
 import { ExpeditionAtlas, ExpeditionCompass, ExpeditionMinimap } from './game/ui/ExpeditionAtlas'
 import { SquadCommandPanel, SquadCommandStrip } from './game/ui/SquadCommandPanel'
 import { FinaleHud, FinaleResult } from './game/ui/FinaleHud'
-import { CaravanBeatHud } from './game/ui/CaravanBeatHud'
+import { CaravanBeatHud, CaravanOpeningCard } from './game/ui/CaravanBeatHud'
 import { CaravanLootCue } from './game/ui/CaravanLootCue'
 import { CampaignJournal } from './game/ui/CampaignJournal'
 import { ChoicePrice } from './game/ui/ChoicePrice'
@@ -147,6 +147,7 @@ import {
   CONTRACT_UNPIN_LABEL,
   OBJECTIVE_OPTIONAL_LABEL,
   OBJECTIVE_SKIPPED_LABEL,
+  describeCaravanSpineGate,
   DOCTRINE_DRAFT_HINT,
   DOCTRINE_EQUIPPED_HINT,
   DOCTRINE_MENU_EYEBROW,
@@ -1032,6 +1033,13 @@ function ObjectiveList({ view }: { view: GameView }) {
                   <span className="objective-hint">{OBJECTIVE_OPTIONAL_LABEL}</span>
                 ) : null}
                 {lootHint ? <span className="objective-hint">{lootHint}</span> : null}
+                {/* W2-2, PR B — the finale waits on the caravans, and says how many are left. */}
+                {view.caravanBeats.gate && !view.caravanBeats.gate.open && !objective.done &&
+                  objective.id === view.caravanBeats.gate.objectiveId ? (
+                  <span className="objective-hint">
+                    {describeCaravanSpineGate(view.caravanBeats.gate.settled, view.caravanBeats.gate.required)}
+                  </span>
+                ) : null}
                 {objective.target && !objective.done ? (
                   <div className="objective-progress">
                     <i
@@ -2587,6 +2595,7 @@ export function GameScreen({
   onCloseJournal,
   onBeatChoice,
   onTrackBeat,
+  onTakeOffer = () => {},
   onPinRumour,
   onPinObjective,
   onTakeDoctrine,
@@ -2650,6 +2659,8 @@ export function GameScreen({
   onCloseJournal: () => void
   onBeatChoice: (beatId: string, outcome: CaravanBeatOutcome) => void
   onTrackBeat: (beatId: string) => void
+  /** W2-2, PR B — «Взяться» on one of the camp's caravans. */
+  onTakeOffer?: (beatId: string) => void
   onPinRumour: (rumourId: string | null) => void
   onPinObjective: (nodeId: string | null) => void
   onTakeDoctrine: (doctrineId: string) => void
@@ -2889,7 +2900,9 @@ export function GameScreen({
           ) : null}
           <CaravanBeatHud view={view.caravanBeats.active} paused={simulationPaused}
             onChoose={onBeatChoice} onSquad={onOpenSquadCommand} onTrack={onTrackBeat} />
-          <FinaleHud finale={view.finale} />
+          {!view.caravanBeats.active?.active ? (
+            <CaravanOpeningCard opening={view.caravanBeats.opening ?? null} faction={view.faction} onTake={onTakeOffer} />
+          ) : null}          <FinaleHud finale={view.finale} />
           {visualPreferences.hudMode === 'compact' ? noticeStack : null}
           <CompactWorldNews mode={visualPreferences.hudMode} view={view}>
             <ChronicleFeed view={view} />
@@ -3165,6 +3178,8 @@ export function GameScreen({
       {activeOverlay === 'journal' ? (
         <CampaignJournal onClose={onCloseJournal}>
           <div className="journal-missions">
+            <CaravanOpeningCard opening={view.caravanBeats.opening ?? null} faction={view.faction}
+              onTake={onTakeOffer} inJournal />
             <ContractBoard view={view} onPin={onPinObjective} />
             <DoctrineBoard view={view} onTake={onTakeDoctrine} />
             <ObjectiveList view={view} />
@@ -4077,6 +4092,7 @@ function App() {
         onCloseJournal={() => closeOverlay('journal')}
         onBeatChoice={(beatId, outcome) => { engineRef.current?.chooseCaravanBeat(beatId, outcome) }}
         onTrackBeat={(beatId) => { engineRef.current?.trackCaravanBeat(beatId) }}
+        onTakeOffer={(beatId) => { engineRef.current?.chooseCaravanOffer(beatId) }}
         onIssueSquadCommand={(mode, targetId) => {
           if (topGameOverlay(overlaysRef.current) !== 'orders') return false
           const accepted = engineRef.current?.commandSquad(mode, targetId) ?? false

@@ -173,7 +173,9 @@ function legacyInitialView(
   const body = restored ? { ...restored.player.body } : createHealthyBody()
   const objectives =
     restored?.player.objectives.map((objective) => ({ ...objective })) ??
-    createGeneratedObjectives(blueprint, config.faction)
+    // W2-2, PR B — a fresh run's camp is the choice between two caravans and says so; a
+    // restored run keeps the words it was saved with, as it always did.
+    createGeneratedObjectives(blueprint, config.faction, { caravanSpine: true })
   const elapsed = legacySerializableNumber(restored?.directorState.elapsed)
   const discovered = new Set(restored?.discoveredRegionIds ?? [])
   discovered.add(currentRegion.id)

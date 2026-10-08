@@ -159,6 +159,15 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
         previous.expedition.target?.key !== view.expedition.target?.key)),
   },
   {
+    hint: 'caravanSpine',
+    // W2-2, PR B — the camp's card explains its own choice, and is on screen from the first
+    // frame. What it cannot say is what the choice starts: so the line arrives on the frame the
+    // choice is made, when a met cart takes the offers off the card.
+    viewFields: ['caravanBeats'],
+    firstSighting: (view, previous) => previous !== null &&
+      (view.caravanBeats.opening?.offers.length ?? 0) < (previous.caravanBeats.opening?.offers.length ?? 0),
+  },
+  {
     hint: 'bridgeAmbush',
     // W2-2 — the id stays so a player who already met the bridge is not taught again; the
     // field is the whole beat list now, and the line names every side's verb.

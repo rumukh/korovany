@@ -193,3 +193,60 @@
     display: none;
   }
 }
+
+/* W2-2, PR B — the camp's two caravans, each with its price and its «Взяться». */
+.caravan-offers {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.caravan-offer {
+  border: 1px solid var(--cp-border-strong);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.6rem;
+}
+
+.caravan-offer.chosen {
+  border-color: var(--cp-accent);
+}
+
+.caravan-offer-line {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.caravan-offer .bridge-route-label,
+.caravan-offer .bridge-hint,
+.caravan-offer .bridge-squad-button {
+  margin-top: 0;
+}
+
+.caravan-offer-take[aria-pressed="true"] {
+  background: var(--cp-accent);
+  border-color: var(--cp-accent);
+  color: var(--cp-accent-fg);
+}
+
+.bridge-encounter.dormant header > svg {
+  color: var(--cp-text-soft);
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  /* A narrow field card keeps each offer's name, its pay and its button, and an approach
+     card its pay; the walk, the danger and the other verbs wait in the journal. */
+  .top-hud-side > .caravan-opening .bridge-stage-copy,
+  .top-hud-side > .caravan-opening .caravan-offer .bridge-route-label,
+  .top-hud-side > .caravan-opening .caravan-offer-alternatives,
+  .top-hud-side > .caravan-opening .choice-price-route,
+  .top-hud-side > .caravan-opening > .bridge-hint,
+  .top-hud-side > .bridge-encounter[data-phase="approach"] .choice-price-route,
+  .top-hud-side > .bridge-encounter[data-phase="approach"] .caravan-offer-alternatives {
+    display: none;
+  }
+}

@@ -22,6 +22,7 @@
  */
 
 import {
+  CARAVAN_SPINE_ROOT_TEXT,
   createGeneratedObjectiveText,
   type LocatedEventCopyContext,
 } from '../content/gameCopy.ts'
@@ -80,12 +81,24 @@ import {
 export function createGeneratedObjectives(
   blueprint: WorldBlueprint,
   faction: Faction,
+  options: {
+    /**
+     * W2-2, PR B — a run whose camp is the choice between two caravans names that node for
+     * the choice. A run saved before the spine keeps the words its objective list was saved
+     * with, since a continue reads them from the save, not from here.
+     */
+    caravanSpine?: boolean
+  } = {},
 ): Objective[] {
-  return blueprint.objectives[faction].nodes.map((node) => {
+  const graph = blueprint.objectives[faction]
+  return graph.nodes.map((node) => {
     const site = blueprint.sites.find((candidate) => candidate.id === node.siteId)
+    const camp = graph.rootNodeIds.includes(node.id) && node.siteId === blueprint.starts[faction]
     return {
       id: node.id,
-      text: createGeneratedObjectiveText(node.kind, site?.kind),
+      text: options.caravanSpine === true && camp
+        ? CARAVAN_SPINE_ROOT_TEXT
+        : createGeneratedObjectiveText(node.kind, site?.kind),
       done: false,
       // Roadmap 2.1 — carried onto the persisted objective rather than looked up in the
       // blueprint on every read, because the win condition, the HUD and the run summary
@@ -145,6 +158,30 @@ export function objectivePrerequisitesDone(
 }
 
 /**
+ * W2-2, PR B — whether the run's finale may be taken on yet.
+ *
+ * The caravan spine keeps it shut until enough caravans have settled
+ * (`CaravanBeats.caravanSpineGate`). It is a separate input rather than a node of the graph so
+ * the graph, the blueprint's fingerprint and the completability proof below stay exactly what
+ * they were. Absent means open: every run without a spine, and every caller with no caravans
+ * to ask about, reads the campaign as before.
+ */
+export interface CampaignGate {
+  finaleOpen: boolean
+}
+
+export const OPEN_CAMPAIGN_GATE: Readonly<CampaignGate> = Object.freeze({ finaleOpen: true })
+
+function campaignGateAllows(
+  blueprint: WorldBlueprint,
+  faction: Faction,
+  node: FactionObjectiveNode,
+  gate: CampaignGate,
+): boolean {
+  return gate.finaleOpen || node.id !== blueprint.objectives[faction].finalNodeId
+}
+
+/**
  * The first ready node.
  *
  * A `.find()`, not a filter: it returns the *first* ready node, so a graph with parallel
@@ -158,13 +195,15 @@ export function getActiveObjectiveNode(
   blueprint: WorldBlueprint,
   faction: Faction,
   objectives: readonly Objective[],
+  gate: CampaignGate = OPEN_CAMPAIGN_GATE,
 ): FactionObjectiveNode | null {
   const graph = blueprint.objectives[faction]
   return (
     graph.nodes.find(
       (node) =>
         !isObjectiveSettledById(objectives, node.id) &&
-        objectivePrerequisitesDone(node, objectives),
+        objectivePrerequisitesDone(node, objectives) &&
+        campaignGateAllows(blueprint, faction, node, gate),
     ) ?? null
   )
 }
@@ -184,11 +223,13 @@ export function getReadyObjectiveNodes(
   blueprint: WorldBlueprint,
   faction: Faction,
   objectives: readonly Objective[],
+  gate: CampaignGate = OPEN_CAMPAIGN_GATE,
 ): FactionObjectiveNode[] {
   return blueprint.objectives[faction].nodes.filter(
     (node) =>
       !isObjectiveSettledById(objectives, node.id) &&
-      objectivePrerequisitesDone(node, objectives),
+      objectivePrerequisitesDone(node, objectives) &&
+      campaignGateAllows(blueprint, faction, node, gate),
   )
 }
 
@@ -205,8 +246,9 @@ export function resolveActiveObjectiveNode(
   faction: Faction,
   objectives: readonly Objective[],
   pinnedNodeId: string | null,
+  gate: CampaignGate = OPEN_CAMPAIGN_GATE,
 ): FactionObjectiveNode | null {
-  const ready = getReadyObjectiveNodes(blueprint, faction, objectives)
+  const ready = getReadyObjectiveNodes(blueprint, faction, objectives, gate)
   if (pinnedNodeId !== null) {
     const pinned = ready.find((node) => node.id === pinnedNodeId)
     if (pinned) return pinned

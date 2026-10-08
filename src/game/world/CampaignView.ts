@@ -95,6 +95,7 @@ import {
   rumourProgressShare,
   rumourSecondsRemaining,
   type CampaignContractState,
+  type CampaignGate,
   type ChronicleCommitmentState,
   type ChronicleRumour,
 } from './CampaignDirector.ts'
@@ -115,11 +116,12 @@ import {
 import {
   buildCaravanBeatsView,
   caravanBeatExpeditionTargets,
-  createCaravanBeatPlans,
-  createCaravanBeatsState,
-  restoreCaravanBeatsState,
+  caravanSpineGate,
+  caravanSpineLeads,
+  caravanSpineProgressBeats,
   type CaravanBeatsView,
 } from './CaravanBeats.ts'
+import { createCaravanSpine, restoreCaravanSpine } from './CaravanSpine.ts'
 import {
   buildCombatMasteryView,
   normalizeCombatMastery,
@@ -429,12 +431,14 @@ export interface CampaignContractInput {
    * estimate; without it the cards simply quote no walk.
    */
   travel?: (point: { x: number; z: number }) => ChoiceTravelView | null
+  /** W2-2, PR B — the caravan spine's gate; a shut finale is not on the board. */
+  gate?: CampaignGate
 }
 
 export function buildCampaignContractViews(
   input: CampaignContractInput,
 ): CampaignContractView[] {
-  const ready = getReadyObjectiveNodes(input.blueprint, input.faction, input.objectives)
+  const ready = getReadyObjectiveNodes(input.blueprint, input.faction, input.objectives, input.gate)
   return ready.map((node) => {
     const site = input.blueprint.sites.find((candidate) => candidate.id === node.siteId)
     const region = input.blueprint.regions.find(
@@ -719,6 +723,15 @@ export function buildGameView(input: LiveViewInput): GameView {
       active: input.caravanBeats.active
         ? { ...input.caravanBeats.active, choices: input.caravanBeats.active.choices.map((choice) => ({ ...choice })) }
         : null,
+      opening: input.caravanBeats.opening
+        ? {
+            chosenId: input.caravanBeats.opening.chosenId,
+            offers: input.caravanBeats.opening.offers.map((offer) => ({
+              ...offer, choices: offer.choices.map((choice) => ({ ...choice })),
+            })),
+          }
+        : null,
+      gate: input.caravanBeats.gate ? { ...input.caravanBeats.gate } : null,
     },
     caravanLoot: input.caravanLoot ? { ...input.caravanLoot } : null,
     finale: input.finale ? { ...input.finale } : null,
@@ -811,7 +824,7 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
   const body = restored ? { ...restored.player.body } : createHealthyBody()
   const objectives =
     restored?.player.objectives.map((objective) => ({ ...objective })) ??
-    createGeneratedObjectives(blueprint, config.faction)
+    createGeneratedObjectives(blueprint, config.faction, { caravanSpine: true })
   const elapsed = serializableNumber(restored?.directorState.elapsed)
   const discovered = new Set(restored?.discoveredRegionIds ?? [])
   discovered.add(currentRegion.id)
@@ -868,6 +881,19 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     faction: config.faction, discoveredRegionIds: discovered, chronicleRegions, contestedRegionIds,
   }, blueprint)
   const walkSpeed = PLAYER_WALK_SPEED * playerLegMobility(body)
+  const playerPoint = { x: position[0], z: position[2] }
+  const travelTo = (point: { x: number; z: number }) =>
+    estimateChoiceTravel(blueprint, playerPoint, point, travelKnowledge, walkSpeed)
+
+  // W2-2 — the same plans, restore and builder the engine uses, so a continued run shows
+  // its caravans exactly as the first live frame will. PR B — read first, because the
+  // caravans now decide whether the finale is on the board at all.
+  const caravan = restored
+    ? restoreCaravanSpine(restored.directorState, blueprint, config.faction)
+    : createCaravanSpine(blueprint, config.faction)
+  const beatPlans = caravan.plans
+  const beatState = caravan.state
+  const gate: CampaignGate = { finaleOpen: caravanSpineGate(beatState).open }
   const contracts = buildCampaignContractViews({
     blueprint,
     faction: config.faction,
@@ -879,33 +905,29 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     },
     championDamageBonus: Math.min(CHAMPION_DAMAGE_CAP,
       Math.max(0, serializableNumber(restored?.directorState.championDamageBonus))),
-    travel: (point) => estimateChoiceTravel(blueprint, { x: position[0], z: position[2] }, point,
-      travelKnowledge, walkSpeed),
+    travel: travelTo,
+    gate,
   })
-
-  // W2-2 — the same plans, restore and builder the engine uses, so a continued run shows
-  // its caravans exactly as the first live frame will.
-  const beatPlans = createCaravanBeatPlans(blueprint, config.faction)
-  const beatState = restored
-    ? restoreCaravanBeatsState(restored.directorState, blueprint, config.faction, beatPlans).state
-    : createCaravanBeatsState(beatPlans)
+  const leads = caravanSpineLeads(beatPlans, beatState, (point) => travelTo(point).meters)
   const expedition = new ExpeditionPlanner(blueprint, restored?.directorState.expedition).buildView({
-    faction: config.faction, player: { x: position[0], z: position[2] },
+    faction: config.faction, player: playerPoint,
     heading, objectives, contracts,
     rumours: buildChronicleRumourViews(blueprint,
       normalizeChronicleCommitmentState(restored?.directorState.chronicleCommitments),
       restored?.chronicleState.tick ?? 0),
     activeObjectiveId: resolveActiveObjectiveNode(blueprint, config.faction, objectives,
-      normalizeCampaignContractState(restored?.directorState.campaignContracts).pinnedNodeId)?.id ?? null,
+      normalizeCampaignContractState(restored?.directorState.campaignContracts).pinnedNodeId, gate)?.id ?? null,
     discoveredRegionIds: discovered, chronicleRegions, contestedRegionIds,
-    caravanBeats: caravanBeatExpeditionTargets(config.faction, beatPlans, beatState),
+    caravanBeats: caravanBeatExpeditionTargets(config.faction, beatPlans, beatState, travelTo),
+    leadingCaravanBeatId: leads.leading,
+    trailingCaravanBeatId: leads.trailing,
   })
   const marketRegionId = beatPlans[0]?.marketRegionId ?? null
   const caravanBeats = buildCaravanBeatsView({
     blueprint,
     faction: config.faction,
     objectives,
-    player: { x: position[0], z: position[2] },
+    player: playerPoint,
     heading,
     expedition,
     squadSize: squadCommand.roster.length,
@@ -916,6 +938,7 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     marketSupply: marketRegionId === null
       ? null
       : chronicleRegions.get(marketRegionId)?.supply ?? SUPPLY_BASELINE,
+    travel: travelTo,
   }, beatPlans, beatState)
   return {
     faction: config.faction,
@@ -1000,7 +1023,11 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     threatTier: restoreThreatTier(
       restored?.directorState.threatTier,
       elapsed,
-      countProgressSteps({ graph: blueprint.objectives[config.faction], objectives }),
+      countProgressSteps({
+        graph: blueprint.objectives[config.faction],
+        objectives,
+        caravanBeatsResolved: caravanSpineProgressBeats(beatState),
+      }),
     ),
     upgrades,
   }

@@ -125,7 +125,14 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
       tracked: false,
     }
     const active = { ...beat, active: true }
-    return { ...base, caravanBeats: { beats: [active], active } }
+    // The base view's camp choice stays as it was, so only the beat line has a reason to fire.
+    return { ...base, caravanBeats: { ...base.caravanBeats, beats: [active], active } }
+  },
+  caravanSpine: (base) => {
+    // A cart was met at the camp: the offers leave the card on that frame.
+    assert.ok((base.caravanBeats.opening?.offers.length ?? 0) > 0, 'the launch view shows the camp choice')
+    const opening = base.caravanBeats.opening ?? null
+    return { ...base, caravanBeats: { ...base.caravanBeats, opening: opening && { ...opening, offers: [] } } }
   },
   caravanLoot: (base) => ({
     ...base,
