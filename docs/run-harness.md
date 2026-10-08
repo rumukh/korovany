@@ -4,7 +4,8 @@
 day in #108, after W1-6 found the shipped arms simulating the whole 3x3. Every number below is from the corrected
 window and **supersedes the baseline published with #106**, which was measured in the 3x3. Its 239 `crowded`
 contract abandonments, and every figure derived from them, came from the harness rather than the game. On 2026-10-08
-W2-2's caravan spine joined `HARNESS_SHIPPED_ARMS`, and the [baseline](#baseline) was re-published with it.
+W2-2's caravan spine joined `HARNESS_SHIPPED_ARMS`, and the [baseline](#baseline) was re-published with it. W3-5's
+errand press joined the same day, and the baseline was re-published again.
 
 `tests/runHarness.ts` drives whole campaigns headlessly through the real generator, terrain, collision, navigation,
 chronicle, campaign director, combat resolver and actor AI. The gameplay review of 2026-10-06 used it for 330 runs and
@@ -32,6 +33,7 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `escalation` (W2-1) | `time` | `progress`: pacing follows progress, enemy stats the clock | `time`; `progressAll` |
 | `caravanBeats` (W2-2) | `off`: before the spine | `shipped`: the caravan spine | `beatPolicy`: `walk`, `ignore` |
 | `rumourSteering` (W2-3) | `cart`: an escort's cart's square | `meeting`: where its cart is met | `cart` |
+| `errand` (W3-5) | `clear`: waits for no hostile within 12 m | `press`: the engine's `E` at the errand | `clear` |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
   through `selectSquadIntent` and `getSquadFollowSpeed`, fight through the squad's own `selectThreat` pass and the
@@ -139,6 +141,9 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   the soldiers commanders called (W1-6), which count on the road once called, the packs that stepped back to make
   room for a contract and came home again, and how many of those the player called home from their posts (W1-6).
 - `sweepBalance` aggregates them per faction and policy, with the run-length distribution.
+- **The errand's site (W3-5), per run only:** when the player first stood within 6 m of it while the errand was the
+  active node, when the errand completed, and for how long before that something hostile stood within 12 m
+  (`errandSite`).
 
 ## Running it
 
@@ -151,11 +156,110 @@ The committed file runs in about 20 s: its sweep takes three seeds per cell and 
 
 ## Baseline
 
-`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on `main` at 191cda5, in the
-engine's streaming window. **This baseline supersedes the one measured on 29adca3**, kept below for the record. The
-shipped arms have since taken in W2-1's progress tier, W2-2's verbs and defended carts, W2-3's reachable rumours and
-meeting compass, and, folded in after #115, W2-2's caravan spine (`caravanBeats: 'shipped'`): what a new run plays.
-"Spine off" is the same 360 runs with `caravanBeats: 'off'`.
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-5's branch, `main` at
+02059ed with the errand press merged, in the engine's streaming window. **This baseline supersedes the ones measured
+on 191cda5 and 29adca3**, kept below for the record. The shipped arms have taken in W2-1's progress tier, W2-2's verbs
+and defended carts, W2-3's reachable rumours and meeting compass, W2-2's caravan spine (`caravanBeats: 'shipped'`) and
+W3-5's errand press (`errand: 'press'`): what a new run plays. "Spine off" is the same 360 runs with
+`caravanBeats: 'off'`.
+
+| Policy · faction | Win / defeat / timeout | Spine off | Won in p10–p50–p90 | Damage taken | Kills |
+| --- | --- | --- | --- | ---: | ---: |
+| beeline · elf | 11 / 29 / 0 | 14 / 26 / 0 | 89–130–156 s | 243 | 8.4 |
+| beeline · guard | 18 / 22 / 0 | 17 / 23 / 0 | 103–130–219 s | 167 | 10.8 |
+| beeline · villain | 20 / 20 / 0 | 20 / 20 / 0 | 87–110–140 s | 159 | 8.8 |
+| cautious · elf | 11 / 8 / 21 | 13 / 10 / 17 | 89–130–156 s | 217 | 7.7 |
+| cautious · guard | 17 / 11 / 12 | 14 / 14 / 12 | 103–147–219 s | 158 | 10.8 |
+| cautious · villain | 10 / 12 / 18 | 18 / 12 / 10 | 84–98–140 s | 144 | 8.2 |
+| duelist · elf | 34 / 6 / 0 | 35 / 5 / 0 | 102–141–188 s | 180 | 18.2 |
+| duelist · guard | 33 / 7 / 0 | 35 / 5 / 0 | 111–142–187 s | 144 | 20.0 |
+| duelist · villain | 26 / 14 / 0 | 37 / 3 / 0 | 101–130–172 s | 149 | 17.2 |
+
+| Policy · faction | Squad at finale | Drafts p50/max | Tier p50/max | Contracts s/k/a | Road | Late rumours | Carts |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| beeline · elf | 2.5 (37/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.1 | 5 % | 2.05 |
+| beeline · guard | 2.4 (36/40) | 3 / 3 | 4 / 4 | 40 / 35 / 0 | 11.7 | 2 % | 2.13 |
+| beeline · villain | 3.2 (40/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.7 | 7 % | 2.08 |
+| cautious · elf | 2.5 (35/39) | 3 / 3 | 4 / 4 | 39 / 39 / 0 | 11.0 | 9 % | 2.00 |
+| cautious · guard | 2.4 (36/40) | 3 / 3 | 4 / 4 | 40 / 35 / 0 | 11.2 | 4 % | 2.13 |
+| cautious · villain | 3.2 (40/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.5 | 9 % | 2.08 |
+| duelist · elf | 3.4 (37/37) | 3 / 3 | 4 / 4 | 39 / 38 / 0 | 9.9 | 14 % | 1.95 |
+| duelist · guard | 2.6 (38/40) | 3 / 3 | 4 / 4 | 40 / 35 / 0 | 10.5 | 7 % | 2.10 |
+| duelist · villain | 3.3 (38/38) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.9 | 5 % | 2.13 |
+
+Squad at finale is the mean number of companions standing when the finale opened, recruits included, and in brackets
+the finales at least one of them reached. Tier is the highest threat tier the campaign reached; every finale fielded
+was fought at pacing tier 4 (3 with the spine off). Contracts are started, kept and abandoned. Road is the mean number
+of the generator's encounter bodies on the field over the run. Carts are the spine's caravans a run met: resolved,
+lost or escaped.
+
+Over all 360 runs, against the spine off:
+
+- **Wins.** 180 against 203: beeline 49 against 51, cautious 38 against 45, duelist 93 against 107. The duelist's loss
+  is mostly the villain's, 26 of 40 against 37. It dies on the way far more often: 5 deaths to encounters against
+  none, 3 to located fights against 2, 2 to bleeding against none and 1 to a caravan's escort. Meanwhile
+  press-ganging and burning cut its finale damage from 34 to 23 a run. Wave 3's combat economy is to tune that with
+  this instrument.
+- **Run length.** 264 runs end inside three minutes (306 with the spine off), and the median win of a cell grows from
+  77–107 s to 98–147 s. The 51 that reach ten minutes are all cautious stalls (39 with the spine off). No beeline
+  guard stalls any more: the three that did on 191cda5 were W3-5's errand stall.
+- **Deaths.** 129 defeats:
+  - the finale, 53;
+  - the road's encounters, 33;
+  - located fights, 20;
+  - bleeding, 15;
+  - random events, 5;
+  - one each to a threat wave, a contract's fight and a caravan's escort.
+
+  The finale deals the most damage (21 630), then the road's encounters (15 450), the caravans' escorts (10 298) and
+  located fights (7 296). Contract fights deal 4 473.
+- **Caravans.** Every side met about two of the spine's caravans a run, 745 in all:
+  - 4 were lost and 2 escaped;
+  - 1.64 a run were robbed and 0.41 walked in or sent on;
+  - the camp closed at a median 17–25 s and the gate opened at 82–105 s, and no cart had to wait for room.
+
+  With the road cart and the chronicle's ambushes, the players robbed 670 carts and escorted 189, against 77 and 19
+  with the spine off. NPCs took 23 carts, each after a full load, and the squad none.
+- **Contracts.** 358 of the 360 runs reached their contract and started it: 342 kept, 15 failed, none abandoned. 115
+  random events stood down for a contract or a caravan (51 with the spine off), and 51 located fights were handed
+  back to make room (47).
+- **Encounters.** The generator fielded 20.0 encounters per run, with 11.0 of their bodies on the road at once on
+  average, and the budget refused one for 0.1 s a run. A `beeline` or `duelist` run spawns about 88 encounter bodies,
+  and a `cautious` one 939 (1 096 with the spine off).
+- **Events.** There were 503 random events, 3 458 located fights and 350 threat waves. The waves dealt 801 damage,
+  against 2 181 on 191cda5. Seed 285 085's two guard runs took 1 488 of that while they stood at the errand's healer
+  (W3-5). They now finish the errand on arrival and end in defeat at 156 and 158 s, before the first wave. The rest
+  went from 693 to 801, against 649 with the spine off.
+- **Rumours.** 42 of 593 offers (7 %) were beyond reach by this road-only estimate (33 of 383 with the spine off).
+- **Economy.** About 433 gold earned and 19 spent per run (332 and 7). About 102 health healed per run (54): rations
+  21 599, healers 5 834, medicine 4 735, loot 4 399, events 220. On 191cda5 healers restored 20 935, most of it to
+  the guards stalled at the healer.
+- **Squad.** A companion reached 337 of 354 finales (355 of 358).
+
+The caravans by side, the reference wave 3 tunes against. Timings are the median of each policy's 40 runs, beeline /
+cautious / duelist:
+
+| Side | Verbs over its 120 runs | Camp closed, p50 | Gate opened, p50 | Recruits, guards thinned |
+| --- | --- | --- | --- | --- |
+| Elves | take 105 (44 %), give 133 (56 %) | 25 / 25 / 25 s | 85 / 90 / 97 s | — |
+| Palace guard | confiscate 105 (42 %), deliver 68 (27 %), release 79 (31 %) | 18 / 18 / 18 s | 88 / 88 / 105 s | — |
+| Villain | plunder 95 (38 %), press 47 (19 %), burn 108 (43 %) | 17 / 17 / 19 s | 82 / 82 / 91 s | 47, 75 |
+
+- The verbs are the scripted player's, not a person's: `verbPolicy: 'seeded'` picks uniformly among the verbs a cart
+  offers the side, and never press-gangs into a full squad of four. The guard's split is therefore its carts': a raid
+  can only be confiscated, an escort is delivered or released. The villain presses least because its squad is often
+  full. What each verb is worth in wins, healing and finale damage is in
+  [the spine's section](#w2-2-pr-b-the-caravan-spine).
+- The camp's offer was taken on the road to the finale in 165 runs and on the other road in 189, the light one in 186
+  and the rich one in 168; 6 runs met no offer. The caravans paid about one step of W2-1's progress a run (0.93–1.00
+  by cell), two met carts to a step.
+
+### Superseded: the baseline on 191cda5
+
+The same protocol on `main` at 191cda5, before W3-5's errand press joined the shipped arms. Its three beeline guard
+timeouts, three of the cautious guard's and one of the cautious villain's were that stand-in's errand stall
+([W3-5](#w3-5-the-errand-is-pressed-not-waited-out)). It is kept as the record that W2-2's follow-up and #117 measured
+against, and `{ ...HARNESS_SHIPPED_ARMS, errand: 'clear' }` reproduces it cell for cell.
 
 | Policy · faction | Win / defeat / timeout | Spine off | Won in p10–p50–p90 | Damage taken | Kills |
 | --- | --- | --- | --- | ---: | ---: |
@@ -210,20 +314,38 @@ Over all 360 runs, against the spine off:
   and the budget refused one for 0.1 s a run. A `beeline` or `duelist` run spawns about 87 encounter bodies, a
   `cautious` one 664 (1 226 with the spine off).
 - **Events.** 507 random events, 3 436 located fights and 351 threat waves, which dealt 2 181 damage. 1 488 of it fell
-  in the two runs of one guard, seed 285 085, which stall at an unfinished «interact» objective in region-1-4 (an
-  investigation logged for wave 3); the rest is 693, against 663 with the spine off.
+  in the two runs of one guard, seed 285 085, which stall at an unfinished «interact» objective in region-1-4 (W3-5
+  found that stall was the harness's own); the rest is 693, against 663 with the spine off.
 - **Rumours.** 67 of 617 offers (11 %) were beyond reach by this road-only estimate (67 of 451 with the spine off).
 - **Economy.** About 433 gold earned and 22 spent per run (337 and 9). About 145 health healed per run (92): healers
   20 935, rations 20 561, medicine 6 117, loot 4 371, events 220.
 - **Squad.** A companion reached 318 of 342 finales (343 of 351).
 
+The caravans by side, as #117 published them. Timings are the median of each policy's 40 runs, beeline /
+cautious / duelist:
+
+| Side | Verbs over its 120 runs | Camp closed, p50 | Gate opened, p50 | Recruits, guards thinned |
+| --- | --- | --- | --- | --- |
+| Elves | take 104 (44 %), give 131 (56 %) | 25 / 25 / 25 s | 90 / 90 / 97 s | — |
+| Palace guard | confiscate 103 (42 %), deliver 66 (27 %), release 79 (32 %) | 18 / 18 / 18 s | 90 / 90 / 105 s | — |
+| Villain | plunder 95 (38 %), press 47 (19 %), burn 108 (43 %) | 17 / 17 / 19 s | 82 / 82 / 91 s | 47, 75 |
+
+- The verbs are the scripted player's, not a person's: `verbPolicy: 'seeded'` picks uniformly among the verbs a cart
+  offers the side, and never press-gangs into a full squad of four. The guard's split is therefore its carts': a raid
+  can only be confiscated, an escort is delivered or released. The villain presses least because its squad is often
+  full. What each verb is worth in wins, healing and finale damage is in
+  [the spine's section](#w2-2-pr-b-the-caravan-spine).
+- The camp's offer was taken on the road to the finale in 165 runs and on the other road in 189, the light one in 186
+  and the rich one in 168; 6 runs met no offer. The caravans paid about one step of W2-1's progress a run (0.90–1.00
+  by cell), two met carts to a step.
+
 ### Superseded: the baseline on 29adca3
 
 Measured before W2-1's progress tier, W2-2 and W2-3 joined the shipped arms, with the clock-only tier the drafts and
 tier columns show. It is kept as the record that the W1-5 and W1-6 sections compared against; every current number is
-the table above.
+in the [baseline](#baseline).
 
-HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on `main` at 29adca3, in the
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on `main` at 29adca3, in the
 engine's streaming window. W1-6 added `commanders: 'shipped'` to the shipped arms. The same 360 runs with it are this
 baseline cell for cell: no friendly garrison fought beside a scripted player long enough to call a soldier. W1-6 also
 added `staging: 'friendly'`, which changes no cell of it: on the nearest arm no contract was ever short of room, so no
@@ -393,7 +515,7 @@ and rejected: progress scaling enemy stats as well. Same seeds, the engine's win
 - Calm alone had no ceiling. Four guard runs pinned in a fight from 360 s to the 600 s timeout (seeds 79191 and
   142543, beeline and cautious) never opened their third and fourth drafts. With the 30 s ceiling those eight open
   at 390 s and 570 s, `draftsForced` counts them, and the other 356 runs are the same in every recorded field: no win
-  count moved, under `progress` or `progressAll`.
+  count moved, under `progress` or `progressAll`. W3-5 found the fight was the harness's own (see below).
 - The finale is fought at pacing tier 3 with its boss scaled at the clock's tier 1. Under `progressAll` the same boss
   had a quarter more health, and the finale's defeats are most of the gap in that column.
 - Run length moved by ten percent or less in every cell.
@@ -451,6 +573,7 @@ the [baseline](#baseline) re-published with it. The spine off, spine, `ignore` a
   damage against the baseline's 364 and cost the duelist 11 wins. Two to a step keeps the waves at 335, leaving out one
   run: a beeline guard (seed 285 085) that stalls for 1 100 s at an unfinished «interact» objective in region-1-4,
   the same stall as the baseline's own timeout (seed 142 543), and takes 2 964 wave damage while it stands there.
+  W3-5 found that stall was the harness's errand stand-in, not the game.
   Beeline gains one win, cautious none, and duelist loses six (10 points). The finale is fought at pacing tier 4 either
   way, against 3 without the spine; its boss stays scaled by the clock.
 - The scripted player's median win grows by 28–52 s, a third to a half. This harness cannot show option A's 6–10
@@ -555,6 +678,113 @@ and 0.17 on the shipped arms, worse than the cart's square. Its 8 s rules out th
 already beside the cart, so it led players away from carts they were walking with. Counting the square the player
 stands in as no walk at all changed no run in either panel.
 
+## W3-5: the errand is pressed, not waited out
+
+W2-1's four guard timeouts (seeds 79191 and 142543, `beeline` and `cautious`) and the guard stalls the spine's
+baseline found (142543, 197976 and 285085) were one stall, and it was the harness's, not the game's. In each run the
+guard's errand, the «interact» node «Осмотреть точку «Лечение и протезы»», sat on `site-recovery-riverside`, a healer.
+An encounter archer held 8–12 m off it. The scripted player never fights what it cannot reach, and the squad was
+dead, so nobody touched the archer.
+
+Until W3-5 the harness finished an errand only once nothing hostile stood within 12 m of the player on its site, so it
+waited for ever. The arrows hurt, so the sustain arm pressed `E` at the healer, 53 to 189 times a run, and
+`chooseGeneratedInteraction` said every one of those presses targeted the errand. The harness healed and stopped
+there. The engine's `handleGeneratedInteraction` heals and completes the errand on that same press. Healed but never
+done, the player neither died nor moved on. W2-1's "fight from 360 s to 600 s" was that archer.
+
+A person at that spot sees «[E] Вылечиться: Лечение и протезы» and presses it once. Nothing between `interact` and
+`completeGeneratedObjective` looks at nearby enemies: the site is reachable, the prompt appears and no event takes
+the press. `tests/errandPress.test.ts` drives those production methods in seed 142543's world:
+
+- one press with an archer 10 m away heals and completes the errand;
+- 6.5 m off the site the same press does nothing;
+- with the contract arm pinned, the press heals and leaves the errand undone.
+
+A browser check on the same seed, with a labelled save that put the guard on the healer at 30 health with enemies on
+it, finished the errand on the first `E`: «Задача выполнена: Осмотреть точку «Лечение и протезы».», and the compass
+moved on to the finale.
+
+The `errand` arm fixes the harness:
+
+- `clear`, the default, is the stand-in every pinned number was measured with. `{ ...HARNESS_SHIPPED_ARMS, errand:
+  'clear' }` gives the 191cda5 baseline back cell for cell, and with the spine off `main`'s runs at 043f4bb run for
+  run (360 of 360).
+- `press`, in the shipped arms, is the engine's `E`:
+  - the press completes the objective that `chooseGeneratedInteraction` says it targets, after the site's service;
+  - the scripted player presses while its errand's prompt is up;
+  - the completion lands where the stand-in's did, at step 7b, so the tier it earns rises on the next frame, as the
+    engine's `interact` between frames does (see below);
+  - nothing else completes an errand, so a press the engine would refuse shows as a stall instead of being waited
+    out.
+- `balance.errandSite` says when the player first stood on the errand's site, when the errand completed, and how long
+  something hostile stood within 12 m before that. A stall reads as a long `heldSeconds` and no completion.
+
+The baseline's protocol (30 Hz, 600 s, seeds `1 + 7919 n` for n = 0…39) on this branch, `clear` against `press`,
+with the spine on, as the shipped arms play it, and off:
+
+| Policy · faction | Spine on, `clear` | Spine on, `press` | Spine off, `clear` | Spine off, `press` |
+| --- | --- | --- | --- | --- |
+| beeline · elf | 11 / 29 / 0 | 11 / 29 / 0 | 11 / 29 / 0 | 14 / 26 / 0 |
+| beeline · guard | 18 / 19 / 3 | 18 / 22 / 0 | 17 / 21 / 2 | 17 / 23 / 0 |
+| beeline · villain | 20 / 20 / 0 | 20 / 20 / 0 | 20 / 20 / 0 | 20 / 20 / 0 |
+| cautious · elf | 11 / 8 / 21 | 11 / 8 / 21 | 10 / 11 / 19 | 13 / 10 / 17 |
+| cautious · guard | 17 / 11 / 12 | 17 / 11 / 12 | 13 / 17 / 10 | 14 / 14 / 12 |
+| cautious · villain | 13 / 11 / 16 | 10 / 12 / 18 | 17 / 12 / 11 | 18 / 12 / 10 |
+| duelist · elf | 34 / 6 / 0 | 34 / 6 / 0 | 36 / 4 / 0 | 35 / 5 / 0 |
+| duelist · guard | 33 / 7 / 0 | 33 / 7 / 0 | 36 / 4 / 0 | 35 / 5 / 0 |
+| duelist · villain | 26 / 14 / 0 | 26 / 14 / 0 | 37 / 3 / 0 | 37 / 3 / 0 |
+
+The cells are win / defeat / timeout. Spine on, `clear` is the 191cda5 baseline, and spine on, `press` the current
+one.
+
+- **Errand stalls.** With the spine there are seven, and none under `press`:
+  - three beeline guards (142543, 197976 and 285085) stood more than 500 s at the healer. They now end in defeat at
+    142, 112 and 156 s;
+  - the cautious guards on the same seeds now finish the errand on arrival. On 142543 and 197976 they then meet the
+    cautious finale stall, and on 285085 the guard dies at 158 s;
+  - a cautious villain on 79191 reached its errand, retreated and never came back. It now completes the errand and
+    dies at 216 s.
+
+  Without the spine there are four, on 79191 and 142543 under both policies, and none under `press`.
+- **Timeouts.** 52 → 51 with the spine and 42 → 39 without it. Every timeout left is `cautious` at the finale. Below
+  35 % health its retreat overrides the walk to the healer it chose, its health does not come back, and it shuttles
+  across a square's edge. That is the class the baseline calls cautious stalls: W3-5 neither causes nor hides it.
+- **What changed.** 100 runs changed with the spine and 103 without it. 94 and 101 of those had waited at the errand
+  or stalled there. Under `clear`, these errands waited for their site to clear, with the spine:
+
+  | Faction | Errands that waited | Mean wait | Longest |
+  | --- | ---: | ---: | ---: |
+  | elf | 34 of 115 | 10 s | 57 s |
+  | guard | 37 of 113 | 13 s | 115 s |
+  | villain | 23 of 119 | 4 s | 17 s |
+
+  Under `press` no errand waits.
+- **Wins.** With the spine, wins go 183 → 180: beeline 49 and duelist 93 either way, cautious 41 → 38. Without it,
+  197 → 203. The three cautious wins lost are the cautious villain's, on 40 seeds. More seeds settle it:
+
+  | Panel | Wins | Timeouts | Errand stalls |
+  | --- | --- | --- | --- |
+  | Spine on: beeline n = 40…139, cautious n = 30…129, 600 runs | 176 → 196 | 125 → 117 | 6 → 0 |
+  | Spine off: n = 40…239, beeline and cautious, 1 200 runs | 397 → 473 | 216 → 183 | 7 → 0 |
+
+  With the spine, beeline wins go 95 → 106 and cautious 81 → 90, and the stalls are the guard on 285085, 641440,
+  958200 and 1100742. Without it, beeline goes 219 → 256 and cautious 178 → 217. The stand-in made the walking players
+  stand in fights at the errand, and that cost them three to six points of wins.
+- **Threat waves.** With the spine, threat-wave damage falls from 2 181 to 801: the Baseline's events have the
+  breakdown.
+
+**Where the press lands.** The engine runs `interact` between frames, so the tier an errand earns is raised in the
+next frame's `updateThreat`, before anything that frame spawns. A first cut of this arm completed the errand
+mid-frame. In 14 runs (48 without the spine) the finale's boss spawned in that same frame and took the old tier. The
+completion now lands at step 7b, where the stand-in's did, and every finale is fielded at pacing tier 4 (3 without
+the spine), as on 191cda5.
+
+`tests/errandPress.test.ts` holds the stalled runs. Under `press`, each errand completes on the frame its site is
+reached, with a hostile within 12 m, and the beeline runs end long before the limit. Under `clear`, none of them
+completes in 300 s. `tests/runHarnessEscalation.test.ts` keeps `errand: 'clear'` for its fight that never ends. W1-2's
+whole-run test in `tests/runHarnessBalance.test.ts` was checked against its own rule and keeps its seeds: under the
+press the elf on 118786 and the guard on 1 are still the first seeds in the stride on which a raider starts a load.
+
 ## What it still does not model
 
 The harness header lists these with the bias each one introduces. In short: no props, buildings, trees or water as
@@ -563,8 +793,8 @@ off a cart. No flanking, separation, commanders' orders and rallies, or boar cha
 sustain policy is a script that never buys an upgrade. Caravan beats run on a straight lane with no cart collider,
 and the scripted player picks the camp's offer by policy on the first frame rather than by reading the cards. Civilians,
 ambient prowlers, campfires, achievements and the profile are not modelled. The pinned arms keep a 6.4 m/s walk, a
-22 m sense range, a contract grace from before W1-1, a simulated 3x3, an inert commander and nobody making room, none
-of them the engine's. The staging arm's camera never looks round, so what it counts as out of sight is what a player
-watching the road would not see.
+22 m sense range, a contract grace from before W1-1, a simulated 3x3, an inert commander, nobody making room and an
+errand that waits for its site to clear, none of them the engine's. The staging arm's camera never looks round, so
+what it counts as out of sight is what a player watching the road would not see.
 
 A number from this harness is a scripted player's, not a person's.
