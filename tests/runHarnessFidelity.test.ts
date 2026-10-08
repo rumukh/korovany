@@ -565,8 +565,15 @@ test('event rewards, weights and slot costs are the engine\'s', () => {
       self.resolveLocatedEventOutcome(
         { id: 'x', kind, regionId: null, handBack: () => [] },
         true,
+        true,
       )
-    } else self.resolveRandomEventOutcome(kind, true)
+    } else {
+      self.resolveRandomEventOutcome(
+        { id: 'x', kind, companionJoined: kind === 'rescue' },
+        true,
+        true,
+      )
+    }
     return self.gold
   }
   assert.deepEqual(
@@ -587,6 +594,7 @@ test('event rewards, weights and slot costs are the engine\'s', () => {
     })
     self.resolveLocatedEventOutcome(
       { id: 'x', kind: 'caravanAmbush', regionId: null, handBack: () => [], lootSite: { defend: true } },
+      true,
       true,
     )
     assert.equal(self.gold, HARNESS_CARAVAN_AMBUSH_DEFENDED_REWARD)

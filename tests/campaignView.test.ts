@@ -91,7 +91,8 @@ import {
 
 const FACTIONS: readonly Faction[] = ['elf', 'guard', 'villain']
 type LegacyGameView = Omit<GameView,
-  'contracts' | 'doctrines' | 'expedition' | 'caravanBeats' | 'caravanLoot' | 'combatMastery' | 'squadCommand' | 'finale'>
+  'contracts' | 'doctrines' | 'expedition' | 'caravanBeats' | 'caravanLoot' | 'combatMastery' |
+  'squadCommand' | 'squadResource' | 'finale'>
 
 /**
  * Roadmap 1.4 added `contracts` to the `GameView` and roadmap 1.6 added `doctrines`, and the
@@ -109,7 +110,8 @@ function withoutLaterFields(
   const {
     contracts: _contracts, doctrines: _doctrines,
     expedition: _expedition, caravanBeats: _caravanBeats, caravanLoot: _caravanLoot,
-    combatMastery: _combatMastery, squadCommand: _squadCommand, finale: _finale, ...rest
+    combatMastery: _combatMastery, squadCommand: _squadCommand,
+    squadResource: _squadResource, finale: _finale, ...rest
   } = view
   return {
     ...rest,
@@ -764,6 +766,28 @@ test('the live view carries every field the HUD reads', () => {
     shopPriceMultiplier: 1.2,
     squad: 2,
     squadCommand,
+    squadResource: {
+      cap: 4,
+      rations: 2,
+      playerHealth: 75,
+      playerMaxHealth: 100,
+      treatmentRange: 14,
+      casualties: 1,
+      pending: 0,
+      reinforcements: {
+        elfRescue: 0,
+        elfDefense: 0,
+        guardOrder: 0,
+        villainMuster: 0,
+        villainPress: 0,
+      },
+      villainMuster: {
+        siteId: blueprint.starts.villain,
+        regionLabel: 'E5',
+        remaining: 1,
+        available: true,
+      },
+    },
     elapsed: 321,
     pointerLocked: true,
     paused: false,

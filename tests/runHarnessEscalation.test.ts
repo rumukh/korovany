@@ -134,6 +134,7 @@ test('a fight that never ends cannot starve a draft: the ceiling opens it 30 s a
   // as the control arm, is still the deterministic fight that never ends that this rule needs.
   const stuckRun: RunOptions = {
     ...HARNESS_SHIPPED_ARMS,
+    squadResource: 'legacy',
     // Isolate W2-1's draft ceiling from later W3-2 combat routing.
     combatEconomy: 'legacy',
     errand: 'clear',

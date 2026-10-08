@@ -101,6 +101,7 @@ import {
 import { CombatCameraControls, CombatEvadeButton, CombatMasteryHud } from './game/ui/CombatMasteryHud'
 import { ExpeditionAtlas, ExpeditionCompass, ExpeditionMinimap } from './game/ui/ExpeditionAtlas'
 import { SquadCommandPanel, SquadCommandStrip } from './game/ui/SquadCommandPanel'
+import { SquadResourceCard } from './game/ui/SquadResourceCard'
 import { FinaleHud, FinaleResult } from './game/ui/FinaleHud'
 import { CaravanBeatHud, CaravanOpeningCard } from './game/ui/CaravanBeatHud'
 import { CaravanLootCue } from './game/ui/CaravanLootCue'
@@ -158,6 +159,7 @@ import {
   EPILOGUE_SHARE_NOTE,
   EXPEDITION_COPY,
   SQUAD_COMMAND_COPY,
+  SQUAD_CARE_COPY,
   CONTRACT_EXCLUSIVE_BADGE,
   CONTRACT_PANEL_HINT,
   CONTRACT_PANEL_TITLE,
@@ -183,6 +185,7 @@ import {
   describePurseReward,
   describeRunEpilogue,
   describeRunRewardLines,
+  describeSquadMedicineTarget,
   formatRussianCount,
   describeAchievementNotice,
   describeLootNotice,
@@ -1125,6 +1128,7 @@ function EventBanner({ event }: { event: WorldEventView | null }) {
       </header>
       <h2>{event.title}</h2>
       <p>{event.description}</p>
+      <ChoicePrice payout={event.payout} />
       {event.target && event.target > 0 ? (
         <div className="event-progress">
           <i style={{ width: `${progress}%` }} />
@@ -1963,8 +1967,9 @@ function ShopModal({
 }: {
   view: GameView
   onClose: () => void
-  onBuy: (item: ShopItem) => void
+  onBuy: (item: ShopItem, treatmentTargetId?: string) => void
 }) {
+  const [medicineTargetId, setMedicineTargetId] = useState('player')
   const tradeOnlyCare = view.doctrines.equipped.some(
     (card) => card.id === 'quartermaster',
   )
@@ -2007,6 +2012,14 @@ function ShopModal({
             const level = item.upgrade ? view.upgrades[item.upgrade] : 0
             const maxed = Boolean(item.upgrade && level >= (item.maxLevel ?? 0))
             const price = getShopItemPrice(item, view.upgrades, view.shopPriceMultiplier)
+            const medicineTarget = medicineTargetId === 'player'
+              ? null
+              : view.squadCommand.roster.find((member) => member.id === medicineTargetId)
+            const medicineTargetUnavailable = item.id === 'medicine' &&
+              medicineTargetId !== 'player' &&
+              (!medicineTarget ||
+                medicineTarget.health >= medicineTarget.maxHealth ||
+                medicineTarget.distance > view.squadResource.treatmentRange)
             const nextState =
               !item.upgrade
                 ? null
@@ -2035,13 +2048,40 @@ function ShopModal({
                 <div>
                   <h3>{item.name}</h3>
                   <p>{item.description}</p>
+                  {item.id === 'medicine' ? (
+                    <label className="shop-treatment-target">
+                      <span>{SQUAD_CARE_COPY.medicineTarget}</span>
+                      <select value={medicineTargetId}
+                        onChange={(event) => setMedicineTargetId(event.target.value)}>
+                        <option value="player">{SQUAD_CARE_COPY.player}</option>
+                        {view.squadCommand.roster.map((member) => (
+                          <option key={member.id} value={member.id}
+                            disabled={
+                              member.health >= member.maxHealth ||
+                              member.distance > view.squadResource.treatmentRange
+                            }>
+                            {describeSquadMedicineTarget({
+                              role: member.role,
+                              health: member.health,
+                              maxHealth: member.maxHealth,
+                              distance: member.distance,
+                              range: view.squadResource.treatmentRange,
+                            })}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
                   {nextState ? <span className="shop-level">{nextState}</span> : null}
                 </div>
                 <button
                   className="buy-button"
                   type="button"
-                  disabled={maxed || view.gold < price}
-                  onClick={() => onBuy(item)}
+                  disabled={maxed || view.gold < price || medicineTargetUnavailable}
+                  onClick={() => onBuy(
+                    item,
+                    item.id === 'medicine' ? medicineTargetId : undefined,
+                  )}
                 >
                   {maxed ? null : <Coins aria-hidden="true" />}
                   {maxed ? 'Макс.' : price}
@@ -2602,6 +2642,7 @@ export function GameScreen({
   onOpenSquadCommand,
   onCloseSquadCommand,
   onIssueSquadCommand,
+  onTreatCompanion = () => false,
   onOpenJournal,
   onCloseJournal,
   onBeatChoice,
@@ -2654,7 +2695,7 @@ export function GameScreen({
   onSave: () => void
   onAchievements: () => void
   onMenu: () => void
-  onBuy: (item: ShopItem) => void
+  onBuy: (item: ShopItem, treatmentTargetId?: string) => void
   onCloseShop: () => void
   onOpenAtlas: () => void
   onCloseAtlas: () => void
@@ -2671,6 +2712,7 @@ export function GameScreen({
   onOpenSquadCommand: () => void
   onCloseSquadCommand: () => void
   onIssueSquadCommand: (mode: SquadCommandMode, targetId?: string) => boolean
+  onTreatCompanion?: (companionId: string) => boolean
   onOpenJournal: () => void
   onCloseJournal: () => void
   onBeatChoice: (beatId: string, outcome: CaravanBeatOutcome) => void
@@ -3197,14 +3239,18 @@ export function GameScreen({
           onPreference={onExpeditionPreference} />
       ) : null}
       {activeOverlay === 'orders' ? (
-        <SquadCommandPanel view={view.squadCommand} onClose={onCloseSquadCommand}
-          onConfirm={onIssueSquadCommand} />
+        <SquadCommandPanel view={view.squadCommand} resource={view.squadResource}
+          onClose={onCloseSquadCommand} onConfirm={onIssueSquadCommand}
+          onTreat={onTreatCompanion} />
       ) : null}
       {activeOverlay === 'journal' ? (
         <CampaignJournal onClose={onCloseJournal}>
           <div className="journal-missions">
             <CaravanOpeningCard opening={view.caravanBeats.opening ?? null} faction={view.faction}
               onTake={onTakeOffer} inJournal />
+            <SquadResourceCard faction={view.faction} squadSize={view.squad}
+              resource={view.squadResource}
+              onOpen={() => { onCloseJournal(); onOpenSquadCommand() }} />
             <ContractBoard view={view} onPin={onPinObjective} />
             <DoctrineBoard view={view} onTake={onTakeDoctrine} />
             <ObjectiveList view={view} />
@@ -3874,9 +3920,15 @@ function App() {
     checkpointGeneratedRun(engineRef.current, true)
   }
 
-  const buyItem = (item: ShopItem) => {
-    const result = engineRef.current?.purchase(item)
-    if (result) addNotice(result.message, result.ok ? 'success' : 'warning')
+  const buyItem = (item: ShopItem, treatmentTargetId?: string) => {
+    const result = engineRef.current?.purchase(item, treatmentTargetId)
+    if (result) {
+      addNotice(
+        result.message,
+        result.ok ? 'success' : 'warning',
+        result.ok ? 'outcome' : undefined,
+      )
+    }
     if (result?.ok && pendingGeneratedLaunch) checkpointGeneratedRun()
   }
 
@@ -4173,6 +4225,12 @@ function App() {
           const accepted = engineRef.current?.commandSquad(mode, targetId) ?? false
           if (accepted) closeOverlay('orders')
           return accepted
+        }}
+        onTreatCompanion={(companionId) => {
+          if (topGameOverlay(overlaysRef.current) !== 'orders') return false
+          const treated = engineRef.current?.treatCompanionWithRation(companionId) ?? false
+          if (treated && pendingGeneratedLaunch) checkpointGeneratedRun()
+          return treated
         }}
         onPinRumour={(rumourId) => engineRef.current?.pinRumour(rumourId)}
         onPinObjective={(nodeId) => engineRef.current?.pinObjective(nodeId)}

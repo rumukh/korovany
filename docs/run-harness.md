@@ -6,7 +6,7 @@ window and **supersedes the baseline published with #106**, which was measured i
 contract abandonments, and every figure derived from them, came from the harness rather than the game. On 2026-10-08
 W2-2's caravan spine joined `HARNESS_SHIPPED_ARMS`, and the [baseline](#baseline) was re-published with it. W3-5's
 errand press joined the same day, and the baseline was re-published again; so it was once more when W3-4's
-remnants and streaming hold joined. W3-2's combat-economy arm follows them.
+remnants and streaming hold joined.
 
 `tests/runHarness.ts` drives whole campaigns headlessly through the real generator, terrain, collision, navigation,
 chronicle, campaign director, combat resolver and actor AI. The gameplay review of 2026-10-06 used it for 330 runs and
@@ -35,18 +35,20 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `caravanBeats` (W2-2) | `off`: before the spine | `shipped`: the caravan spine | `beatPolicy`: `walk`, `ignore` |
 | `rumourSteering` (W2-3) | `cart`: an escort's cart's square | `meeting`: where its cart is met | `cart` |
 | `errand` (W3-5) | `clear`: waits for no hostile within 12 m | `press`: the engine's `E` at the errand | `clear` |
-| `combatEconomy` (W3-2) | `legacy`: tracking, no delay | `shipped`: matched tells, 0.50 s delay | `legacy` |
 | `encounterMemory` (W3-4) | `fresh`: a pack comes back whole | `remnants`: its dead and wounds stay | `fresh` |
 | `streaming` (W3-4) | `instant`: on the player's square | `held`: 16 m before a turn back recentres | `instant` |
+| `squadResource` (W3-1) | `legacy`: player-only care, old recruits, full pay | `managed` | component arms |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
   through `selectSquadIntent` and `getSquadFollowSpeed`, fight through the squad's own `selectThreat` pass and the
-  `CombatResolver` tables, and stay dead. A rescue recruits its captive, as `rescueCaptive` does.
+  `CombatResolver` tables, and stay dead. Under `squadResource: 'managed'`, only an elf rescue recruits its captive;
+  wooden-house defences, kept guard orders, villain press-gangs and the old-fort muster are the other embodied routes.
 - **Body and purse.** Hits roll `shouldInjurePlayer` and `injurePlayer`'s limb table; a lost limb bleeds and a lost leg
   slows. The starting boon ration is in the bag. The scripted player eats below half health, detours up to 90 m to a
   healer (+40, full stamina, wounds and bleeding cleared) or a trader (medicine +55, prostheses) when below 65 % or
   bleeding, and claims treasure. Gold comes from kills, loot, treasure, events, contracts and caravans at the
-  engine's rates; prices follow the square's supply.
+  engine's rates; prices follow the square's supply. W3-1's scripted policy treats a companion only while doing so
+  leaves one ration for the player. That is a harness policy, not a game rule.
 - **Events as fights.** The five player-anchored builders, the five located builders, the director's weights and
   cooldowns, the threat wave and the road caravan are copied as data in `tests/runHarnessEvents.ts`.
   `tests/runHarnessFidelity.test.ts` loads the shipped `GameEngine` class and calls its own builders with the same
@@ -82,10 +84,6 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
   `cameraOrbitDistance` behind the heading at `CAMERA_DEFAULT_PITCH`, `CAMERA_BASE_FOV` on 16:9. The fidelity test
   has the engine's own `updateCamera` pose its camera and holds the harness's cone to what the engine's
   `stagingViewer` reads off it.
-- **Combat economy and fast tells (W3-2).** The shipped arm delays stamina regeneration for 0.50 s after a melee
-  beat and resolves ordinary melee against the shape its tell draws. Both matched arms keep
-  `meleeDefence: 'heavy'`. A newly readable fast tell is considered only after 0.25 s and only when the remaining
-  wind-up can clear contact at sprint pace; 0.20 s and 0.30 s are measured sensitivity arms.
 
 ### Walk speed: the harness's 6.4 m/s is not the engine's 8.2
 
@@ -146,14 +144,15 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   into the purse (`rewardGold`, `rewardRations`). The pay only lands while `sustain` models the purse. Kept and broken
   rumours are also counted by kind (`keptByKind`, `brokenByKind`), so an escort's keep rate reads on its own.
 - **Companions:** started, recruited, lost and to whom, standing when the finale opened and at the end, their kills.
+- **Squad resources (W3-1):** companion healing and treatment actions by source, recovery-site uses, replacements by
+  faction and source, attended guard deliveries and confiscations, reduced settlements, personal gold withheld, and
+  contributed fights that settled beyond 40 m without losing full pay.
 - **Doctrine drafts reached** and the **maximum threat tier**, whatever the doctrine arm.
 - **W2-1:** every tier rise with its cause (`time` or `progress`), when each draft actually opened and how many of
   them the 30 s ceiling opened outside a calm moment (`draftsForced`), the finale's pacing tier and the clock's tier
   its boss was scaled by, and threat waves by trigger (clock or closed objective).
 - **Damage by system** (encounter, finale, random, contract or located event, threat wave, caravan, bleeding) and the
   **system behind each death**.
-- **W3-2 combat:** damage dealt, player melee whiffs, telegraphed heavies avoided, requested finishers that fell back
-  to beat one for lack of stamina, and that starvation count as a share of finisher attempts.
 - **Encounters:** how many the generator fielded, the bodies it spawned, how many stood on the road at once on
   average, and the seconds in which the actor budget refused one. The report's `regionWindow` names the window. Also
   the soldiers commanders called (W1-6), which count on the road once called, the packs that stepped back to make
@@ -180,6 +179,81 @@ KOROVANY_BALANCE_SEEDS=40 node --experimental-strip-types --test tests/runHarnes
 The committed file runs in about 20 s: its sweep takes three seeds per cell and asserts bands that held at forty.
 
 ## Baseline
+
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-1's branch over
+`main` at 6bb640e, in the engine's streaming window. The matched control changes only
+`squadResource: 'managed'` to `squadResource: 'legacy'`. Both arms keep W3-2's shipped combat economy and heavy
+melee defence, W3-4's remnants and streaming hold, and every other shipped arm.
+
+| Policy · faction | Managed win / defeat / timeout | Legacy | Won in p10-p50-p90 | Damage | Kills |
+| --- | --- | --- | --- | ---: | ---: |
+| beeline · elf | 16 / 24 / 0 | 12 / 28 / 0 | 88-125-158 s | 184 | 7.7 |
+| beeline · guard | 16 / 24 / 0 | 16 / 24 / 0 | 101-132-173 s | 164 | 10.2 |
+| beeline · villain | 19 / 21 / 0 | 17 / 23 / 0 | 87-116-146 s | 151 | 8.5 |
+| cautious · elf | 16 / 11 / 13 | 11 / 8 / 21 | 88-125-266 s | 161 | 7.2 |
+| cautious · guard | 13 / 14 / 13 | 12 / 17 / 11 | 101-131-164 s | 149 | 10.0 |
+| cautious · villain | 11 / 16 / 13 | 9 / 17 / 14 | 89-116-160 s | 143 | 8.1 |
+| duelist · elf | 34 / 6 / 0 | 33 / 7 / 0 | 103-141-176 s | 187 | 18.2 |
+| duelist · guard | 32 / 8 / 0 | 31 / 9 / 0 | 109-143-187 s | 139 | 20.1 |
+| duelist · villain | 27 / 13 / 0 | 27 / 13 / 0 | 101-128-166 s | 148 | 16.7 |
+
+| Policy · faction | Squad at finale | Drafts | Tier | Contracts s/k/a | Road | Late rumours | Carts |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| beeline · elf | 2.9 (39/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.0 | 6% | 2.05 |
+| beeline · guard | 3.6 (39/40) | 3 / 3 | 4 / 4 | 40 / 37 / 0 | 11.5 | 2% | 2.10 |
+| beeline · villain | 3.3 (39/39) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.7 | 4% | 2.08 |
+| cautious · elf | 3.0 (37/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.2 | 14% | 2.00 |
+| cautious · guard | 3.5 (38/40) | 3 / 3 | 4 / 4 | 40 / 37 / 0 | 11.0 | 1% | 2.10 |
+| cautious · villain | 3.3 (37/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.8 | 5% | 2.03 |
+| duelist · elf | 3.3 (37/37) | 3 / 3 | 4 / 4 | 40 / 39 / 0 | 9.9 | 13% | 1.98 |
+| duelist · guard | 3.7 (40/40) | 3 / 3 | 4 / 4 | 40 / 33 / 0 | 10.5 | 6% | 2.10 |
+| duelist · villain | 3.3 (37/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.9 | 8% | 2.10 |
+
+- **Wins.** Managed wins 184/360 against 168/360 under `legacy`: beeline 51 against 45, cautious 40 against 32,
+  duelist 93 against 91. Every one of the 184 winning runs reached its finale with at least one companion. Policy
+  movements are +6, +8 and +2 of 120, inside the scaled +12/120 control band.
+- **Care.** Elves, guards and villains use 1.28, 1.08 and 0.51 companion treatments a run and restore 38.2, 26.1
+  and 11.3 companion HP. No site is used more than twice. The script spends a ration on a companion only above one
+  in the bag; without that reserve the duelist falls from 96 to 89 wins.
+- **Replacements.** Elves receive 46 from rescues, guards 122 from kept caravan orders and villains 51 from
+  press-gang, or 0.38, 1.02 and 0.43 a run. No muster was collected by this straight-line policy.
+- **Credit.** Eight fights settled without a player contribution and withheld 358 personal gold. Twelve contributed
+  guard fights settled beyond 40 m and kept full pay, the negative control for the removed distance penalty.
+- **Economy.** Mean gold is 433.8 a run against 440.6 under `legacy`, 1.5% lower and inside the 5% band.
+
+The caravans by side, measured on the managed arm. Timings are beeline / cautious / duelist:
+
+| Side | Verbs over 120 runs | Camp p50 | Gate p50 | W3-1 replacements; guards thinned |
+| --- | --- | --- | --- | --- |
+| Elves | take 106, give 133 | 25 / 25 / 25 s | 88 / 89 / 103 s | 46; - |
+| Palace guard | confiscate 103, deliver 65, release 79 | 18 / 18 / 18 s | 87 / 87 / 101 s | 122; - |
+| Villain | plunder 93, press 51, burn 103 | 17 / 17 / 19 s | 83 / 85 / 90 s | 51; 68 |
+
+### W3-1 attribution and policy control
+
+The care effect was isolated before W3-2 joined the shipped arms. Wins over the moved cells:
+
+| Cell | Legacy | Care | Recovery limit | Replenishment | Credit |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| elf beeline | 9 | 20 | 9 | 9 | 9 |
+| elf cautious | 9 | 17 | 9 | 9 | 9 |
+| guard beeline | 18 | 16 | 18 | 13 | 18 |
+| guard cautious | 13 | 6 | 13 | 11 | 13 |
+| villain duelist | 25 | 26 | 25 | 25 | 25 |
+| duelist total | 96 | 86 | 96 | 96 | 96 |
+
+Care is the moving part. Unreserved, it removes elf road/finale deaths but spends the guard's last ration and moves
+guard deaths into bleeding and the finale. Reserving one ration changes elf beeline 19 to 13 wins, elf cautious 16
+to 13, guard beeline 13 to 16, guard cautious 6 to 13, villain duelist 26 to 27, and the duelist total 89 to 96.
+This is a scripted-player policy, not a game rule. The UI instead warns when the player chooses to spend the last one.
+
+The guard split found no cost from elf-only rescues: 18/40 wins, as legacy. Kept-order soldiers alone were 13/40
+on the first seed set but 22/40 against legacy's 11/40 on n=40..79. Pooled, guard soldiers win 35/80 against 29/80;
+the first set's five extra finale deaths reverse to seven fewer on the second. Distance is unchanged, so the harness
+is not detouring for the outcome. Villain beeline similarly wins 43/80 against 37/80 across both sets. These paired
+sets show why a +/-4/40 cell band is narrower than this harness's per-cell noise.
+
+### Superseded: W3-2 baseline before the joint W3-1 panel
 
 `HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-2's branch based on
 `6896062`, in the engine's streaming window. The matched control changes only `combatEconomy: 'legacy'`; both arms
@@ -256,11 +330,11 @@ duelist:
 The camp's offer is taken on the road to the finale in 165 runs and on the other road in 189, the light one in 186
 and the rich one in 168; 6 runs meet no offer. The scripted verb policy is unchanged from the prior baseline.
 
-### Superseded: the W3-4 baseline before W3-2
+### Superseded: the baseline on 08d0448 with W3-4
 
-`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-4's branch, `main` at
-04c1c7b with W3-4's two commits, in the engine's streaming window. **This baseline supersedes the ones measured on
-02059ed with the errand press, on 191cda5 and on 29adca3**, kept below for the record. The shipped arms have taken in
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0...39: 360 runs on `main` at
+08d0448, in the engine's streaming window. This baseline superseded the ones measured on
+02059ed with the errand press, on 191cda5 and on 29adca3, kept below for the record. The shipped arms have taken in
 W2-1's progress tier, W2-2's verbs and defended carts, W2-3's reachable rumours and meeting compass, W2-2's caravan
 spine (`caravanBeats: 'shipped'`), W3-5's errand press (`errand: 'press'`) and W3-4's remnants and streaming hold
 (`encounterMemory: 'remnants'`, `streaming: 'held'`): what a new run plays. "Spine off" is the same 360 runs with
@@ -981,10 +1055,11 @@ mid-frame. In 14 runs (48 without the spine) the finale's boss spawned in that s
 completion now lands at step 7b, where the stand-in's did, and every finale is fielded at pacing tier 4 (3 without
 the spine), as on 191cda5.
 
-`tests/errandPress.test.ts` holds the stalled runs. It fixes W3-2's combat arm at `legacy` in both sides so the
-negative control isolates the errand rule: under `press`, each errand completes on arrival with a hostile within
-12 m; under `clear`, none completes in 360 s. `tests/runHarnessEscalation.test.ts` keeps both `errand: 'clear'` and
-legacy combat for its fight that never ends. W1-2's whole-run test is re-seeded when later arms change its road.
+`tests/errandPress.test.ts` holds the stalled runs. Under `press`, each errand completes on the frame its site is
+reached, with a hostile within 12 m, and the beeline runs end long before the limit. Under `clear`, none of them
+completes in 300 s. `tests/runHarnessEscalation.test.ts` keeps `errand: 'clear'` for its fight that never ends. W1-2's
+whole-run test in `tests/runHarnessBalance.test.ts` was checked against its own rule and keeps its seeds: under the
+press the elf on 118786 and the guard on 1 are still the first seeds in the stride on which a raider starts a load.
 
 ## W3-4: what is left of a pack («Недобитые»), and a world that does not jump back
 

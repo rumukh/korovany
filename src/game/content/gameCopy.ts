@@ -911,7 +911,11 @@ function joinRussianList(parts: readonly string[]): string {
 /** «Плата: 220 золотых, +6 к урону и легендарный трофей.» Null when it pays nothing named. */
 export function describeChoicePayout(payout: ChoicePayoutView): string | null {
   const parts: string[] = []
-  if (payout.gold > 0) parts.push(formatRussianCount(payout.gold, GOLD_FORMS))
+  if (payout.gold > 0) {
+    parts.push(payout.withoutPlayerGold === undefined
+      ? formatRussianCount(payout.gold, GOLD_FORMS)
+      : `${String(payout.gold)} · без тебя ${String(payout.withoutPlayerGold)}`)
+  }
   if (payout.supplies > 0) parts.push(formatRussianCount(payout.supplies, RATION_FORMS))
   if (payout.heal > 0) parts.push(`+${String(payout.heal)} здоровья`)
   if (payout.damage > 0) parts.push(`+${String(payout.damage)} к урону`)
@@ -920,6 +924,12 @@ export function describeChoicePayout(payout: ChoicePayoutView): string | null {
   else if (payout.loot === 'uncommon') parts.push('трофей')
   if (parts.length === 0) return null
   return `${CHOICE_PRICE_COPY.payout}: ${joinRussianList(parts)}.`
+}
+
+export function describeChoiceGoldCondition(payout: ChoicePayoutView): string | null {
+  return payout.gold > 0 && payout.withoutPlayerGold !== undefined
+    ? `${CHOICE_PRICE_COPY.payout}: ${String(payout.gold)} · без тебя ${String(payout.withoutPlayerGold)}.`
+    : null
 }
 
 /** A contract's own clock, which starts on arrival rather than now. */
@@ -1749,6 +1759,63 @@ export const SQUAD_COMMAND_COPY = {
   metres: 'м',
 } as const
 
+export const SQUAD_RESOURCE_SAVE_WARNING =
+  'Запись ухода за отрядом повреждена. Лечение и сбор закрыты, чтобы их нельзя было получить заново.'
+
+export const SQUAD_REPLENISHMENT_COPY: Record<Faction, string> = {
+  elf: 'Партизаны приходят после спасения пленника или защиты домиков деревяных.',
+  guard: 'Командир присылает солдата за доведённый или конфискованный корован.',
+  villain: 'Корован можно забрить сразу, а одного павшего заменить сбором в старом форте.',
+}
+
+export const SQUAD_CARE_COPY = {
+  healthy: 'Здоров',
+  journalTitle: 'Отряд как запас',
+  open: 'Приказы и лечение',
+  medicineTarget: 'Кого лечить',
+  player: 'Пользователь',
+} as const
+
+export function describeSquadCareStock(rations: number, range: number): string {
+  return `Паёк: ${String(rations)} · рядом до ${String(range)} м`
+}
+
+export function describeSquadTreatmentAction(
+  nearby: boolean,
+  rations: number,
+  healed: number,
+): string {
+  if (!nearby) return 'Слишком далеко'
+  if (rations <= 0) return 'Нет пайка'
+  if (rations === 1) {
+    return `Паёк +${String(healed)} · последний — себе не останется`
+  }
+  return `Паёк +${String(healed)} · останется ${String(Math.max(0, rations - 1))}`
+}
+
+export function describePlayerCareState(health: number, maxHealth: number): string {
+  return `Пользователь ${String(Math.ceil(health))}/${String(Math.ceil(maxHealth))}`
+}
+
+export function describeSquadCareJournal(rations: number, range: number): string {
+  return `Паёк лечит выбранного спутника в пределах ${String(range)} м. Сейчас пайков: ${String(rations)}.`
+}
+
+export function describeVillainMusterJournal(regionLabel: string, remaining: number): string {
+  return `Старый форт, квадрат ${regionLabel}: сбор ${String(remaining)}/1.`
+}
+
+export function describeSquadMedicineTarget(input: {
+  role: ActorRole
+  health: number
+  maxHealth: number
+  distance: number
+  range: number
+}): string {
+  const distance = input.distance > input.range ? ' · далеко' : ''
+  return `${describeSquadRole(input.role)} · ${String(Math.ceil(input.health))}/${String(input.maxHealth)}${distance}`
+}
+
 export function describeSquadOrder(faction: Faction, order: boolean | SquadCommandMode): string {
   const mode = typeof order === 'boolean' ? order ? 'follow' : 'hold' : order
   return `${SQUAD_NAMES[faction]}: приказ «${SQUAD_ORDER_LABELS[mode]}».`
@@ -1759,6 +1826,116 @@ export const REINFORCEMENTS_ORDERED_NOTICE =
 
 export function describeRationEaten(healed: number): string {
   return `Дорожный паёк вернул ${healed} здоровья. Не спрашивай, из чего он.`
+}
+
+export function describeCompanionRation(
+  role: ActorRole,
+  healed: number,
+): string {
+  return `${describeSquadRole(role)} съел паёк: +${String(healed)} здоровья. Отряд пока не испарился.`
+}
+
+export function describeCompanionMedicine(
+  role: ActorRole,
+  healed: number,
+): string {
+  return `Полевой набор ушёл в дело: ${describeSquadRole(role)} получил +${String(healed)} здоровья.`
+}
+
+export function describeRecoveryPrompt(input: {
+  remaining: number
+  total: number
+  completesErrand: boolean
+  treatsPlayer: boolean
+  companionCount: number
+}): string {
+  const count = `лечений ${String(input.remaining)}/${String(input.total)}`
+  if (input.remaining <= 0) {
+    return input.completesErrand
+      ? `[E] Осмотреть · лекарь занят · ${count}`
+      : `Лекарь занят — зайди в другой поход · ${count}`
+  }
+  if (!input.treatsPlayer && input.companionCount === 0) {
+    return input.completesErrand
+      ? `[E] Осмотреть · лечить некого · ${count}`
+      : `Лечить некого · ${count}`
+  }
+  const effects: string[] = []
+  if (input.completesErrand) effects.push('осмотреть')
+  if (input.treatsPlayer) effects.push('вылечить пользователя')
+  if (input.companionCount > 0) effects.push('подлечить отряд рядом')
+  const action = effects.join(' и ')
+  return `[E] ${action.charAt(0).toUpperCase()}${action.slice(1)} · ${count}`
+}
+
+export function describeRecoveryTreated(
+  playerTreated: boolean,
+  companions: number,
+  remaining: number,
+): string {
+  const player = playerTreated ? 'Пользователя вылечили.' : ''
+  const squad = companions > 0
+    ? `${player ? ' ' : ''}Отряд рядом подлатали: ${String(companions)}.`
+    : ''
+  return `${player}${squad} У лекаря осталось ${String(remaining)}/2.`
+}
+
+export const RECOVERY_EXHAUSTED_NOTICE =
+  'Лекарь занят — лечений 0/2. Осмотреть место всё равно можно.'
+
+export const RECOVERY_NOBODY_HURT_NOTICE =
+  'Лечить некого. Лекарь приберёг оба глаза и прочие инструменты.'
+
+export const COMPANION_TREATMENT_TOO_FAR_NOTICE =
+  'Спутник слишком далеко. Собери отряд ближе, паёк по воздуху не летает.'
+
+export const COMPANION_TREATMENT_FULL_NOTICE =
+  'У этого спутника здоровье полное. Паёк пока останется в сумке.'
+
+export const COMPANION_TREATMENT_NO_RATIONS_NOTICE =
+  'Пайков нет. Можно достать лечение у торговца или найти лекаря.'
+
+export const COMPANION_TREATMENT_UNAVAILABLE_NOTICE =
+  'Этого спутника уже нет в живом отряде. Лечить запись в списке бесполезно.'
+
+export function describeSquadReinforcementJoined(
+  source: 'elfDefense' | 'guardOrder' | 'villainMuster',
+): string {
+  if (source === 'elfDefense') {
+    return 'Домики деревяные отбиты. Один партизан идёт с отрядом.'
+  }
+  if (source === 'guardOrder') {
+    return 'Приказ по коровану исполнен. Командир прислал одного солдата.'
+  }
+  return 'Сбор в старом форте поднят. Один прихвостень вступил в войско.'
+}
+
+export function describeSquadReinforcementWaiting(
+  source: 'elfDefense' | 'guardOrder' | 'villainMuster',
+): string {
+  if (source === 'elfDefense') return 'Партизан заработан и ждёт у домиков, пока на поле станет свободнее.'
+  if (source === 'guardOrder') return 'Солдат прислан и ждёт у корована, пока на поле станет свободнее.'
+  return 'Прихвостень созван и ждёт в старом форте, пока на поле станет свободнее.'
+}
+
+export function describeSquadReinforcementFull(
+  source: 'elfDefense' | 'guardOrder',
+): string {
+  return source === 'elfDefense'
+    ? 'Дом отбит, но отряд полон 4/4. Партизан остался защищать домики.'
+    : 'Приказ исполнен, но отряд полон 4/4. Солдат остался при короване.'
+}
+
+export function describeVillainMusterPrompt(input: {
+  casualties: number
+  squadSize: number
+  cap: number
+  remaining: number
+}): string | null {
+  if (input.casualties <= 0) return null
+  if (input.remaining <= 0) return `Сбор в старом форте уже потрачен · 0/1`
+  if (input.squadSize >= input.cap) return `Войско полно ${String(input.squadSize)}/${String(input.cap)} · сбор 1/1`
+  return '[E] Потратить сбор 1/1: заменить одного павшего прихвостнем'
 }
 
 export function describeRazedSite(kind: SiteKind): string {
@@ -1833,6 +2010,10 @@ export function describeEventStarted(title: string, description: string): string
   return `Событие: ${title}. ${description}`
 }
 
+export function describeReducedPersonalGold(fullGold: number, paidGold: number): string {
+  return `Отряд справился без пользователя: в кошель ${String(paidGold)} из ${String(fullGold)} золотых.`
+}
+
 /**
  * The four fixed success lines; the champion's depends on how much damage it granted.
  *
@@ -1842,6 +2023,7 @@ export function describeEventStarted(title: string, description: string): string
 export function describeRandomEventSuccess(
   kind: Exclude<RandomWorldEventKind, 'champion'>,
   reward: { gold: number; heal: number },
+  companionJoined = true,
 ): string {
   switch (kind) {
     case 'richCaravan':
@@ -1849,7 +2031,9 @@ export function describeRandomEventSuccess(
     case 'defendHome':
       return `Дом отбили! +${reward.gold} золота и +${reward.heal} здоровья.`
     case 'rescue':
-      return 'Пленник спасён и теперь идёт в твоём отряде.'
+      return companionJoined
+        ? 'Пленник спасён и теперь идёт в твоём отряде.'
+        : 'Пленник спасён и пошёл домой. В чужое войско его не записывают.'
     case 'bounty':
       return `Заказ выполнен, награда в кармане. +${reward.gold} золота.`
   }
@@ -2330,6 +2514,7 @@ export type HintId =
   | 'exclusive'
   | 'doctrines'
   | 'squad'
+  | 'squadCare'
   | 'threat'
   | 'threatEarned'
   | 'ability'
@@ -2433,6 +2618,10 @@ const HINT_COPY: Record<HintId, HintCopy> = {
   },
   squad: {
     text: 'Q — следом или держать место, T — все приказы: выбрать цель или собрать отряд. Полоса показывает живых спутников; «далеко» не значит «погиб».',
+    tone: 'success',
+  },
+  squadCare: {
+    text: 'Спутников тоже лечат: в T выбери раненого рядом и потрать паёк, у торговца направь полевой набор, а у лекаря всего два лечения на поход.',
     tone: 'success',
   },
   threat: {

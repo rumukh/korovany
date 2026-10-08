@@ -50,6 +50,10 @@ import {
   serializeCombatMastery,
 } from '../src/game/world/CombatMastery.ts'
 import { createSquadCommandState, serializeSquadCommandState } from '../src/game/world/SquadCommand.ts'
+import {
+  createSquadResourceState,
+  serializeSquadResourceState,
+} from '../src/game/world/SquadResource.ts'
 import { createGeneratedRngStreams } from '../src/game/random/GeneratedRngStreams.ts'
 import { deriveSeed } from '../src/game/random/seed.ts'
 
@@ -74,6 +78,10 @@ test('command blocks and formation slots round-trip without overwriting sibling 
   run.directorState.squadCommand = serializeSquadCommandState(createSquadCommandState(
     { x: 103, z: 196, heading: 1.25 }, false,
   ))
+  const squadResource = createSquadResourceState(['site-recovery-riverside'], 1)
+  squadResource.recoveryTreatments['site-recovery-riverside'] = 0
+  squadResource.villainMustersUsed = 1
+  run.directorState.squadResource = serializeSquadResourceState(squadResource)
   run.directorState.combatMastery = { version: 1, cooldown: 0.6 }
   run.directorState.expedition = { version: 1, destination: 'site-one' }
   run.directorState.finale = { version: 1, health: 27 }

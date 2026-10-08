@@ -160,6 +160,7 @@ interface LiveEvent {
   title: string
   timer: number | null
   contractNodeId?: string | null
+  playerContributed?: boolean
   ownedActorIds: string[]
   markerPos: THREE.Vector3
   onKill?(actor: HeadlessActor, context: unknown): void
@@ -947,6 +948,7 @@ test('a random event already won on the arrival frame still pays, then the contr
   const won = fixture('villain')
   const bounty = won.rollRandomEvent('bounty')
   bounty.state = 'succeeded'
+  bounty.playerContributed = true
   won.standAt(siteOf(won.blueprint, won.signature))
   won.frames(FRAME)
   assert.equal(won.status(won.signature), 'offered', 'the contract raced the payout')

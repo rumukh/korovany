@@ -1,6 +1,7 @@
 import { Clock3, Coins, Footprints } from 'lucide-react'
 import {
   describeChoiceDanger,
+  describeChoiceGoldCondition,
   describeChoicePayout,
   describeChoiceTravel,
   describeContractTimeLimit,
@@ -19,12 +20,24 @@ export function ChoicePrice({ payout, timeLimit, travel }: {
   timeLimit?: number | null
   travel?: ChoiceTravelView | null
 }) {
-  const paid = payout ? describeChoicePayout(payout) : null
+  const condition = payout ? describeChoiceGoldCondition(payout) : null
+  const paid = payout
+    ? describeChoicePayout(condition
+        ? { ...payout, gold: 0, withoutPlayerGold: undefined }
+        : payout)
+    : null
   const clock = typeof timeLimit === 'number' ? describeContractTimeLimit(timeLimit) : null
-  if (!paid && !clock && !travel) return null
+  if (!condition && !paid && !clock && !travel) return null
   return (
     <div className="choice-price">
-      {paid ? <p className="choice-price-payout"><Coins aria-hidden="true" />{paid}</p> : null}
+      {condition ? (
+        <p className="choice-price-payout"><Coins aria-hidden="true" />{condition}</p>
+      ) : null}
+      {paid ? (
+        <p className={condition ? 'choice-price-extra' : 'choice-price-payout'}>
+          {!condition ? <Coins aria-hidden="true" /> : null}{paid}
+        </p>
+      ) : null}
       {clock || travel ? (
         <p className="choice-price-route">
           {clock ? <span><Clock3 aria-hidden="true" />{clock}</span> : null}

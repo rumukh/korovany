@@ -1048,6 +1048,18 @@ test('the guard walks its own cart in or sends it on, and is paid by the command
   assert.equal(Reflect.get(delivered.engine, 'generatedSupplyCount'), 1)
   assert.equal(delivered.tally.robbed, 0, 'an escort is not a robbery')
   assert.ok(market.supply > supplyBefore)
+  const reinforcement = delivered.actors.find(
+    (entry) => entry.id === `${delivered.plan.id}:guard-reinforcement`,
+  )
+  assert.ok(reinforcement, 'an attended kept order sends one guard reinforcement')
+  assert.equal(reinforcement.role, 'soldier')
+  assert.equal(reinforcement.budgetCategory, 'squad')
+  assert.equal(
+    (Reflect.get(delivered.engine, 'squadResource') as {
+      reinforcements: { guardOrder: number }
+    }).reinforcements.guardOrder,
+    1,
+  )
   assert.deepEqual(chronicleLog(delivered.engine).filter((event) =>
     event.id.startsWith(CARAVAN_BEAT_CHRONICLE_PREFIX)).map((event) =>
     [event.kind, event.regionId, event.siteId, event.faction]),
@@ -1070,6 +1082,32 @@ test('the guard walks its own cart in or sends it on, and is paid by the command
   assert.equal(released.runtime.cart.visible, false)
   invoke(released.engine, 'updateCaravanBeats', 0)
   assert.equal(released.actors.some((entry) => entry.generatedSpawnId === protector.id), false)
+  assert.equal(
+    released.actors.some((entry) => entry.id === `${released.plan.id}:guard-reinforcement`),
+    false,
+    'release is not a kept order and recruits nobody',
+  )
+
+  const full = harness('guard')
+  for (let index = 0; index < CARAVAN_BEAT_SQUAD_CAP; index += 1) {
+    full.actors.push(squadMember('guard', index))
+  }
+  full.secure()
+  assert.equal(full.choose('deliver'), true)
+  for (let step = 0; step < 100 && full.state.phase === 'delivering'; step += 1) {
+    full.player.position.copy(full.cart.position)
+    invoke(full.engine, 'updateCaravanBeatDelivery', full.entry(), 0.25)
+  }
+  assert.equal(full.state.phase, 'resolved')
+  assert.equal(
+    full.actors.filter((entry) => entry.budgetCategory === 'squad').length,
+    CARAVAN_BEAT_SQUAD_CAP,
+  )
+  assert.equal(
+    full.actors.some((entry) => entry.id === `${full.plan.id}:guard-reinforcement`),
+    false,
+  )
+  assert.ok(full.notices.some((notice) => notice.includes('отряд полон 4/4')))
 })
 
 test('the villain plunders, press-gangs up to the squad cap, or burns the palace short', () => {

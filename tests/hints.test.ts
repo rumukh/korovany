@@ -227,6 +227,21 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
     },
   }),
   squad: (base) => ({ ...base, squad: 2 }),
+  squadCare: (base) => ({
+    ...base,
+    squadCommand: {
+      ...base.squadCommand,
+      roster: [{
+        id: 'wounded-companion',
+        role: 'scout',
+        slot: 0,
+        health: 20,
+        maxHealth: 55,
+        distance: 3,
+        status: 'following',
+      }],
+    },
+  }),
   // W2-1 — the clock's own tier: three minutes in, nothing earned, so the HUD and the
   // enemies agree, and only `threat` speaks.
   threat: (base) => ({ ...base, threatTier: 2, elapsed: 180 }),

@@ -286,6 +286,7 @@ import {
   describeRandomEventStoodDown,
   describeRandomEventStoodDownForCaravan,
   describeRandomEventSuccess,
+  describeReducedPersonalGold,
   describeRichCaravanConfiscated,
   describeRationEaten,
   describeRazedSite,
@@ -298,6 +299,21 @@ import {
   describeSiteInspected,
   describeSquadOrder,
   SQUAD_COMMAND_COPY,
+  SQUAD_RESOURCE_SAVE_WARNING,
+  COMPANION_TREATMENT_FULL_NOTICE,
+  COMPANION_TREATMENT_NO_RATIONS_NOTICE,
+  COMPANION_TREATMENT_TOO_FAR_NOTICE,
+  COMPANION_TREATMENT_UNAVAILABLE_NOTICE,
+  describeCompanionMedicine,
+  describeCompanionRation,
+  describeRecoveryPrompt,
+  describeRecoveryTreated,
+  describeSquadReinforcementFull,
+  describeSquadReinforcementJoined,
+  describeSquadReinforcementWaiting,
+  describeVillainMusterPrompt,
+  RECOVERY_EXHAUSTED_NOTICE,
+  RECOVERY_NOBODY_HURT_NOTICE,
   describeThreatTier,
   describeThreatWave,
   describeTreasureFound,
@@ -306,7 +322,6 @@ import {
   describeZoneDiscovered,
   formatRegionGridLabel,
   generatedSiteLabel,
-  HEALER_TREATED_NOTICE,
   NIGHT_FALL_NOTICE,
   RALLY_NOTICE,
   RATION_ON_BLEED_NOTICE,
@@ -392,6 +407,36 @@ import {
   type SquadIntent,
   type SquadPoint,
 } from './world/SquadCommand'
+import {
+  COMPANION_TREATMENT_RANGE,
+  MEDICINE_COMPANION_HEAL,
+  RATION_COMPANION_HEAL,
+  RECOVERY_COMPANION_HEAL,
+  RECOVERY_TREATMENTS_PER_SITE,
+  SQUAD_RESOURCE_CAP,
+  VILLAIN_MUSTER_LIMIT,
+  availableSquadCapacity,
+  buildSquadResourceView,
+  canVillainMuster,
+  canTreatCompanion,
+  clearFightContribution,
+  consumeRecoveryTreatment,
+  createSquadResourceState,
+  hasFightContribution,
+  healCompanionHealth,
+  markFightContribution,
+  queueSquadReinforcement,
+  recoveryTreatmentsRemaining,
+  recordImmediateSquadReinforcement,
+  recordSquadCasualty,
+  removePendingSquadReinforcement,
+  restoreSquadResourceState,
+  serializeSquadResourceState,
+  squadRewardCredit,
+  type SquadRewardCredit,
+  type SquadResourceState,
+  type SquadResourceView,
+} from './world/SquadResource'
 import {
   ACTIVE_RUN_SAVE_VERSION,
   type ActiveRunSaveV3,
@@ -1214,6 +1259,10 @@ interface WorldEvent {
   playerExchangeAt?: number
   /** W1-1 — the player has acted on it: robbed its cart, cut its captive loose. */
   playerInteracted?: boolean
+  /** W3-1 — a real hit, blocked contact, or interaction happened in this fight. */
+  playerContributed?: boolean
+  /** W3-1 — a rescue actually had room to add its elf captive to the squad. */
+  companionJoined?: boolean
   cleanup(): void
 }
 
@@ -2587,6 +2636,7 @@ export class GameEngine {
   private thunderDelay = -1
   private prompt = ''
   private squadCommand: SquadCommandState = createSquadCommandState({ x: 0, z: 0, heading: 0 })
+  private squadResource: SquadResourceState = createSquadResourceState([])
   private readonly squadNavigation = new Map<string, SquadNavigationEntry>()
   private readonly squadBlockedSeconds = new Map<string, number>()
   private readonly squadIntents = new Map<string, SquadIntent<Actor>>()
@@ -3026,6 +3076,22 @@ export class GameEngine {
         ),
       ),
     )
+    const restoredSquadResource = restoreSquadResourceState(
+      restoredDirector?.squadResource,
+      {
+        recoverySiteIds: this.generatedBlueprint.sites
+          .filter((site) => site.kind === 'recovery')
+          .map((site) => String(site.id)),
+        companions: restoredRun?.companions ?? [],
+        faction,
+        startingSquadVersion: restoredDirector?.startingSquadVersion,
+        bounds: this.generatedBlueprint.bounds,
+      },
+    )
+    this.squadResource = restoredSquadResource.state
+    if (restoredSquadResource.rejected) {
+      this.callbacks.onNotice(SQUAD_RESOURCE_SAVE_WARNING, 'warning')
+    }
     this.generatedRunStatus = restoredRun?.status ?? 'active'
     this.campaignCompleted = this.objectives.every((objective) => objective.done)
     this.threatTier = restoreThreatTier(
@@ -4038,6 +4104,11 @@ export class GameEngine {
     if (touched) {
       // W1-1 — a robbed cart or a cut rope is a commitment an arriving contract waits for.
       touched.playerInteracted = true
+      this.markEventContribution(touched)
+      this.emitView(true)
+      return
+    }
+    if (this.handleVillainMusterInteraction()) {
       this.emitView(true)
       return
     }
@@ -4146,7 +4217,48 @@ export class GameEngine {
     return true
   }
 
-  purchase(item: ShopItem): { ok: boolean; message: string } {
+  treatCompanionWithRation(companionId: string): boolean {
+    if (this.ended) return false
+    const actor = this.actors.find(
+      (candidate) => candidate.id === companionId && isSquadMember(candidate, this.faction),
+    )
+    if (!actor) {
+      this.callbacks.onNotice(COMPANION_TREATMENT_UNAVAILABLE_NOTICE, 'warning')
+      return false
+    }
+    const distance = squadDistance(actor.mesh.position, this.player.position)
+    if (distance > COMPANION_TREATMENT_RANGE) {
+      this.callbacks.onNotice(COMPANION_TREATMENT_TOO_FAR_NOTICE, 'warning')
+      return false
+    }
+    if (actor.hp >= actor.maxHp) {
+      this.callbacks.onNotice(COMPANION_TREATMENT_FULL_NOTICE, 'warning')
+      return false
+    }
+    if (this.generatedSupplyCount <= 0) {
+      this.callbacks.onNotice(COMPANION_TREATMENT_NO_RATIONS_NOTICE, 'warning')
+      return false
+    }
+    const treatment = healCompanionHealth(actor.hp, actor.maxHp, RATION_COMPANION_HEAL)
+    if (treatment.restored <= 0) return false
+    actor.hp = treatment.health
+    this.generatedSupplyCount -= 1
+    actor.healthBarVisibleUntil = this.elapsed + 3.4
+    this.drawActorHealthBar(actor)
+    this.callbacks.onNotice(
+      describeCompanionRation(actor.role, treatment.restored),
+      'success',
+      'outcome',
+    )
+    this.playSound('objective')
+    this.emitView(true)
+    return true
+  }
+
+  purchase(
+    item: ShopItem,
+    treatmentTargetId: 'player' | string = 'player',
+  ): { ok: boolean; message: string } {
     // Roadmap 1.6 — «Интендантский устав» takes the upgrade shelf away entirely. Refused
     // here rather than only hidden in the panel, because the panel is one caller.
     if (item.upgrade && this.doctrineEffects.tradeOnlyCare) {
@@ -4177,12 +4289,44 @@ export class GameEngine {
       if (!part) return { ok: false, message: 'Оба глаза на месте. Протез пока лишний.' }
       this.body[part] = 'prosthetic'
     } else if (item.id === 'medicine') {
-      if (this.health >= this.maxHealth && this.body.bleeding === 0 && !this.hasWounds()) {
-        return { ok: false, message: 'Пользователь здоров. Лечить нечего.' }
+      if (treatmentTargetId === 'player') {
+        if (this.health >= this.maxHealth && this.body.bleeding === 0 && !this.hasWounds()) {
+          return { ok: false, message: 'Пользователь здоров. Лечить нечего.' }
+        }
+        this.health = Math.min(this.maxHealth, this.health + 55)
+        this.body.bleeding = 0
+        this.healWounds()
+      } else {
+        const actor = this.actors.find(
+          (candidate) =>
+            candidate.id === treatmentTargetId &&
+            isSquadMember(candidate, this.faction),
+        )
+        if (!actor) return { ok: false, message: COMPANION_TREATMENT_UNAVAILABLE_NOTICE }
+        const distance = squadDistance(actor.mesh.position, this.player.position)
+        if (distance > COMPANION_TREATMENT_RANGE) {
+          return { ok: false, message: COMPANION_TREATMENT_TOO_FAR_NOTICE }
+        }
+        if (actor.hp >= actor.maxHp) {
+          return { ok: false, message: COMPANION_TREATMENT_FULL_NOTICE }
+        }
+        const treatment = healCompanionHealth(
+          actor.hp,
+          actor.maxHp,
+          MEDICINE_COMPANION_HEAL,
+        )
+        actor.hp = treatment.health
+        actor.healthBarVisibleUntil = this.elapsed + 3.4
+        this.drawActorHealthBar(actor)
+        this.gold -= price
+        this.achievements.recordPurchase(item.id)
+        this.playSound('coin')
+        this.emitView(true)
+        return {
+          ok: true,
+          message: describeCompanionMedicine(actor.role, treatment.restored),
+        }
       }
-      this.health = Math.min(this.maxHealth, this.health + 55)
-      this.body.bleeding = 0
-      this.healWounds()
     } else if (item.id === 'blade') {
       this.damage += 8
       this.upgrades.blade += 1
@@ -4300,6 +4444,7 @@ export class GameEngine {
         elapsed: this.elapsed,
         squadFollowing: this.squadCommand.baseStance === 'follow',
         squadCommand: serializeSquadCommandState(this.squadCommand),
+        squadResource: serializeSquadResourceState(this.getSquadResourceState()),
         startingSquadVersion: STARTING_SQUAD_VERSION,
         threatTier: this.threatTier,
         nextThreatWaveAt: this.nextThreatWaveAt,
@@ -5107,6 +5252,9 @@ export class GameEngine {
       }
       this.returnParkedPacks(regionId)
       this.spawnGeneratedRegionEncounters(regionId)
+    }
+    if (this.getSquadResourceState().pending.length > 0) {
+      this.materializePendingSquadReinforcements()
     }
   }
 
@@ -6066,7 +6214,27 @@ export class GameEngine {
     this.updateCaravanBeatCartAppearance(entry)
     // W3-6 — a cart's ending moves the finale gate's count, so its line is never dropped; one
     // that finished without the player is still a delivery or a release, not flavour.
-    this.callbacks.onNotice(state.consequence, 'success', 'outcome')
+    this.callbacks.onNotice(
+      state.consequence,
+      'success',
+      'outcome',
+    )
+    if (
+      this.faction === 'guard' &&
+      !unattended &&
+      (outcome === 'deliver' || outcome === 'confiscate')
+    ) {
+      const position = entry.runtime?.cart.position ?? {
+        x: state.cargoX,
+        z: state.cargoZ,
+      }
+      this.earnSquadReinforcement({
+        id: `${plan.id}:guard-reinforcement`,
+        source: 'guardOrder',
+        role: 'soldier',
+        position: { x: position.x, z: position.z },
+      })
+    }
     this.playSound(gold > 0 ? 'coin' : 'objective')
     this.emitView(true)
   }
@@ -6113,12 +6281,98 @@ export class GameEngine {
     return change ? { regionLabel: this.regionGridLabel(regionId), ...change } : null
   }
 
+  private livingSquadCount(): number {
+    return (this.actors ?? []).filter(
+      (actor) => isSquadMember(actor, this.faction),
+    ).length
+  }
+
+  private getSquadResourceState(): SquadResourceState {
+    if (this.squadResource) return this.squadResource
+    const recoverySiteIds = this.generatedBlueprint?.sites
+      ?.filter((site) => site.kind === 'recovery')
+      .map((site) => String(site.id)) ?? []
+    this.squadResource = createSquadResourceState(recoverySiteIds)
+    return this.squadResource
+  }
+
+  private materializePendingSquadReinforcements(): number {
+    let joined = 0
+    const resource = this.getSquadResourceState()
+    for (const pending of [...resource.pending]) {
+      if (this.actors.some((actor) => actor.id === pending.id)) {
+        removePendingSquadReinforcement(resource, pending.id)
+        continue
+      }
+      const radius = this.actorColliderRadiusForRole(pending.role)
+      const position = findSquadWalkablePosition(
+        pending.position,
+        (point) => this.isWalkablePosition(point.x, point.z, radius),
+        6,
+      )
+      if (!position || !this.reserveActorSlots('squad', 1)) continue
+      const actor = this.spawnActor(
+        this.faction,
+        pending.role,
+        position.x,
+        position.z,
+        this.actorSequence++,
+        {
+          budget: 'squad',
+          objectiveEligible: false,
+          squadEligible: true,
+          generatedRegionId: null,
+          hostileToPlayer: false,
+          appearanceId: pending.id,
+        },
+      )
+      actor.id = pending.id
+      this.assignSquadSlot(actor)
+      actor.home.copy(actor.mesh.position)
+      actor.wanderTarget.copy(actor.mesh.position)
+      removePendingSquadReinforcement(resource, pending.id)
+      this.callbacks.onNotice(
+        describeSquadReinforcementJoined(pending.source),
+        'success',
+        'outcome',
+      )
+      joined += 1
+    }
+    return joined
+  }
+
+  private earnSquadReinforcement(input: {
+    id: string
+    source: 'elfDefense' | 'guardOrder' | 'villainMuster'
+    role: ActorRole
+    position: SquadPoint
+  }): boolean {
+    const living = this.livingSquadCount()
+    if (!queueSquadReinforcement(this.getSquadResourceState(), living, input)) {
+      if (input.source !== 'villainMuster') {
+        this.callbacks.onNotice(
+          describeSquadReinforcementFull(input.source),
+          'warning',
+        )
+      }
+      return false
+    }
+    if (this.materializePendingSquadReinforcements() === 0) {
+      this.callbacks.onNotice(
+        describeSquadReinforcementWaiting(input.source),
+        'success',
+        'outcome',
+      )
+    }
+    return true
+  }
+
   /** The villain's press-gang: one fresh companion at the cart, up to the squad cap. */
   private recruitCaravanBeatCompanion(entry: CaravanBeatEntry): boolean {
     const { plan, runtime } = entry
     if (!runtime) return false
-    const members = this.actors.filter((actor) => isSquadMember(actor, this.faction)).length
-    if (members >= CARAVAN_BEAT_SQUAD_CAP) return false
+    const members = this.livingSquadCount()
+    if (availableSquadCapacity(this.getSquadResourceState(), members) <= 0) return false
     const role: ActorRole = this.faction === 'villain' ? 'minion' : 'soldier'
     const radius = this.actorColliderRadiusForRole(role)
     const position = findSquadWalkablePosition(
@@ -6140,6 +6394,7 @@ export class GameEngine {
     this.assignSquadSlot(actor)
     actor.home.copy(actor.mesh.position)
     actor.wanderTarget.copy(actor.mesh.position)
+    recordImmediateSquadReinforcement(this.getSquadResourceState(), 'villainPress')
     return true
   }
 
@@ -6254,7 +6509,7 @@ export class GameEngine {
       return false
     }
     if (outcome === 'press' && !this.recruitCaravanBeatCompanion(entry)) {
-      const members = this.actors.filter((actor) => isSquadMember(actor, this.faction)).length
+      const members = this.livingSquadCount() + this.getSquadResourceState().pending.length
       this.callbacks.onNotice(
         members >= CARAVAN_BEAT_SQUAD_CAP ? CARAVAN_BEAT_SQUAD_FULL_NOTICE : CARAVAN_BEAT_NO_ROOM_NOTICE,
         'warning',
@@ -6338,7 +6593,7 @@ export class GameEngine {
       player,
       heading: this.cameraYaw,
       expedition,
-      squadSize: this.actors.filter((actor) => isSquadMember(actor, this.faction)).length,
+      squadSize: this.livingSquadCount() + this.getSquadResourceState().pending.length,
       garrisonThinned: this.caravanBeats?.garrisonThinned ?? false,
       // The same question `applyCaravanBeatOutcome` asks, so the panel never over-promises.
       garrisonCanThin: this.finale
@@ -6640,10 +6895,29 @@ export class GameEngine {
     )
   }
 
+  private eventContributionKey(event: WorldEvent): string | null {
+    if (event.contractNodeId) return `contract:${event.contractNodeId}`
+    if (event.situationId) return `situation:${event.situationId}`
+    return null
+  }
+
+  private markEventContribution(event: WorldEvent): void {
+    event.playerContributed = true
+    const key = this.eventContributionKey(event)
+    if (key) markFightContribution(this.getSquadResourceState(), key)
+  }
+
+  private eventHasPlayerContribution(event: WorldEvent): boolean {
+    return event.playerContributed === true ||
+      hasFightContribution(this.getSquadResourceState(), this.eventContributionKey(event))
+  }
+
   /** W1-1 — stamps the event owning `actorId`, if any, with a blow traded with the player. */
   private notePlayerExchange(actorId: string): void {
     for (const event of this.activeEvents) {
-      if (event.ownedActorIds.includes(actorId)) event.playerExchangeAt = this.elapsed
+      if (!event.ownedActorIds.includes(actorId)) continue
+      event.playerExchangeAt = this.elapsed
+      this.markEventContribution(event)
     }
   }
 
@@ -6997,6 +7271,72 @@ export class GameEngine {
     }
   }
 
+  private playerNeedsRecoveryTreatment(): boolean {
+    return this.health < this.maxHealth ||
+      this.stamina < this.maxStamina ||
+      this.body.bleeding > 0 ||
+      this.hasWounds()
+  }
+
+  private isAtVillainMusterSite(): boolean {
+    if (this.faction !== 'villain' || !this.generatedWorld || !this.generatedBlueprint) {
+      return false
+    }
+    const site = this.generatedWorld.findNearbySite(
+      { x: this.player.position.x, z: this.player.position.z },
+      6,
+    )
+    return String(site?.id ?? '') === String(this.generatedBlueprint.starts.villain)
+  }
+
+  private getVillainMusterPrompt(): string | null {
+    if (!this.isAtVillainMusterSite()) return null
+    const resource = this.getSquadResourceState()
+    if (resource.casualties <= 0) return null
+    const livingSquad = this.livingSquadCount()
+    return describeVillainMusterPrompt({
+      casualties: resource.casualties,
+      squadSize: livingSquad + resource.pending.length,
+      cap: SQUAD_RESOURCE_CAP,
+      remaining: Math.max(
+        0,
+        VILLAIN_MUSTER_LIMIT - resource.villainMustersUsed,
+      ),
+    })
+  }
+
+  private handleVillainMusterInteraction(): boolean {
+    const atOldFort = this.isAtVillainMusterSite()
+    const livingSquad = this.livingSquadCount()
+    if (!canVillainMuster({
+      state: this.getSquadResourceState(),
+      faction: this.faction,
+      livingSquad,
+      atOldFort,
+    })) return false
+    const earned = this.earnSquadReinforcement({
+      id: 'squad:villain:muster:0',
+      source: 'villainMuster',
+      role: 'minion',
+      position: {
+        x: this.player.position.x,
+        z: this.player.position.z,
+      },
+    })
+    if (earned) this.playSound('command')
+    return earned
+  }
+
+  private recoveryCompanions(): Actor[] {
+    return this.actors.filter((actor) =>
+      isSquadMember(actor, this.faction) &&
+      canTreatCompanion({
+        health: actor.hp,
+        maxHealth: actor.maxHp,
+        distance: squadDistance(actor.mesh.position, this.player.position),
+      }))
+  }
+
   private handleGeneratedInteraction(): boolean {
     const { site, node, kind, targetsObjective: targetsNode } = this.generatedInteraction()
     if (kind === 'ration') {
@@ -7062,12 +7402,45 @@ export class GameEngine {
           )
       this.callbacks.onShop()
     } else if (site.kind === 'recovery') {
-      this.health = Math.min(this.maxHealth, this.health + 40)
-      this.stamina = this.maxStamina
-      this.body.bleeding = 0
-      this.healWounds()
-      this.callbacks.onNotice(HEALER_TREATED_NOTICE, 'success')
-      this.playSound('objective')
+      const remaining = recoveryTreatmentsRemaining(this.getSquadResourceState(), String(site.id))
+      const playerTreated = this.playerNeedsRecoveryTreatment()
+      const companions = this.recoveryCompanions()
+      if (
+        remaining > 0 &&
+        (playerTreated || companions.length > 0) &&
+        consumeRecoveryTreatment(this.getSquadResourceState(), String(site.id))
+      ) {
+        if (playerTreated) {
+          this.health = Math.min(this.maxHealth, this.health + 40)
+          this.stamina = this.maxStamina
+          this.body.bleeding = 0
+          this.healWounds()
+        }
+        for (const actor of companions) {
+          const treatment = healCompanionHealth(
+            actor.hp,
+            actor.maxHp,
+            RECOVERY_COMPANION_HEAL,
+          )
+          actor.hp = treatment.health
+          actor.healthBarVisibleUntil = this.elapsed + 3.4
+          this.drawActorHealthBar(actor)
+        }
+        this.callbacks.onNotice(
+          describeRecoveryTreated(
+            playerTreated,
+            companions.length,
+            recoveryTreatmentsRemaining(this.getSquadResourceState(), String(site.id)),
+          ),
+          'success',
+          'outcome',
+        )
+        this.playSound('objective')
+      } else if (remaining <= 0) {
+        this.callbacks.onNotice(RECOVERY_EXHAUSTED_NOTICE, 'warning')
+      } else {
+        this.callbacks.onNotice(RECOVERY_NOBODY_HURT_NOTICE, 'info')
+      }
     } else if (site.kind === 'treasure' || node?.kind === 'claim') {
       if (collected) {
         this.callbacks.onNotice(TREASURE_ALREADY_LOOTED_NOTICE, 'info')
@@ -7109,7 +7482,13 @@ export class GameEngine {
   }
 
   private getGeneratedPrompt(): string {
-    const { site: nearbySite, kind } = this.generatedInteraction()
+    const muster = this.getVillainMusterPrompt()
+    if (muster) return muster
+    const {
+      site: nearbySite,
+      kind,
+      targetsObjective,
+    } = this.generatedInteraction()
     if (nearbySite) {
       if (kind === 'sabotage') {
         return describeSabotagePrompt(generatedSiteLabel(nearbySite.kind))
@@ -7124,7 +7503,16 @@ export class GameEngine {
         return `[E] Купить что-нибудь: ${generatedSiteLabel(nearbySite.kind)}`
       }
       if (kind === 'recovery') {
-        return `[E] Вылечиться: ${generatedSiteLabel(nearbySite.kind)}`
+        return describeRecoveryPrompt({
+          remaining: recoveryTreatmentsRemaining(
+            this.getSquadResourceState(),
+            String(nearbySite.id),
+          ),
+          total: RECOVERY_TREATMENTS_PER_SITE,
+          completesErrand: targetsObjective,
+          treatsPlayer: this.playerNeedsRecoveryTreatment(),
+          companionCount: this.recoveryCompanions().length,
+        })
       }
       if (kind === 'treasure') {
         const claimed = this.generatedWorld.regions
@@ -7335,6 +7723,28 @@ export class GameEngine {
         }),
       }
     }), targets.map(focusView), focused ? focusView(focused) : null)
+  }
+
+  private buildLiveSquadResourceView(): SquadResourceView {
+    const musterSiteId = String(this.generatedBlueprint.starts[this.faction])
+    const musterSite = this.generatedBlueprint.sites.find(
+      (site) => String(site.id) === musterSiteId,
+    )
+    const livingSquad = this.actors.filter(
+      (actor) => isSquadMember(actor, this.faction),
+    ).length
+    return buildSquadResourceView({
+      state: this.getSquadResourceState(),
+      rations: this.generatedSupplyCount,
+      playerHealth: this.health,
+      playerMaxHealth: this.maxHealth,
+      faction: this.faction,
+      livingSquad,
+      musterSiteId,
+      musterRegionLabel: this.regionGridLabel(
+        musterSite ? String(musterSite.regionId) : null,
+      ),
+    })
   }
 
   private resolveCharacterOverlaps(position: THREE.Vector3, radius: number): boolean {
@@ -13056,13 +13466,29 @@ export class GameEngine {
 
   private finishEvent(event: WorldEvent, succeeded: boolean): void {
     if (!this.activeEvents.includes(event)) return
+    const elfDefenseReinforcement = succeeded &&
+      this.faction === 'elf' &&
+      event.kind === 'defendHome'
+      ? {
+          id: `${event.id}:partisan`,
+          position: { x: event.markerPos.x, z: event.markerPos.z },
+        }
+      : null
     this.achievements.recordWorldEvent(event.kind, succeeded)
+    const contributed = this.eventHasPlayerContribution(event)
     const message = isRandomWorldEventKind(event.kind)
-      ? this.resolveRandomEventOutcome(event.kind, succeeded)
-      : this.resolveLocatedEventOutcome(event, succeeded)
+      ? this.resolveRandomEventOutcome(event, succeeded, contributed)
+      : this.resolveLocatedEventOutcome(event, succeeded, contributed)
     if (succeeded) {
       this.spawnEventLoot(event)
-      this.callbacks.onNotice(message, 'success')
+      this.callbacks.onNotice(
+        message,
+        !contributed && WORLD_EVENT_REWARDS[event.kind].gold > 0 ? 'warning' : 'success',
+        WORLD_EVENT_REWARDS[event.kind].gold > 0 ||
+          (event.kind === 'rescue' && event.companionJoined === true)
+          ? 'outcome'
+          : undefined,
+      )
       this.playSound('eventWin')
     } else {
       this.callbacks.onNotice(message, 'danger')
@@ -13072,16 +13498,29 @@ export class GameEngine {
     // Roadmap 1.4 — the campaign half of the same ending. A contract that was won closes
     // its node and pays; one that was lost fails forward, so the node stops asking for the
     // contract and starts asking only that the player be there.
-    if (event.contractNodeId) this.resolveContractEvent(event, succeeded)
+    if (event.contractNodeId) this.resolveContractEvent(event, succeeded, contributed)
 
+    clearFightContribution(this.getSquadResourceState(), this.eventContributionKey(event))
     this.releaseEvent(event)
+    if (elfDefenseReinforcement) {
+      this.earnSquadReinforcement({
+        id: elfDefenseReinforcement.id,
+        source: 'elfDefense',
+        role: 'scout',
+        position: elfDefenseReinforcement.position,
+      })
+    }
     if (event.anchor === 'player') {
       this.eventCooldown = rollEventCooldown(this.threatTier, this.eventRng())
     }
     this.emitView(true)
   }
 
-  private resolveContractEvent(event: WorldEvent, succeeded: boolean): void {
+  private resolveContractEvent(
+    event: WorldEvent,
+    succeeded: boolean,
+    contributed: boolean,
+  ): void {
     const nodeId = event.contractNodeId
     if (!nodeId) return
     if (this.activeContractNodeId === nodeId) this.activeContractNodeId = null
@@ -13100,37 +13539,51 @@ export class GameEngine {
       return
     }
     if (!resolveContract(this.campaignContracts, nodeId, 'kept')) return
-    this.gold += template.reward
-    this.achievements.recordGoldEarned(template.reward)
+    const credit = this.awardFightGold(template.reward, contributed)
     this.callbacks.onNotice(
-      describeContractKept(template.id, template.reward),
-      'success',
+      this.describeFightReward(describeContractKept(template.id, credit.gold), credit),
+      credit.reduced ? 'warning' : 'success',
+      'outcome',
     )
     this.completeGeneratedObjective(node)
   }
 
   private resolveRandomEventOutcome(
-    kind: RandomWorldEventKind,
+    event: WorldEvent,
     succeeded: boolean,
+    contributed: boolean,
   ): string {
+    const kind = event.kind as RandomWorldEventKind
     if (!succeeded) return WORLD_EVENT_FAILURE_MESSAGES[kind]
     // W2-3 — every amount comes from the table the contract cards price from.
     const reward = WORLD_EVENT_REWARDS[kind]
-    if (reward.gold > 0) {
-      this.gold += reward.gold
-      this.achievements.recordGoldEarned(reward.gold)
-    }
+    const credit = this.awardFightGold(reward.gold, contributed)
     if (kind === 'richCaravan') this.achievements.recordCaravanRobbed(true)
     if (reward.heal > 0) this.health = Math.min(this.maxHealth, this.health + reward.heal)
     if (kind === 'champion') {
       const damageBonus = eventDamageGain(reward, this.championDamageBonus)
       this.championDamageBonus += damageBonus
       this.damage += damageBonus
-      return describeChampionDefeated(reward.gold, damageBonus)
+      return this.describeFightReward(
+        describeChampionDefeated(credit.gold, damageBonus),
+        credit,
+      )
     }
     // W2-2 — the guard never robs a cart; it confiscates one for the palace, for the same pay.
-    if (kind === 'richCaravan' && this.faction === 'guard') return describeRichCaravanConfiscated(reward.gold)
-    return describeRandomEventSuccess(kind, reward)
+    if (kind === 'richCaravan' && this.faction === 'guard') {
+      return this.describeFightReward(
+        describeRichCaravanConfiscated(credit.gold),
+        credit,
+      )
+    }
+    return this.describeFightReward(
+      describeRandomEventSuccess(
+        kind,
+        { ...reward, gold: credit.gold },
+        kind !== 'rescue' || event.companionJoined === true,
+      ),
+      credit,
+    )
   }
 
   /**
@@ -13140,16 +13593,16 @@ export class GameEngine {
   private resolveLocatedEventOutcome(
     event: WorldEvent,
     succeeded: boolean,
+    contributed: boolean,
   ): string {
     const chronicleEvents = event.handBack?.() ?? []
     // W1-2 backlog — a defended cart of one's own side pays the owners' thanks, not loot.
     const defended = event.kind === 'caravanAmbush' && event.lootSite?.defend === true
     if (succeeded) {
-      const reward = defended
+      const fullReward = defended
         ? CARAVAN_AMBUSH_DEFENDED_REWARD
         : WORLD_EVENT_REWARDS[event.kind].gold
-      this.gold += reward
-      this.achievements.recordGoldEarned(reward)
+      this.awardFightGold(fullReward, contributed)
       // W1-2 — taking a chronicle cart's cargo is robbing a caravan. Counted here, where an
       // event settles exactly once, so «Грабить корованы» and the run's tally see it once.
       if (event.kind === 'caravanAmbush' && !defended) this.achievements.recordCaravanRobbed(false)
@@ -13161,16 +13614,62 @@ export class GameEngine {
       defender: null,
     }
     if (chronicleEvents.length > 0) this.handleChronicleEvents(chronicleEvents)
-    if (defended && succeeded) return describeCaravanAmbushDefended(CARAVAN_AMBUSH_DEFENDED_REWARD)
+    const fullReward = defended
+      ? CARAVAN_AMBUSH_DEFENDED_REWARD
+      : WORLD_EVENT_REWARDS[event.kind].gold
+    const credit = squadRewardCredit(fullReward, contributed)
+    if (defended && succeeded) {
+      return this.describeFightReward(
+        describeCaravanAmbushDefended(credit.gold),
+        credit,
+      )
+    }
     // W2-2 — the guard raids an enemy's cart for the palace; it does not rob one.
     if (event.kind === 'caravanAmbush' && succeeded && this.faction === 'guard') {
-      return CARAVAN_AMBUSH_CONFISCATED_OUTCOME
+      return this.describeFightReward(CARAVAN_AMBUSH_CONFISCATED_OUTCOME, credit)
     }
-    return describeLocatedEventOutcome(
-      event.kind as ChronicleWorldEventKind,
-      succeeded,
-      context,
+    return this.describeFightReward(
+      describeLocatedEventOutcome(
+        event.kind as ChronicleWorldEventKind,
+        succeeded,
+        context,
+      ),
+      succeeded ? credit : { ...credit, reduced: false },
     )
+  }
+
+  private awardFightGold(fullGold: number, contributed: boolean): SquadRewardCredit {
+    const credit = squadRewardCredit(fullGold, contributed)
+    if (credit.gold > 0) {
+      this.gold += credit.gold
+      this.achievements.recordGoldEarned(credit.gold)
+    }
+    return credit
+  }
+
+  private describeFightReward(message: string, credit: SquadRewardCredit): string {
+    return credit.reduced && credit.fullGold > 0
+      ? `${message} ${describeReducedPersonalGold(credit.fullGold, credit.gold)}`
+      : message
+  }
+
+  private buildEventPayout(event: WorldEvent): ChoicePayoutView {
+    const reward = WORLD_EVENT_REWARDS[event.kind]
+    const defended = event.kind === 'caravanAmbush' && event.lootSite?.defend === true
+    const gold = defended ? CARAVAN_AMBUSH_DEFENDED_REWARD : reward.gold
+    return {
+      gold,
+      ...(gold > 0 ? { withoutPlayerGold: Math.floor(gold * 0.5) } : {}),
+      supplies: 0,
+      heal: reward.heal,
+      damage: event.kind === 'champion'
+        ? eventDamageGain(reward, this.championDamageBonus)
+        : 0,
+      companion: event.kind === 'rescue' &&
+        this.faction === 'elf' &&
+        availableSquadCapacity(this.getSquadResourceState(), this.livingSquadCount()) > 0,
+      loot: reward.loot,
+    }
   }
 
 
@@ -13203,6 +13702,9 @@ export class GameEngine {
         for (const prop of event.ownedProps) this.removeAndDisposeObject(prop)
         event.ownedProps.length = 0
       },
+    }
+    if (hasFightContribution(this.getSquadResourceState(), this.eventContributionKey(event))) {
+      event.playerContributed = true
     }
     return event
   }
@@ -13591,24 +14093,27 @@ export class GameEngine {
     let event: WorldEvent
     const rescueCaptive = (): void => {
       if (!captive.alive || event.state !== 'active') return
-      const ownedIndex = ownedActorIds.indexOf(captive.id)
-      if (ownedIndex >= 0) ownedActorIds.splice(ownedIndex, 1)
-      captive.eventOwnerId = null
-      captive.generatedRegionId = null
-      captive.aiMode = 'normal'
-      captive.squadEligible = true
-      // They belong to the player now, not to the event that produced them: without
-      // this the freed captive would keep eating a chronicle slot for the whole run.
-      captive.budgetCategory = 'squad'
-      this.assignSquadSlot(captive)
-      captive.home.copy(captive.mesh.position)
-      captive.wanderTarget.copy(captive.mesh.position)
-      const weapon = captive.mesh.getObjectByName('weapon')
-      if (weapon) weapon.visible = true
-      // Cut the ropes too. `boundArms` pins the arms to the ribs and zeroes the
-      // stride swing; handing someone their sword back while they still walk like
-      // a prisoner is worse than not freeing them at all.
-      this.unbindActorArms(captive)
+      const joins = this.faction === 'elf' &&
+        availableSquadCapacity(this.getSquadResourceState(), this.livingSquadCount()) > 0
+      event.companionJoined = joins
+      if (joins) {
+        const ownedIndex = ownedActorIds.indexOf(captive.id)
+        if (ownedIndex >= 0) ownedActorIds.splice(ownedIndex, 1)
+        captive.eventOwnerId = null
+        captive.generatedRegionId = null
+        captive.aiMode = 'normal'
+        captive.squadEligible = true
+        // They belong to the player now, not to the event that produced them: without
+        // this the freed captive would keep eating a chronicle slot for the whole run.
+        captive.budgetCategory = 'squad'
+        this.assignSquadSlot(captive)
+        captive.home.copy(captive.mesh.position)
+        captive.wanderTarget.copy(captive.mesh.position)
+        const weapon = captive.mesh.getObjectByName('weapon')
+        if (weapon) weapon.visible = true
+        this.unbindActorArms(captive)
+        recordImmediateSquadReinforcement(this.getSquadResourceState(), 'elfRescue')
+      }
       event.state = 'succeeded'
     }
     event = this.createWorldEvent({
@@ -15078,6 +15583,7 @@ export class GameEngine {
     requestedKnockback: number,
   ): void {
     if (!actor.alive) return
+    const wasSquadMember = isSquadMember(actor, this.faction)
     const deathPosition = actor.mesh.position.clone()
     const largeBody = isLargeBody(actor.role)
     const deathDirection = result.direction.clone()
@@ -15111,6 +15617,10 @@ export class GameEngine {
       }
     }
     actor.alive = false
+    if (wasSquadMember) {
+      recordSquadCasualty(this.getSquadResourceState())
+      this.materializePendingSquadReinforcements()
+    }
     actor.action = null
     actor.reaction = 'none'
     actor.reactionRemaining = 0
@@ -15669,6 +16179,7 @@ export class GameEngine {
       shopPriceMultiplier: this.activeShopPriceMultiplier,
       squad: this.actors.filter((actor) => isSquadMember(actor, this.faction)).length,
       squadCommand: this.buildLiveSquadCommandView(),
+      squadResource: this.buildLiveSquadResourceView(),
       elapsed: this.elapsed,
       pointerLocked: document.pointerLockElement === this.renderer.domElement,
       paused: this.paused,
@@ -15695,6 +16206,7 @@ export class GameEngine {
             tone: primary.tone,
             progress: primary.progress,
             target: primary.target,
+            payout: this.buildEventPayout(primary),
             ...(primary.timer === null
               ? {}
               : { timeRemaining: Math.max(0, primary.timer) }),

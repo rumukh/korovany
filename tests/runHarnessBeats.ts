@@ -160,6 +160,10 @@ export interface BeatPort {
   addSupplies(amount: number): void
   squadSize(): number
   recruit(at: { x: number; z: number }): boolean
+  guardOrderKept?(
+    outcome: 'deliver' | 'confiscate',
+    at: { x: number; z: number },
+  ): void
   /** `thinFinaleGarrison` on the run's finale: the escort sent away, or null. */
   thinFinale(): string | null
 }
@@ -307,6 +311,13 @@ export function createBeatHarness(
     if (rations > 0) {
       port.addSupplies(rations)
       metrics.rationsEarned += rations
+    }
+    if (
+      faction === 'guard' &&
+      !unattended &&
+      (outcome === 'deliver' || outcome === 'confiscate')
+    ) {
+      port.guardOrderKept?.(outcome, { x: beat.cargoX, z: beat.cargoZ })
     }
     if (reward.burnsSupply && caravanBeatThinsGarrison(faction, plan, state.garrisonThinned) &&
       port.thinFinale() !== null) {

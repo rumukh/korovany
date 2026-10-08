@@ -1,14 +1,22 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { Flag, Target, UsersRound, X } from 'lucide-react'
+import { Flag, HeartPulse, Target, UsersRound, X } from 'lucide-react'
 import { lockDocumentScroll } from '../../documentScrollLock'
 import {
   SQUAD_COMMAND_COPY as copy,
   SQUAD_ORDER_DETAILS,
   SQUAD_ORDER_LABELS,
   SQUAD_STATUS_LABELS,
+  SQUAD_CARE_COPY,
+  describeSquadCareStock,
+  describePlayerCareState,
   describeSquadRole,
+  describeSquadTreatmentAction,
 } from '../content/gameCopy'
 import type { SquadCommandMode, SquadCommandView, SquadRosterMember } from '../world/SquadCommand'
+import {
+  RATION_COMPANION_HEAL,
+  type SquadResourceView,
+} from '../world/SquadResource'
 import './squad-command.css'
 
 const ORDERS: readonly SquadCommandMode[] = ['follow', 'hold', 'focus', 'regroup']
@@ -60,10 +68,12 @@ export function SquadCommandStrip({ view, onOpen, disabled }: {
   )
 }
 
-export function SquadCommandPanel({ view, onClose, onConfirm }: {
+export function SquadCommandPanel({ view, resource, onClose, onConfirm, onTreat }: {
   view: SquadCommandView
+  resource?: SquadResourceView
   onClose: () => void
   onConfirm: (mode: SquadCommandMode, targetId?: string) => boolean
+  onTreat?: (companionId: string) => boolean
 }) {
   const [selected, setSelected] = useState<SquadCommandMode>(view.mode)
   const [targetId, setTargetId] = useState(view.focusTargetId ?? '')
@@ -145,16 +155,49 @@ export function SquadCommandPanel({ view, onClose, onConfirm }: {
             {view.targets.length === 0 ? <p>{copy.noTargets}</p> : null}
           </div>
         ) : null}
-        <h3>{copy.roster}</h3>
+        <div className="squad-care-heading">
+          <h3>{copy.roster}</h3>
+          {resource ? <span>
+            {describeSquadCareStock(resource.rations, resource.treatmentRange)}
+          </span> : null}
+        </div>
         {view.roster.length === 0 ? <p>{copy.empty}</p> : (
           <ul className="squad-panel-roster">
-            {view.roster.map((member) => (
-              <li key={member.id} data-squad-member-id={member.id} data-status={member.status}>
-                <strong>{memberName(member)}</strong>
-                <MemberHealth member={member} />
-                <span>{SQUAD_STATUS_LABELS[member.status]} · {Math.round(member.distance)} {copy.metres}</span>
-              </li>
-            ))}
+            {view.roster.map((member) => {
+              const wounded = member.health < member.maxHealth
+              const nearby = resource ? member.distance <= resource.treatmentRange : false
+              const canTreat = Boolean(resource && onTreat && wounded && nearby && resource.rations > 0)
+              const treatmentLabel = describeSquadTreatmentAction(
+                nearby,
+                resource?.rations ?? 0,
+                RATION_COMPANION_HEAL,
+              )
+              return (
+                <li key={member.id} data-squad-member-id={member.id} data-status={member.status}>
+                  <strong>{memberName(member)}</strong>
+                  <MemberHealth member={member} />
+                  <span>{SQUAD_STATUS_LABELS[member.status]} · {Math.round(member.distance)} {copy.metres}</span>
+                  {wounded && resource && onTreat ? (
+                    <button type="button" className="squad-treat-button" disabled={!canTreat}
+                      aria-label={`${treatmentLabel}: ${memberName(member)}`}
+                      onClick={() => onTreat(member.id)}>
+                      <HeartPulse aria-hidden="true" />
+                      <span>
+                        <strong>{treatmentLabel}</strong>
+                        <small>
+                          {describePlayerCareState(
+                            resource.playerHealth,
+                            resource.playerMaxHealth,
+                          )}
+                        </small>
+                      </span>
+                    </button>
+                  ) : wounded ? null : (
+                    <span className="squad-member-ready">{SQUAD_CARE_COPY.healthy}</span>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
         <p className="squad-distance-note">{copy.distant}</p>
