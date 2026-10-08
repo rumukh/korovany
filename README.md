@@ -154,6 +154,20 @@ palace's two strongholds, as crowded every time.
 Known behaviour: until a pack is back, its post stands empty and the journal map shows none of
 its dots. Looking away at the post, or going 60 m off, ends that as soon as the field has room.
 
+## Rumours
+
+The **Слухи** board offers a rumour only when you can meet it from where you stand, and never for more than about
+25 seconds of walking. The walk along the itinerary the compass would chart, at walking pace on the legs you have, is
+stretched by half again plus eight seconds for fights and detours, and it still has to fit the rumour's clock. A
+defence or a sabotage then gets a clock fitted to that walk, between 48 and 80 seconds. An escort keeps its cart's
+clock, and is offered only when you can be in the cart's square at every check it needs, wherever the cart will have
+rolled by then. A new rumour comes at most every 32 seconds, two at a time, and none while you have taken one.
+
+Each card reads **идти ~N с · осталось M с** and says whether you will make it: «успеешь», «впритык» (only with no
+margin left) or «не успеть». Keeping a rumour pays a little, once, when its verdict lands: the palace guard's
+commander and the villain's own purse pay 15 gold, and the elves' wooden houses share a ration. A broken or untaken
+rumour pays nothing, and it still happens without you.
+
 ## Caravan beats
 
 «Можно грабить корованы» is a decision, not scenery. A caravan beat is a gilded cart on a real

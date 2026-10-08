@@ -25,6 +25,7 @@ import {
   createGeneratedObjectiveText,
   type LocatedEventCopyContext,
 } from '../content/gameCopy.ts'
+import { getBlueprintRegionBounds, getSiteWorldPosition2D } from '../content/registry.ts'
 import type { RandomStream } from '../random/RandomStream.ts'
 import type {
   ChoicePayoutView,
@@ -50,6 +51,7 @@ import {
   resolveEscortedCaravanDelivery,
   resolveMaterializedCaravan,
   resolveMaterializedRaid,
+  type ChronicleCaravan,
   type ChronicleEvent,
   type ChronicleState,
   type RegionChronicleState,
@@ -57,6 +59,7 @@ import {
 import type {
   FactionObjectiveGraph,
   FactionObjectiveNode,
+  RegionId,
   WorldBlueprint,
 } from './worldTypes.ts'
 import {
@@ -737,9 +740,18 @@ export function selectChronicleFeedEvents(
 
 /** At most two open at a time. This is a HUD, not a quest log. */
 export const RUMOUR_LIMIT = 2
-/** Chronicle ticks a rumour stays open. Twelve ticks is 96 s at `CHRONICLE_TICK_SECONDS`. */
+/**
+ * The longest a rumour stays open, in chronicle ticks: 96 s at `CHRONICLE_TICK_SECONDS`.
+ * W2-3 — a defence or a sabotage gets less when the player is close; see
+ * `RUMOUR_MIN_DEADLINE_TICKS`.
+ */
 export const RUMOUR_DEADLINE_TICKS = 12
-/** Ticks between offers, so the feed does not become a queue. */
+/**
+ * Ticks between offers, so the feed does not become a queue. W2-3 left it at four: offering
+ * only rumours the player can meet, and none while one is pinned, already halves the offers
+ * the review's `commit` arm sees (4.7 a run to 2.1 for `beeline`, 9.0 to 2.3 for `cautious`),
+ * and six on top cut the kept ones by a third, below where they were before W2-3.
+ */
 export const RUMOUR_OFFER_INTERVAL_TICKS = 4
 /** Ticks the player must spend in the cart's own square for the escort to count. */
 export const RUMOUR_ESCORT_TICKS = 2
@@ -760,6 +772,47 @@ export const RUMOUR_DEFEND_TICKS = 3
 export const RUMOUR_VERDICT_TICKS = 2
 /** How many ranked candidates the offer draws from. */
 export const RUMOUR_CANDIDATE_POOL = 4
+/**
+ * W2-3 — how much a walking estimate is stretched before an offer trusts it: ×1.5 and 8 s.
+ *
+ * The estimate is a walk along the compass's itinerary on a clear road. It knows nothing of
+ * fights, props, slopes or a cart that changes square on the way, so an offer that fits only
+ * the bare estimate is a coin toss. Measured with the review's `commit` arm in the engine's
+ * streaming window, 80 seeds per faction: ×1.0 kept about as many cautious rumours as it
+ * broke (1.1 : 1), ×1.25 + 8 s kept 2.0 : 1 with the elf at 1.6 : 1, and ×1.5 + 8 s kept
+ * 2.8 : 1 with no faction under 2.1 : 1. Beeline kept 1.8, 3.9 and 5.2 : 1.
+ */
+export const RUMOUR_TRAVEL_MARGIN = 1.5
+export const RUMOUR_TRAVEL_SLACK_SECONDS = 8
+/**
+ * W2-3 — the shortest clock a defence or a sabotage is offered with, in ticks: 48 s to read
+ * the card, decide and start walking, however close the square is.
+ */
+export const RUMOUR_MIN_DEADLINE_TICKS = 6
+/** W2-3 — ticks a scaled clock leaves past the margined finish: room for a fight on the way. */
+export const RUMOUR_SPARE_TICKS = 2
+/**
+ * W2-3 — the longest walk a rumour is offered for, in seconds at the player's own pace: a
+ * rumour asks for a detour, not an expedition. Every square it is met in lies this close.
+ *
+ * Without it the board offered walks of up to a minute that the review's `commit` arm, which
+ * takes rumours within 110 m, never took, and an untaken rumour resolves against the player.
+ * Measured with that arm in the engine's window, 80 seeds per faction: 25 s raised cautious
+ * kept : broken from 2.0 to 2.8 : 1, with the elf from 1.6 to 2.1, and kept a few more.
+ */
+export const RUMOUR_OFFER_WALK_SECONDS = 25
+/**
+ * W2-3 — what keeping a rumour pays the player, once, when the kept verdict lands.
+ *
+ * Small on purpose: the world change is the point, and a rumour must never become the way to
+ * make money. In the run harness's purse a run earns about 335 gold. With every W1-5 arm on,
+ * the `commit` arm's kept rumours paid the guard and the villain 3 to 4 % of what their runs
+ * earned; keeping 1.6 a run, as the review's arm does, would pay about 7 %. The elf gets a
+ * ration instead, from the wooden houses it stood up for: the 35 health a 35-gold field kit
+ * restores.
+ */
+export const RUMOUR_KEPT_GOLD = 15
+export const RUMOUR_KEPT_RATIONS = 1
 
 export interface ChronicleRumour {
   /** Stable per situation, so one front never becomes two rumours. */
@@ -1132,32 +1185,237 @@ function findSabotageCandidates(context: RumourWorldContext): RumourCandidate[] 
  * One draw from the caller's rumour stream, and only when there is actually something to
  * choose between — a stream that advances on an empty board would make the offer cadence
  * itself a source of divergence between two otherwise identical runs.
+ *
+ * W2-3 — and only rumours the player can meet. `travel` times a walk from where the player
+ * stands; `findRumourOffers` keeps a candidate only when that walk is no longer than
+ * `RUMOUR_OFFER_WALK_SECONDS` and, stretched by `RUMOUR_TRAVEL_MARGIN` and
+ * `RUMOUR_TRAVEL_SLACK_SECONDS`, fits its clock. On 4963002 every escort the reviewer saw
+ * was offered with 16–40 s left and the cart 200 m away, and the W1-5 baseline found 34 %
+ * of offers beyond reach the moment they were made. While a rumour is pinned the board does
+ * not grow: one commitment at a time.
  */
 export function offerRumours(
   state: ChronicleCommitmentState,
   context: RumourWorldContext,
   rng: RandomStream,
+  travel: RumourTravelEstimate,
 ): ChronicleRumour | null {
   if (context.state.tick < state.nextOfferTick) return null
   if (state.rumours.length >= RUMOUR_LIMIT) return null
+  if (state.pinnedRumourId !== null) return null
+  const pool = findRumourOffers(state, context, travel)
+  if (pool.length === 0) return null
+  const chosen = pool.length === 1 ? pool[0] : rng.pick(pool)
+  state.rumours.push(cloneChronicleRumour(chosen))
+  state.nextOfferTick = context.state.tick + RUMOUR_OFFER_INTERVAL_TICKS
+  return chosen
+}
+
+/**
+ * W2-3 — the offers the board could make right now, best first: candidates of a kind not
+ * already open, each one the player can meet, with its clock fitted by `fitRumourOffer`.
+ *
+ * Pure, like `findRumourCandidates`: no draw and no clock, so a test or the harness can ask
+ * what would have been offered without moving anything.
+ */
+export function findRumourOffers(
+  state: ChronicleCommitmentState,
+  context: RumourWorldContext,
+  travel: RumourTravelEstimate,
+): ChronicleRumour[] {
   const open = new Set(state.rumours.map((rumour) => rumour.id))
-  const openKinds = new Set(state.rumours.map((rumour) => rumour.kind))
-  const candidates = findRumourCandidates(context).filter(
-    (candidate) => !open.has(candidate.id),
-  )
-  if (candidates.length === 0) return null
   // At most one of each kind on the board. A weaker version of this rule — prefer a fresh
   // kind, fall back to any — let two sabotages fill both slots and then starve the other
   // two verbs for a full deadline: measured on seed 900000 as the guard, escorts were
   // available from tick 9 and the board did not have room for one until tick 15. Two rows
   // that say the same thing are also the worst version of a two-row HUD.
-  const fresh = candidates.filter((candidate) => !openKinds.has(candidate.kind))
-  if (fresh.length === 0) return null
-  const pool = fresh.slice(0, RUMOUR_CANDIDATE_POOL)
-  const chosen = pool.length === 1 ? pool[0] : rng.pick(pool)
-  state.rumours.push(cloneChronicleRumour(chosen))
-  state.nextOfferTick = context.state.tick + RUMOUR_OFFER_INTERVAL_TICKS
-  return chosen
+  const openKinds = new Set(state.rumours.map((rumour) => rumour.kind))
+  const pool: ChronicleRumour[] = []
+  for (const candidate of findRumourCandidates(context)) {
+    if (open.has(candidate.id) || openKinds.has(candidate.kind)) continue
+    const offer = fitRumourOffer(candidate, context, travel)
+    if (!offer) continue
+    pool.push(offer)
+    if (pool.length === RUMOUR_CANDIDATE_POOL) break
+  }
+  return pool
+}
+
+/**
+ * W2-3 — seconds of walking from where the player stands to a point, at walking pace and
+ * without any margin, or null when the walk cannot be timed.
+ */
+export type RumourTravelEstimate = (point: { x: number; z: number }) => number | null
+
+/** W2-3 — `yes` with the margin to spare, `tight` only without it, `no` not at all. */
+export type RumourReach = 'yes' | 'tight' | 'no'
+
+/** What reaching a rumour depends on: the map, and the chronicle its cart rolls in. */
+export interface RumourReachContext {
+  blueprint: WorldBlueprint
+  state: ChronicleState
+}
+
+/**
+ * W2-3 — where a rumour is met on the map: the depot itself for a sabotage, because the torch
+ * needs the player beside it, and the middle of its square otherwise. The map pin, the
+ * compass, the card's walk and the offer's reach all read this one rule.
+ */
+export function rumourTargetPoint(
+  blueprint: WorldBlueprint,
+  rumour: Pick<ChronicleRumour, 'kind' | 'regionId' | 'siteId'>,
+): { x: number; z: number } | null {
+  if (rumour.kind === 'sabotage' && rumour.siteId) {
+    const site = getSiteWorldPosition2D(blueprint, rumour.siteId)
+    if (site) return { x: site.x, z: site.z }
+  }
+  const bounds = getBlueprintRegionBounds(blueprint, rumour.regionId)
+  return bounds
+    ? { x: (bounds.minX + bounds.maxX) / 2, z: (bounds.minZ + bounds.maxZ) / 2 }
+    : null
+}
+
+/**
+ * W2-3 — whether the player can still meet a rumour from where they stand.
+ *
+ * Presence is counted at chronicle ticks, the first `CHRONICLE_TICK_SECONDS - sinceTick`
+ * seconds from now and one per tick up to the deadline, which is checked before it settles.
+ * A defence needs the player inside its square for the ticks it still lacks; a sabotage
+ * needs them at the depot before the deadline; an escort needs them in the cart's square on
+ * consecutive ticks, wherever the cart will have rolled by then, each timed from where they
+ * stand now — which is how the compass leads them, to the square the cart is in. A cart that
+ * is lost or delivered on the way cannot be predicted and is not.
+ */
+export function estimateRumourReach(
+  rumour: ChronicleRumour,
+  context: RumourReachContext,
+  travel: RumourTravelEstimate,
+  tick: number,
+  sinceTick = 0,
+): RumourReach {
+  if (
+    rumourFinishTicks(
+      rumour, context, travel, tick, sinceTick,
+      RUMOUR_TRAVEL_MARGIN, RUMOUR_TRAVEL_SLACK_SECONDS,
+    ) !== null
+  ) {
+    return 'yes'
+  }
+  return rumourFinishTicks(rumour, context, travel, tick, sinceTick, 1, 0) !== null
+    ? 'tight'
+    : 'no'
+}
+
+/**
+ * W2-3 — the offer `candidate` becomes, or null when the player cannot meet it with the
+ * margin within `RUMOUR_OFFER_WALK_SECONDS`. A defence or a sabotage gets a clock fitted to
+ * the walk — the margined finish plus `RUMOUR_SPARE_TICKS`, at least
+ * `RUMOUR_MIN_DEADLINE_TICKS` — so a square next door does not sit on the board for 96 s. An
+ * escort keeps its cart's clock.
+ */
+export function fitRumourOffer(
+  candidate: ChronicleRumour,
+  context: RumourReachContext,
+  travel: RumourTravelEstimate,
+): ChronicleRumour | null {
+  const tick = context.state.tick
+  const nearby: RumourTravelEstimate = (point) => {
+    const seconds = travel(point)
+    return seconds !== null && seconds <= RUMOUR_OFFER_WALK_SECONDS ? seconds : null
+  }
+  const finish = rumourFinishTicks(
+    candidate, context, nearby, tick, 0,
+    RUMOUR_TRAVEL_MARGIN, RUMOUR_TRAVEL_SLACK_SECONDS,
+  )
+  if (finish === null) return null
+  if (candidate.kind === 'escort') return cloneChronicleRumour(candidate)
+  const window = Math.min(
+    RUMOUR_DEADLINE_TICKS,
+    Math.max(RUMOUR_MIN_DEADLINE_TICKS, finish + RUMOUR_SPARE_TICKS),
+  )
+  return { ...candidate, deadlineTick: tick + window }
+}
+
+/** Ticks from `tick` until the rumour can be met with this stretch of the walk, or null. */
+function rumourFinishTicks(
+  rumour: ChronicleRumour,
+  context: RumourReachContext,
+  travel: RumourTravelEstimate,
+  tick: number,
+  sinceTick: number,
+  factor: number,
+  slack: number,
+): number | null {
+  const window = rumour.deadlineTick - tick
+  const need =
+    rumour.kind === 'sabotage'
+      ? rumour.actioned ? 0 : 1
+      : Math.max(0, requiredRumourProgressFor(rumour) - rumour.progress)
+  if (need === 0) return 0
+  if (window < 1) return null
+  const secondsUntilCheck = (check: number): number =>
+    check * CHRONICLE_TICK_SECONDS - sinceTick
+  const arrival = (point: { x: number; z: number } | null): number | null => {
+    if (!point) return null
+    const seconds = travel(point)
+    return seconds === null || !Number.isFinite(seconds) ? null : seconds * factor + slack
+  }
+  if (rumour.kind === 'escort') {
+    const caravan = context.state.caravans.find((entry) => entry.id === rumour.caravanId)
+    if (!caravan || !caravan.intact || caravan.regionPath.length === 0) return null
+    const arrivals = new Map<string, number | null>()
+    const arrivalAtCheck = (check: number): number | null => {
+      const regionId = String(caravanRegionAfter(caravan, check))
+      if (!arrivals.has(regionId)) {
+        arrivals.set(regionId, arrival(rumourTargetPoint(context.blueprint, {
+          kind: 'escort', regionId, siteId: null,
+        })))
+      }
+      return arrivals.get(regionId) ?? null
+    }
+    for (let first = 1; first + need - 1 <= window; first += 1) {
+      let met = true
+      for (let check = first; check < first + need; check += 1) {
+        const seconds = arrivalAtCheck(check)
+        if (seconds === null || seconds > secondsUntilCheck(check)) {
+          met = false
+          break
+        }
+      }
+      if (met) return first + need - 1
+    }
+    return null
+  }
+  const seconds = arrival(rumourTargetPoint(context.blueprint, rumour))
+  if (seconds === null) return null
+  const first = Math.max(1, Math.ceil((seconds + sinceTick) / CHRONICLE_TICK_SECONDS))
+  const done = rumour.kind === 'defend' ? first + need - 1 : first
+  return done <= window ? done : null
+}
+
+/** The square a cart will be rolling through `ticks` chronicle ticks from now. */
+function caravanRegionAfter(caravan: ChronicleCaravan, ticks: number): RegionId {
+  const progress = Math.min(1, caravan.progress + ticks * CARAVAN_PROGRESS_PER_TICK)
+  return caravan.regionPath[
+    Math.min(caravan.regionPath.length - 1, Math.floor(progress * caravan.regionPath.length))
+  ]
+}
+
+/**
+ * W2-3 — what keeping a rumour pays: the guard's commander and the villain's own purse pay
+ * `RUMOUR_KEPT_GOLD`, the elves' wooden houses share a ration. Paid once, with the kept
+ * verdict, and never for a rumour that was broken or not taken.
+ */
+export function rumourKeptReward(faction: Faction): ChoicePayoutView {
+  const elf = faction === 'elf'
+  return {
+    gold: elf ? 0 : RUMOUR_KEPT_GOLD,
+    supplies: elf ? RUMOUR_KEPT_RATIONS : 0,
+    heal: 0,
+    damage: 0,
+    companion: false,
+    loot: null,
+  }
 }
 
 export function getRumour(

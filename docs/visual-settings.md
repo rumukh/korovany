@@ -42,6 +42,9 @@ A contract card's price lines (**Плата**, **Срок**, **Идти**, **О�
 modes, inside the **Поход** disclosure in Compact. Narrow screens hide a card's stake
 prose but keep the price, since it is what the decision is made with.
 
+A rumour card adds its reach line («идти ~N с · осталось M с · успеешь») and **Плата** in
+both modes. Compact's **Вести** summary swaps the bare countdown for the same reach line.
+
 On desktop layouts, both modes keep two lanes clear. The right-hand column ends
 above the bottom-right mouse-capture card and scrolls, so the card can no longer
 cover a rumour's «Взяться» while capture is off. Wider than 1000px, the notice
