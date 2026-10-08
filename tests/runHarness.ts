@@ -1734,6 +1734,12 @@ export interface RunOptions {
  * while rumours are ignored, and it is what a run that turns `commit` on over these arms
  * follows.
  *
+ * `caravanBeats: 'shipped'` is W2-2's caravan spine, which every new run plays: the camp's
+ * two offers, the crossing and the road beat, the camp held until a met cart settles, and the
+ * finale behind the gate. Folded in after #115, so that "shipped" means what players get; the
+ * baseline in `docs/run-harness.md` was re-published with it. `caravanBeats: 'off'` is the
+ * run as it was before the spine.
+ *
  * W3-5's `errand: 'press'` finishes the errand with the engine's `E`, the moment its prompt
  * is up, instead of waiting until nothing hostile is within 12 m of its site. Pass
  * `errand: 'clear'` for the stand-in every baseline before W3-5 was measured with.
@@ -1755,18 +1761,8 @@ export const HARNESS_SHIPPED_ARMS = {
   commanders: 'shipped',
   staging: 'friendly',
   escalation: 'progress',
-  errand: 'press',
-} as const satisfies Partial<RunOptions>
-
-/**
- * W2-2, PR B — the shipped arms and the caravan spine every new run now plays. Kept apart from
- * `HARNESS_SHIPPED_ARMS` so the published baseline, and every whole-run test seeded on those
- * arms, still describe the runs they measured; `docs/run-harness.md` reports the spine against
- * that baseline.
- */
-export const HARNESS_SPINE_ARMS = {
-  ...HARNESS_SHIPPED_ARMS,
   caravanBeats: 'shipped',
+  errand: 'press',
 } as const satisfies Partial<RunOptions>
 
 // ---------------------------------------------------------------------------
@@ -2085,6 +2081,8 @@ export function runHarness(options: RunOptions): RunReport {
   // W3-5 — the errand, and how long its site was held. Measured under either arm.
   const errandNodeId = graph.nodes.find((node) => isErrandNode(node))?.id ?? null
   const errandSite: ErrandSiteMetrics = { reachedAt: null, completedAt: null, heldSeconds: 0 }
+  /** W3-5 — the objective this frame's `E` targeted, completed at step 7b under `press`. */
+  let pressedObjectiveId: string | null = null
   const middleNodeIds = new Set(
     graph.nodes
       .filter((node) => !graph.rootNodeIds.includes(node.id) && node.id !== graph.finalNodeId)
@@ -4501,6 +4499,9 @@ export function runHarness(options: RunOptions): RunReport {
         hostileToPlayer: false,
         squadEligible: true,
       })
+      // A press-ganged escort walks with the squad as a rescued captive does, so under the
+      // `decoy` placebo it never swings either.
+      actor.inert = squadPolicy === 'decoy'
       assignSquadSlot(actor)
       companionMetrics.recruited += 1
       return true
@@ -4617,7 +4618,9 @@ export function runHarness(options: RunOptions): RunReport {
    *
    * W3-5 — under `errand: 'press'` the press also completes the objective it targets, after
    * the site's own service, as `handleGeneratedInteraction` → `completeGeneratedObjective`
-   * does. The `clear` stand-in leaves that to step 7b and only once the site is clear.
+   * does. The completion lands at step 7b, where the `clear` stand-in completes one: the
+   * engine runs `interact` between frames, so the tier it earns is raised by the next
+   * frame's `updateThreat` before anything that frame spawns.
    */
   const pressInteract = (activeNode: FactionObjectiveNode | null): void => {
     if (eventsFought && interactWithEvents()) return
@@ -4644,12 +4647,10 @@ export function runHarness(options: RunOptions): RunReport {
       maxHealth: player.maxHealth,
       rationOnBleed: doctrineEffects.rationOnBleed,
     })
-    const completeTargeted = (): void => {
-      if (errandModel !== 'press' || !choice.targetsObjective || activeNode === null) return
-      if (!objectivePrerequisitesDone(activeNode, objectives)) return
-      if (!completeObjectiveEntry(objectives, activeNode.id)) return
-      settleSkips(activeNode.id)
-      finishObjective(activeNode.id)
+    const recordTarget = (): void => {
+      if (errandModel === 'press' && choice.targetsObjective && activeNode !== null) {
+        pressedObjectiveId = activeNode.id
+      }
     }
     if (choice.kind === 'ration') {
       eatRation()
@@ -4660,10 +4661,10 @@ export function runHarness(options: RunOptions): RunReport {
       const keepHealing =
         service.kind === 'recovery' && healingOn && player.health < player.maxHealth
       if (!keepHealing) serviceCooldown.set(service.id, elapsed + HARNESS_SERVICE_COOLDOWN)
-      completeTargeted()
+      recordTarget()
       return
     }
-    completeTargeted()
+    recordTarget()
     if (site && choice.kind !== 'caravan' && choice.kind !== 'none') return
     interactWithCart()
   }
@@ -6649,6 +6650,21 @@ export function runHarness(options: RunOptions): RunReport {
         completeObjectiveEntry(objectives, activeNode.id)
         settleSkips(activeNode.id)
         finishObjective(activeNode.id)
+      }
+    }
+    // W3-5 — a press that targeted the active objective completes it here, where the stand-in
+    // below would have. The engine runs `interact` between frames, so the tier it earns rises
+    // in the next frame's `updateThreat`, before that frame's spawns, and so it does here.
+    if (pressedObjectiveId !== null) {
+      const pressed = graph.nodes.find((node) => node.id === pressedObjectiveId)
+      pressedObjectiveId = null
+      if (
+        pressed &&
+        objectivePrerequisitesDone(pressed, objectives) &&
+        completeObjectiveEntry(objectives, pressed.id)
+      ) {
+        settleSkips(pressed.id)
+        finishObjective(pressed.id)
       }
     }
     // Anything that is not an arrival and is not a live contract completes when the player

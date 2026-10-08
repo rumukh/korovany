@@ -35,6 +35,10 @@
  * length moved by ten percent or less. Without a card taken and with the director silent, a
  * `progress` run is the `time` run to the frame; `progressAll` is not.
  *
+ * Measured before W2-2's caravan spine joined the shipped arms. The tests below hold with it,
+ * on the same seeds: its caravans add steps of progress, so the finale is now fought at
+ * pacing tier 4 and every cell reaches three drafts (`docs/run-harness.md`, Baseline).
+ *
  * The calm gate's 30 s ceiling (`DOCTRINE_DRAFT_MAX_HOLD_SECONDS`) changed four of the 360
  * `progress` runs, and no win: the stuck guard timeouts on seeds 79191 and 142543 under the
  * beeline and cautious scripts, whose third and fourth drafts the gate alone never opened.

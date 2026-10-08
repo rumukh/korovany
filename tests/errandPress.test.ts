@@ -2,8 +2,8 @@
  * W3-5 — the guard's errand at the riverside healer, and the stall the harness reported there.
  *
  * W2-1's and W2-2's sweeps found the guard standing on its «interact» errand until the time ran
- * out. That was seeds 79191 and 142543 under `beeline` and `cautious` on the shipped arms, and
- * 285085 with the caravan spine. In every case the errand had landed on
+ * out. Before the caravan spine that was seeds 79191 and 142543, under `beeline` and `cautious`;
+ * with the spine it is 142543 and 285085. In every case the errand had landed on
  * `site-recovery-riverside`, a healer, and an encounter archer held 8–12 m off it. A scripted
  * player who never fights what it cannot reach never touched that archer. The harness then had
  * two stand-ins for the engine's `E`, and both failed:
@@ -17,8 +17,8 @@
  * rule: `interact` → `handleGeneratedInteraction` → `chooseGeneratedInteraction` targets the
  * active objective whenever the player stands within 6 m of its site, whatever is shooting.
  * The first half below drives those production methods on seed 142543's own world. The second
- * half holds the harness's `errand` arm to them over the four whole runs, against the old
- * stand-in kept as the control.
+ * half holds the harness's `errand` arm to them over every whole run that stalled, against the
+ * old stand-in kept as the control.
  */
 
 import assert from 'node:assert/strict'
@@ -207,26 +207,42 @@ test('control: with the contract arm pinned, the healer heals but the errand wai
 // The harness, held to it
 // ---------------------------------------------------------------------------
 
-/** The four runs W2-1 timed out, cut to 240 s: the stall begins at about 65 s. */
-const STALLS: ReadonlyArray<readonly [number, InputPolicy]> = [
-  [79191, 'beeline'],
-  [79191, 'cautious'],
-  [142543, 'beeline'],
-  [142543, 'cautious'],
+type CaravanBeats = 'shipped' | 'off'
+
+/**
+ * Every guard run the shipped arms stalled on, cut to 300 s; the stall begins at 65–87 s.
+ * With the caravan spine that is 142543 and 285085; without it, W2-1's 79191 and 142543.
+ * The cautious script never dropped below 35 % in these runs, so its runs are the beeline's.
+ */
+const STALLS: ReadonlyArray<readonly [number, InputPolicy, CaravanBeats]> = [
+  [142543, 'beeline', 'shipped'],
+  [142543, 'cautious', 'shipped'],
+  [285085, 'beeline', 'shipped'],
+  [285085, 'cautious', 'shipped'],
+  [79191, 'beeline', 'off'],
+  [142543, 'beeline', 'off'],
 ]
 
 test('the harness presses its errand done the way the engine does, and its old stand-in still stalls', () => {
-  for (const [seed, policy] of STALLS) {
-    const options = { ...HARNESS_SHIPPED_ARMS, seed, faction: FACTION, policy, hz: 30, timeLimit: 240 } as const
+  for (const [seed, policy, caravanBeats] of STALLS) {
+    const options = {
+      ...HARNESS_SHIPPED_ARMS,
+      caravanBeats,
+      seed,
+      faction: FACTION,
+      policy,
+      hz: 30,
+      timeLimit: 300,
+    } as const
     const pressed = runHarness(options)
     const waited = runHarness({ ...options, errand: 'clear' })
-    const label = `${policy} ${seed}`
+    const label = `${policy} ${seed}, spine ${caravanBeats}`
     assert.equal(pressed.errand, 'press')
     assert.equal(waited.errand, 'clear')
 
     // Both reach the errand's site on the same frame: nothing before it differs.
     const reached = pressed.balance.errandSite.reachedAt
-    assert.ok(reached !== null && reached < 70, `${label}: reached at ${reached}`)
+    assert.ok(reached !== null && reached < 100, `${label}: reached at ${reached}`)
     assert.equal(waited.balance.errandSite.reachedAt, reached)
 
     // `press`: the errand completes on the frame the prompt is up, with something hostile
@@ -243,25 +259,26 @@ test('the harness presses its errand done the way the engine does, and its old s
 
     // The control: the old stand-in, which waits for the archer to go, never completes it.
     assert.equal(waited.balance.errandSite.completedAt, null, `${label}: the stand-in completed it`)
-    assert.ok(waited.balance.errandSite.heldSeconds >= 150, `${label}: held ${waited.balance.errandSite.heldSeconds} s`)
+    assert.ok(waited.balance.errandSite.heldSeconds >= 200, `${label}: held ${waited.balance.errandSite.heldSeconds} s`)
     assert.equal(waited.outcome, 'timeout')
     assert.equal(waited.objectives.find((objective): boolean => objective.id === errandId)?.completedAt ?? null, null)
   }
 })
 
 test('the beeline runs that stalled now end long before the limit', () => {
-  // The cautious 142543 run finishes the errand too, and then meets the cautious finale stall,
+  // The cautious 142543 runs finish the errand too, and then meet the cautious finale stall,
   // a different class `docs/run-harness.md` names. The beeline runs have no such retreat.
-  for (const seed of [79191, 142543]) {
+  for (const [seed, caravanBeats] of [[142543, 'shipped'], [285085, 'shipped'], [79191, 'off'], [142543, 'off']] as const) {
     const report = runHarness({
       ...HARNESS_SHIPPED_ARMS,
+      caravanBeats,
       seed,
       faction: FACTION,
       policy: 'beeline',
       hz: 30,
       timeLimit: 600,
     })
-    assert.notEqual(report.outcome, 'timeout', `beeline ${seed} still timed out`)
-    assert.ok(report.elapsed < 150, `beeline ${seed} ran ${report.elapsed} s`)
+    assert.notEqual(report.outcome, 'timeout', `beeline ${seed}, spine ${caravanBeats}, still timed out`)
+    assert.ok(report.elapsed < 200, `beeline ${seed}, spine ${caravanBeats}, ran ${report.elapsed} s`)
   }
 })

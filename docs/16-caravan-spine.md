@@ -138,11 +138,12 @@ touched while the camp waits, a chosen offer that is no offer, a stall clock pas
 - `tests/runHarnessBeats.test.ts` and [the harness](run-harness.md#w2-2-pr-b-the-caravan-spine): in 270 runs a row the
   spine meets about two caravans a run for every side, wins 128 against 133 without it, and lengthens the scripted
   player's median win by 28–52 s. The gate's control never reaches the finale; the walk-away control still does.
+- The spine is part of `HARNESS_SHIPPED_ARMS` since the follow-up to #115, so "shipped" means what players get. The
+  [baseline](run-harness.md#baseline) was re-published with it (183 wins of 360 against 197 with the spine off, the
+  duelist's villain the side it costs most), and the seeded whole-run tests were re-pinned by their own rules.
 
 ## 10. Not done
 
 - Binding a beat to a live `ChronicleCaravan`, so the cart robbed is the cart the chronicle tracks. Chronicle carts are
   spawned by the chronicle's own stream on trade routes, and pinning one to the trunk would change every seed's history.
-- Folding `HARNESS_SPINE_ARMS` into `HARNESS_SHIPPED_ARMS`. It would move the published baseline and every whole-run
-  test seeded on it, so it is left as a decision for the programme.
 - Option A's 6–10 minute run is a joint outcome of waves 2 and 3; the harness's scripted player cannot show it.
