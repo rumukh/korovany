@@ -10,6 +10,7 @@ import { summarizeAchievements } from '../src/game/achievements.ts'
 import { createDefaultProfile } from '../src/game/run/storage.ts'
 import { FACTION_INFO } from '../src/game/types.ts'
 import { buildInitialGameView } from '../src/game/world/CampaignView.ts'
+import type { CaravanBeatView } from '../src/game/world/CaravanBeats.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import { GameplayPointerCaptures } from '../src/game/input/CombatInput.ts'
 import { DEFAULT_VISUAL_PREFERENCES } from '../src/game/visualSettings.ts'
@@ -44,7 +45,7 @@ const loader = registerHooks({
   },
 })
 const { MenuScreen, GameScreen } = await import('../src/App.tsx')
-const { BridgeAmbushHud } = await import('../src/game/ui/BridgeAmbushHud.tsx')
+const { CaravanBeatHud } = await import('../src/game/ui/CaravanBeatHud.tsx')
 loader.deregister()
 
 const noop = () => {}
@@ -83,14 +84,20 @@ test('all three faction launches precede run setup while settings stay at the bo
   assert.match(html, /Боевой интерфейс/)
 })
 
-const bridge: NonNullable<ComponentProps<typeof BridgeAmbushHud>['view']> = {
+const bridge: CaravanBeatView = {
+  id: 'bridge-ambush:bridge-test', placement: 'bridge', role: 'rob', owner: 'guard', tier: 'standard',
   phase: 'approach', title: 'Корован у моста', description: 'Обоз ждёт на переправе.',
-  hint: 'Подойди по дороге.', distance: 85, bearing: 0.6,
-  remainingEnemies: 3, totalEnemies: 3, cargoHealth: 100, cargoMaxHealth: 100,
-  progress: 0, canChoose: false, outcome: null, consequence: null,
+  hint: 'Подойди по дороге.', regionLabel: 'C3', x: 0, z: 0, distance: 85, bearing: 0.6,
+  remainingEnemies: 3, totalEnemies: 3, escort: 'солдат, разведчик, лучник',
+  cargoHealth: 100, cargoMaxHealth: 100, progress: 0, canChoose: false, choices: [],
+  outcome: null, consequence: null, abandonRemaining: null, active: true, tracked: false,
 }
-function bridgeMarkup(overrides: Partial<typeof bridge>, paused = false, inJournal = false): string {
-  return renderToStaticMarkup(createElement(BridgeAmbushHud, {
+const elfChoices: CaravanBeatView['choices'] = [
+  { outcome: 'take', label: 'Забрать груз', detail: '+90 золота сразу; цены в лавке C2 ×1,18 → ×1,27.', disabledReason: null },
+  { outcome: 'give', label: 'Отдать домикам деревяным', detail: '+2 пайка от домиков; цены в лавке C2 ×1,18 → ×1,12.', disabledReason: null },
+]
+function bridgeMarkup(overrides: Partial<CaravanBeatView>, paused = false, inJournal = false): string {
+  return renderToStaticMarkup(createElement(CaravanBeatHud, {
     view: { ...bridge, ...overrides }, paused, inJournal, onChoose: noop, onSquad: noop, onTrack: noop,
   }))
 }
@@ -101,43 +108,59 @@ test('bridge approach teaches squad staging without offering unearned cargo', ()
   assert.match(html, /Отряд/)
   assert.doesNotMatch(html, /Забрать груз/)
   assert.match(html, /85 м/)
+  // A road beat is tracked to its cart, not to a bridge it does not have.
+  assert.match(bridgeMarkup({ placement: 'forest' }), /К телеге/)
 })
 
-test('an inactive bridge leaves the field compass alone but remains discoverable in the journal', () => {
+test('an inactive beat leaves the field compass alone but remains discoverable in the journal', () => {
   assert.equal(bridgeMarkup({ active: false }), '')
   const journal = bridgeMarkup({ active: false }, false, true)
   assert.match(journal, /К мосту/)
   assert.match(journal, /Обоз ждёт на переправе/)
+  // The journal names who holds the cart, so the price of the fight is on the card.
+  assert.match(journal, /C3 · охрана: солдат, разведчик, лучник/)
 })
 
-test('bridge cargo decisions are disabled out of range and while paused', () => {
+test('cargo decisions are the side\'s own, disabled out of range and while paused', () => {
   for (const [canChoose, paused] of [[false, false], [true, true]] as const) {
-    const html = bridgeMarkup({ phase: 'secured', canChoose }, paused)
+    const html = bridgeMarkup({ phase: 'secured', canChoose, choices: elfChoices }, paused)
     assert.equal((html.match(/<button[^>]*disabled=""/g) ?? []).length, 2)
   }
-  const ready = bridgeMarkup({ phase: 'secured', canChoose: true })
+  const ready = bridgeMarkup({ phase: 'secured', canChoose: true, choices: elfChoices })
   assert.doesNotMatch(ready, /disabled=/)
   assert.match(ready, /Забрать груз/)
-  assert.match(ready, /Довести обоз/)
-  const rewards = bridgeMarkup({
+  assert.match(ready, /Отдать домикам деревяным/)
+  assert.match(ready, /\+90 золота сразу; цены в лавке C2 ×1,18 → ×1,27/)
+  // The villain's three verbs, with an honest reason on the one the squad cap refuses.
+  const villain = bridgeMarkup({
     phase: 'secured', canChoose: true,
-    seizeDetail: '+85 золота; груз не попадёт в склады.',
-    deliverDetail: '+2 пайка и снабжение региона C3.',
+    choices: [
+      { outcome: 'plunder', label: 'Забрать добро', detail: '+90 золота сразу.', disabledReason: null },
+      { outcome: 'press', label: 'Забрить в войско', detail: '+1 боец.', disabledReason: 'Войско полно: 4/4. Больше не прокормить.' },
+      { outcome: 'burn', label: 'Сжечь груз', detail: 'У ворот дворца станет на одного стражника меньше.', disabledReason: null },
+    ],
   })
-  assert.match(rewards, /\+85 золота/)
-  assert.match(rewards, /\+2 пайка и снабжение региона C3/)
+  assert.equal((villain.match(/<button[^>]*disabled=""/g) ?? []).length, 1)
+  assert.match(villain, /Войско полно: 4\/4/)
+  assert.doesNotMatch(villain, /\+1 боец/)
+  assert.match(villain, /на одного стражника меньше/)
 })
 
-test('bridge delivery and settled views report progress and consequences, not new rewards', () => {
+test('beat delivery and settled views report progress and consequences, not new rewards', () => {
   const delivering = bridgeMarkup({ phase: 'delivering', progress: 0.4 })
   assert.match(delivering, /<progress max="1" value="0.4"/)
   assert.doesNotMatch(delivering, /Забрать груз/)
-  const resolved = bridgeMarkup({ phase: 'resolved', distance: 0, outcome: 'deliver', consequence: 'Посёлок получил припасы.' })
-  assert.match(resolved, /Посёлок получил припасы/)
+  const resolved = bridgeMarkup({ phase: 'resolved', distance: 0, outcome: 'give', consequence: 'Телега ушла к домикам деревяным.' })
+  assert.match(resolved, /Телега ушла к домикам деревяным/)
   assert.doesNotMatch(resolved, /<button/)
   assert.equal(bridgeMarkup({ phase: 'resolved', distance: 61 }), '')
+  const escaped = bridgeMarkup({ phase: 'escaped', distance: 10, consequence: 'Корован ушёл, пока тебя не было.' })
+  assert.match(escaped, /Корован ушёл/)
+  assert.doesNotMatch(escaped, /<button/)
+  const unavailable = bridgeMarkup({ phase: 'unavailable', description: 'Берег занят.' }, false, true)
+  assert.match(unavailable, /class="journal-consequence"/)
+  assert.equal(bridgeMarkup({ phase: 'unavailable' }), '')
 })
-
 const gameProps: ComponentProps<typeof GameScreen> = {
   view: buildInitialGameView({
     blueprint: generateWorld(7),
@@ -152,7 +175,7 @@ const gameProps: ComponentProps<typeof GameScreen> = {
   onBowAimDown: noop, onBowAimUp: noop,
   onInteract: noop, onCommand: noop, onOpenSquadCommand: noop, onCloseSquadCommand: noop,
   onIssueSquadCommand: () => true, onOpenJournal: noop, onCloseJournal: noop,
-  onBridgeChoice: noop, onTrackBridge: noop, onPinRumour: noop, onPinObjective: noop, onTakeDoctrine: noop,
+  onBeatChoice: noop, onTrackBeat: noop, onPinRumour: noop, onPinObjective: noop, onTakeDoctrine: noop,
   onPointerLock: noop, onInput: noop, onRetryFinalization: noop, onRestart: noop,
   musicMuted: true, sfxVolume: 0.8, dynamicDayNight: true, weatherEnabled: true,
   bloomEnabled: true, inkOutlinesEnabled: true, foliageQuality: 'high', screenShakeEnabled: true,
@@ -181,7 +204,7 @@ test('compact field HUD keeps journal access and the paused journal renders full
   assert.match(planning, /class="gameplay-layer" inert=""/)
 })
 
-test('bow hold and bridge actions keep dedicated engine callback contracts', () => {
+test('bow hold and caravan beat actions keep dedicated engine callback contracts', () => {
   const gameScreen = appSource.slice(
     appSource.indexOf('export function GameScreen'),
     appSource.indexOf('function App()'),
@@ -199,6 +222,6 @@ test('bow hold and bridge actions keep dedicated engine callback contracts', () 
   assert.doesNotMatch(genericAbility, /setBowAiming|faction === 'elf'/)
   assert.match(appWiring, /onBowAimDown=\{\(\) => engineRef\.current\?\.setBowAiming\(true, 'button'\)\}/)
   assert.match(appWiring, /onBowAimUp=\{\(\) => engineRef\.current\?\.setBowAiming\(false, 'button'\)\}/)
-  assert.match(appWiring, /onBridgeChoice=\{\(choice\) => \{ engineRef\.current\?\.chooseBridgeAmbush\(choice\) \}\}/)
-  assert.match(appWiring, /onTrackBridge=\{\(\) => \{ engineRef\.current\?\.trackBridgeAmbush\(\) \}\}/)
+  assert.match(appWiring, /onBeatChoice=\{\(beatId, outcome\) => \{ engineRef\.current\?\.chooseCaravanBeat\(beatId, outcome\) \}\}/)
+  assert.match(appWiring, /onTrackBeat=\{\(beatId\) => \{ engineRef\.current\?\.trackCaravanBeat\(beatId\) \}\}/)
 })

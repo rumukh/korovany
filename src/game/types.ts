@@ -1,5 +1,5 @@
 import type { AchievementUnlock } from './achievements'
-import type { BridgeAmbushView } from './world/BridgeAmbush'
+import type { CaravanBeatsView } from './world/CaravanBeats'
 import type { ExpeditionView } from './world/ExpeditionPlanner'
 import type { SquadCommandView } from './world/SquadCommand'
 
@@ -692,7 +692,8 @@ export interface GameView {
   /** Roadmap 1.6 — the open draft, if there is one, and the rules already taken. */
   doctrines: DoctrineView
   expedition: ExpeditionView
-  bridgeAmbush: BridgeAmbushView | null
+  /** W2-2 — every caravan beat of the run, and the one the field HUD shows. */
+  caravanBeats: CaravanBeatsView
   /** Somebody other than the player is loading a caravan within sight, and how far along. */
   caravanLoot: import('./world/CaravanClaim.ts').CaravanLootView | null
   finale: FinaleView | null

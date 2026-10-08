@@ -29,6 +29,7 @@ import {
 } from '../src/game/world/CombatMastery.ts'
 import { createSquadCommandState } from '../src/game/world/SquadCommand.ts'
 import { ExpeditionPlanner } from '../src/game/world/ExpeditionPlanner.ts'
+import { attachCaravanBeats } from './caravanBeatFixture.ts'
 
 // The browser build resolves extensionless imports. Use Node's existing resolver hook
 // to execute the very same engine methods, rather than copying an adapter into a test.
@@ -689,6 +690,95 @@ test('real streaming removal and reentry preserve boss wounds and dead escorts w
   assert.equal(restored.state.boss?.health, 37)
   assert.equal(restored.state.escorts[0].defeated, true)
   assert.deepEqual(value.ends, [])
+})
+
+test('W2-2: a palace guard a burned cart sent away never comes back, on a later visit or after a continue', () => {
+  // The villain saw both guards at the palace gate, walked to the bridge, burned the palace's
+  // cart and came back. The streaming, the choice, the save and the respawn are the engine's
+  // own; only the meshes are headless, set up by the caller.
+  function burnAtTheBridge(
+    value: ReturnType<typeof fixture>,
+    outcome: 'burn' | 'plunder',
+    afterChoice: () => void = () => {},
+  ) {
+    // Seen from the road, never fought: the finale has not begun, so its garrison can thin.
+    value.finale.introduced = false
+    value.finale.suspended = true
+    Reflect.set(value.engine, 'eventPropTargets', new Map())
+    const beat = attachCaravanBeats(value.engine, value.blueprint, 'villain')
+    assert.equal(beat.plan.owner, value.identity.enemyFaction, 'the bridge cart is the palace\'s')
+    const guards = () => value.actors
+      .filter((actor) => actor.alive && value.identity.escortIds.includes(actor.generatedSpawnId ?? ''))
+      .map((actor) => actor.generatedSpawnId)
+    invoke(value.engine, 'spawnGeneratedRegionEncounters', value.identity.regionId)
+    assert.deepEqual(guards(), value.identity.escortIds, 'both guards stand at the gate')
+
+    // Off to the bridge: the palace streams out, and both guards' bodies are kept.
+    value.regions.update(beat.plan.regionId)
+    invoke(value.engine, 'syncGeneratedRegions')
+    assert.deepEqual(guards(), [])
+    assert.ok(value.finale.escorts.every((escort) => escort.body !== null), 'both guards were seen')
+
+    // The cart's escort is down, and the villain stands at the cart and chooses.
+    for (const combatant of beat.state.combatants) {
+      if (!combatant.enemy) continue
+      combatant.health = 0
+      combatant.defeated = true
+    }
+    beat.state.phase = 'secured'
+    value.player.position.set(beat.cart.position.x, 0, beat.cart.position.z)
+    assert.equal(invoke<boolean>(value.engine, 'chooseCaravanBeat', beat.plan.id, outcome), true)
+    afterChoice()
+
+    // Back at the palace, through the same streaming pass, twice as frames would run it.
+    value.regions.update(value.identity.regionId)
+    invoke(value.engine, 'syncGeneratedRegions')
+    invoke(value.engine, 'syncGeneratedRegions')
+    return { value, beat, guards }
+  }
+
+  const villain = fixture('villain')
+  useHeadlessActorMeshes(villain)
+  const burned = burnAtTheBridge(villain, 'burn')
+  const [kept, sent] = burned.value.identity.escortIds
+  assert.match(burned.beat.state.consequence ?? '', /на одного стражника меньше/)
+  assert.deepEqual(burned.guards(), [kept], 'the guard the fire sent away is not at the gate')
+  assert.ok(burned.value.actors.some((actor) => actor.generatedSpawnId === burned.value.identity.bossId))
+
+  // A continue: the save is read back through the finale's own normaliser, and the palace
+  // streams in on an engine with nobody standing yet. The guard is still gone, and the save
+  // keeps the burn spent, so a second fire cannot thin the gate again.
+  const save = invoke<ActiveRunSaveV3>(burned.value.engine, 'saveGeneratedRun')
+  const delta = save.regionDeltas[burned.value.identity.regionId]
+  const restored = normalizeFinaleState(save.directorState.finale, burned.value.identity, {
+    defeatedActorIds: delta?.defeatedActorIds ?? [],
+    clearedEncounterIds: delta?.clearedEncounterIds ?? [],
+    objectiveDone: false,
+  })
+  assert.equal(restored.rejected, false)
+  assert.equal(restored.state.escorts.find((escort) => escort.id === sent)?.defeated, true)
+  assert.equal((save.directorState.caravanBeats as { garrisonThinned?: boolean }).garrisonThinned, true)
+  Reflect.set(burned.value.engine, 'finale', restored.state)
+  burned.value.actors.length = 0
+  Reflect.set(burned.value.engine, 'generatedActivationSpawns',
+    new Map([[burned.value.identity.regionId, new Set<string>()]]))
+  invoke(burned.value.engine, 'spawnGeneratedRegionEncounters', burned.value.identity.regionId)
+  assert.deepEqual(burned.guards(), [kept])
+  assert.ok(burned.value.actors.some((actor) => actor.generatedSpawnId === burned.value.identity.bossId))
+
+  // Negative controls. Plundered instead, the cart sends nobody away and both guards come
+  // back, so the return above is a real one. And were the thinning ever forgotten after the
+  // fire, the same return would field that guard again, which the assertions above would see.
+  const plunderer = fixture('villain')
+  useHeadlessActorMeshes(plunderer)
+  const plundered = burnAtTheBridge(plunderer, 'plunder')
+  assert.deepEqual(plundered.guards(), plunderer.identity.escortIds)
+  const forgetful = fixture('villain')
+  useHeadlessActorMeshes(forgetful)
+  const forgotten = burnAtTheBridge(forgetful, 'burn', () => {
+    for (const escort of forgetful.finale.escorts) escort.defeated = false
+  })
+  assert.deepEqual(forgotten.guards(), forgetful.identity.escortIds)
 })
 
 test('rejected partial state cannot suppress materialization and strand the actual campaign', () => {

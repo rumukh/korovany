@@ -307,7 +307,7 @@ test('W1-1 in whole runs: a random event up at arrival stands down, and the cont
 })
 
 test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never to the squad', () => {
-  // Under `engage`, the elf on seed 7920 and the guard on seed 47515 each reach a chronicle
+  // Under `engage`, the elf on seed 7920 and the guard on seed 79191 each reach a chronicle
   // ambush whose raiders load their cart. In the baseline's `ignore` arm no NPC ever starts a
   // load, so these are the runs that show the channel working end to end. The pre-W1-2
   // touch rule would lose a cart without a load (`lost > loads`), and the old squad rule
@@ -317,9 +317,13 @@ test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never 
   // stride on which each faction's raiders start a load. W2-1 moved what the shipped arms
   // run into: the tier on the HUD now follows progress, so events, waves and drafts come
   // sooner, and the night moved, so the chronicle's carts meet different ground.
+  //
+  // W2-2 re-picked the guard's by the same rule. On 47515 the guard now defends an ambush of
+  // its own side's cart instead of robbing it, the run takes another course, and no raider
+  // starts a load; the guard's first such seed is now 79191. The elf keeps 7920.
   const reports = ([
     [7920, 'elf'],
-    [47515, 'guard'],
+    [79191, 'guard'],
   ] as const).map(([seed, faction]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,
@@ -381,6 +385,34 @@ test('W1-6 in whole runs: the guard\'s own garrisons call for men only in a figh
   }
 })
 
+test('W1-6 in whole runs: the guard\'s own idle soldiers step back for a contract, and come home', () => {
+  // Seed 1, the contrary arm: the guard takes «Зверьё у домиков» beside the elf's and the
+  // villain's strongholds, and eighteen of the palace's own soldiers fill the window. With
+  // nobody stepping back the beast raid finds four of the five slots it needs and is
+  // abandoned as `crowded`. The shipped staging asks the farthest pack out of sight to step
+  // back, and it comes home once the room is free and nobody would see it come.
+  const options = {
+    ...HARNESS_SHIPPED_ARMS,
+    seed: 1,
+    faction: 'guard',
+    policy: 'beeline',
+    contractPolicy: 'contrary',
+    hz: 30,
+    timeLimit: 300,
+  } as const
+  const shipped = runHarness(options)
+  const none = runHarness({ ...options, staging: 'none' })
+  assert.equal(shipped.staging, 'friendly')
+  assert.equal(shipped.balance.contracts.started, 1)
+  assert.equal(shipped.balance.contracts.abandoned, 0)
+  assert.equal(shipped.balance.encounters.packsSteppedBack, 1)
+  assert.equal(shipped.balance.encounters.packsReturned, 1)
+  assert.equal(none.staging, 'none')
+  assert.equal(none.balance.contracts.started, 0)
+  assert.deepEqual(none.balance.contracts.abandonedBy, { crowded: 1 })
+  assert.equal(none.balance.encounters.packsSteppedBack, 0)
+})
+
 test('the arms leave the pinned run alone, and the shipped kit walks the engine\'s road', () => {
   const base = { seed: 424242, faction: 'elf', policy: 'beeline', hz: 60, timeLimit: 40 } as const
   const omitted = runHarness(base)
@@ -395,6 +427,7 @@ test('the arms leave the pinned run alone, and the shipped kit walks the engine\
     encounterModel: 'harness',
     regionWindow: 'square',
     commanders: 'inert',
+    staging: 'none',
   })
   assert.deepEqual(explicit, omitted, 'the declared defaults must be the defaults')
   assert.equal(omitted.balance.companions.started, 0)

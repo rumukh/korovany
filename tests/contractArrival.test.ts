@@ -4,8 +4,8 @@
  *
  * Everything below drives production engine methods — `updateFactionContract`,
  * `updateEvents`, `startRandomEvent` and the shipped builders it calls, `yieldActorSlots`,
- * `materializeBridgeAmbush` and `saveGeneratedRun` — on an engine whose render, audio and
- * actor-mesh boundaries are replaced, the way `tests/bridgeAmbush.test.ts` does it. Every
+ * `materializeCaravanBeat` and `saveGeneratedRun` — on an engine whose render, audio and
+ * actor-mesh boundaries are replaced, the way `tests/caravanBeats.test.ts` does it. Every
  * claim carries a negative control: the pre-W1-1 rule is put back on the instance, and the
  * same assertion has to fail against it.
  *
@@ -24,6 +24,9 @@ import test from 'node:test'
 import * as THREE from 'three'
 import { getBlueprintRegionBounds, getSiteWorldPosition2D } from '../src/game/content/registry.ts'
 import {
+  RICH_CARAVAN_CONFISCATE_DESCRIPTION,
+  CARAVAN_CONFISCATE_PROMPT,
+  RICH_CARAVAN_CONFISCATED_NOTICE,
   RICH_CARAVAN_LOOT_TAKEN_NOTICE,
   WORLD_EVENT_FAILURE_MESSAGES,
   describeContractAbandoned,
@@ -33,6 +36,7 @@ import {
   describeContractWaitsForEvent,
   describeEventHandbackForContract,
   describeRandomEventStoodDown,
+  describeRichCaravanConfiscated,
   formatRegionGridLabel,
   generatedSiteLabel,
 } from '../src/game/content/gameCopy.ts'
@@ -48,10 +52,11 @@ import {
   type WorldEventKind,
 } from '../src/game/types.ts'
 import { ActorBudget, MAX_ACTORS } from '../src/game/world/ActorBudget.ts'
-import { createBridgeAmbushPlan, createBridgeAmbushState } from '../src/game/world/BridgeAmbush.ts'
+import { attachCaravanBeats } from './caravanBeatFixture.ts'
 import {
   CONTRACT_TEMPLATES,
   EVENT_RETRY,
+  WORLD_EVENT_REWARDS,
   completeObjectiveEntry,
   createCampaignContractState,
   createChronicleCommitmentState,
@@ -238,11 +243,6 @@ function fixture(faction: Faction = 'villain', contracts?: CampaignContractState
   }
   const eventDraws = { count: 0, forced: [] as number[] }
   const walkable = { value: true }
-  const plan = createBridgeAmbushPlan(blueprint, faction)
-  assert.ok(plan, 'the reproduction seed has a bridge ambush')
-  const bridgeState = createBridgeAmbushState(blueprint, faction, plan)
-  const cart = new THREE.Group()
-  cart.position.set(plan.cargoStart.x, 0, plan.cargoStart.z)
   let serial = 0
   const engine: object = Object.create(GameEngine.prototype)
   const generatedWorld = {
@@ -282,11 +282,6 @@ function fixture(faction: Faction = 'villain', contracts?: CampaignContractState
       },
       startedAt: '2026-10-06T10:00:00.000Z',
     },
-    bridgeAmbushPlan: plan,
-    bridgeAmbushState: bridgeState,
-    bridgeAmbushCart: cart,
-    bridgeAmbushSpawnRetryAt: 0,
-    bridgeAmbushCapacityNoticeShown: false,
     player,
     actors,
     eventPropTargets: new Map(),
@@ -391,6 +386,10 @@ function fixture(faction: Faction = 'villain', contracts?: CampaignContractState
   })
   Reflect.set(engine, 'actorBudget', new ActorBudget((category, count) =>
     invoke<number>(engine, 'yieldActorSlots', category, count)))
+  const beat = attachCaravanBeats(engine, blueprint, faction)
+  const plan = beat.plan
+  const bridgeState = beat.state
+  const cart = beat.cart
   for (const method of [
     'emitView',
     'playSound',
@@ -519,6 +518,7 @@ function fixture(faction: Faction = 'villain', contracts?: CampaignContractState
     plan,
     bridgeState,
     cart,
+    beat,
     spawn,
     events,
     contractState,
@@ -1108,6 +1108,11 @@ test('a champion the player stopped fighting, or walked away from, is stood down
   assert.ok(held.events().includes(forever))
 })
 
+/** The production materialization of the fixture's bridge beat. */
+function materializeBeat(value: { engine: object; plan: { id: string } }): boolean {
+  return invoke<boolean>(value.engine, 'materializeCaravanBeat', invoke(value.engine, 'caravanBeatEntry', value.plan.id))
+}
+
 test('the bridge ambush and a contract never cancel each other, and neither strands', () => {
   // The elf's `reprisal` is a one-actor bounty: take that actor away and the contract can
   // never be won, which is the silent cancellation this guards against.
@@ -1127,12 +1132,12 @@ test('the bridge ambush and a contract never cancel each other, and neither stra
   assert.equal(probe.actors.length, MAX_ACTORS)
   probe.standAt(probe.plan.cargoStart)
 
-  assert.equal(invoke<boolean>(probe.engine, 'materializeBridgeAmbush'), false)
+  assert.equal(materializeBeat(probe), false)
   assert.equal(probe.bridgeState.phase, 'approach', 'the ambush must wait, not give up')
   assert.ok(target.every((id) => probe.actors.some((actor) => actor.id === id)),
     'the bridge ambush took the contract\'s mark off the ground')
   assert.ok(probe.notices.some((notice) => notice.message.includes('слишком людно')))
-  assert.ok(Reflect.get(probe.engine, 'bridgeAmbushSpawnRetryAt') > Reflect.get(probe.engine, 'elapsed'))
+  assert.ok(probe.beat.runtime.spawnRetryAt > Reflect.get(probe.engine, 'elapsed'))
 
   // Neither strands: once the contract's clock settles it, the ambush materializes.
   const running = probe.progress(probe.alternative)
@@ -1141,14 +1146,14 @@ test('the bridge ambush and a contract never cancel each other, and neither stra
   probe.frames(FRAME * 3)
   assert.equal(probe.status(probe.alternative), 'failed')
   assert.equal(probe.contractEvent(), undefined)
-  Reflect.set(probe.engine, 'elapsed', Reflect.get(probe.engine, 'bridgeAmbushSpawnRetryAt'))
-  assert.equal(invoke<boolean>(probe.engine, 'materializeBridgeAmbush'), true)
+  Reflect.set(probe.engine, 'elapsed', probe.beat.runtime.spawnRetryAt)
+  assert.equal(materializeBeat(probe), true)
   assert.equal(probe.bridgeState.phase, 'fighting')
 
   // The other direction: a contract that starts beside a live ambush never thins it out.
   const beside = fixture('elf')
   invoke(beside.engine, 'pinObjective', beside.alternative.id)
-  assert.equal(invoke<boolean>(beside.engine, 'materializeBridgeAmbush'), true)
+  assert.equal(materializeBeat(beside), true)
   const ambush = beside.actors.filter((actor) => actor.budgetCategory === 'campaign').map((actor) => actor.id)
   assert.equal(ambush.length, 3)
   fill(beside, 'squad', 3, site)
@@ -1171,7 +1176,7 @@ test('the bridge ambush and a contract never cancel each other, and neither stra
   fill(control, 'campaign', 19, site)
   fill(control, 'ambient', 2, site)
   Reflect.set(control.engine, 'isContractOwnedActor', () => false)
-  assert.equal(invoke<boolean>(control.engine, 'materializeBridgeAmbush'), true)
+  assert.equal(materializeBeat(control), true)
   assert.ok(!control.actors.some((actor) => actor.id === mark[0]), 'the control kept the mark, so it proves nothing')
 })
 
@@ -1223,4 +1228,35 @@ test('contract persistence holds before, during and after the arrival, and grace
   continued.standAt(siteOf(continued.blueprint, continued.alternative))
   continued.frames(CONTRACT_TEMPLATES.scavenge.startGraceSeconds - 8 + FRAME * 2)
   assert.equal(continued.status(continued.alternative), 'failed', 'the grace refreshed across the save')
+})
+
+test("the palace guard confiscates a rich caravan for the palace, it does not rob one", () => {
+  // W2-2 — the same event and the same 180, in the guard's own words.
+  const guard = fixture('guard')
+  // The guard's camp sits inside W1-1's quiet radius of its contract; that hold is not under test.
+  Reflect.set(guard.engine, 'contractHoldsRandomEvents', () => false)
+  const caravan = guard.rollRandomEvent('richCaravan')
+  const [cart] = Reflect.get(caravan, 'ownedProps') as THREE.Object3D[]
+  guard.standAt({ x: cart.position.x, z: cart.position.z + 2 })
+  const prompt = Reflect.get(caravan, 'getPrompt') as () => string | null
+  assert.equal(prompt(), CARAVAN_CONFISCATE_PROMPT)
+  assert.equal(Reflect.get(caravan, 'description'), RICH_CARAVAN_CONFISCATE_DESCRIPTION)
+  invoke(guard.engine, 'interact')
+  assert.ok(guard.notices.some((notice) => notice.message === RICH_CARAVAN_CONFISCATED_NOTICE))
+  assert.ok(!guard.notices.some((notice) => notice.message === RICH_CARAVAN_LOOT_TAKEN_NOTICE))
+  guard.standAt({ x: cart.position.x + 30, z: cart.position.z + 2 })
+  guard.frames(FRAME)
+  assert.deepEqual(guard.worldEvents, [{ kind: 'richCaravan', succeeded: true }])
+  assert.equal(guard.gold(), 55 + 180)
+  assert.ok(guard.notices.some((notice) =>
+    notice.message === describeRichCaravanConfiscated(WORLD_EVENT_REWARDS.richCaravan.gold)))
+  // Negative control: the villain at the same cart robs it, in the robber's words.
+  const villain = fixture('villain')
+  const robbed = villain.rollRandomEvent('richCaravan')
+  const [robbedCart] = Reflect.get(robbed, 'ownedProps') as THREE.Object3D[]
+  villain.standAt({ x: robbedCart.position.x, z: robbedCart.position.z + 2 })
+  assert.equal((Reflect.get(robbed, 'getPrompt') as () => string | null)(), '[E] Ограбить богатый корован')
+  invoke(villain.engine, 'interact')
+  assert.ok(villain.notices.some((notice) => notice.message === RICH_CARAVAN_LOOT_TAKEN_NOTICE))
+  assert.ok(!villain.notices.some((notice) => notice.message === RICH_CARAVAN_CONFISCATED_NOTICE))
 })

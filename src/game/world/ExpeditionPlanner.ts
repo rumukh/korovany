@@ -38,7 +38,7 @@ const TRAVEL_MEMO_LIMIT = 64
 export interface ExpeditionPoint { x: number; z: number }
 export type ExpeditionPreference = 'shortest' | 'cautious'
 export interface ExpeditionTargetIdentity {
-  kind: 'objective' | 'rumour' | 'site' | 'bridgeAmbush'
+  kind: 'objective' | 'rumour' | 'site' | 'caravanBeat'
   id: string
 }
 export interface ExpeditionState {
@@ -156,14 +156,15 @@ export interface ExpeditionInput {
   discoveredRegionIds: ReadonlySet<string>
   chronicleRegions: ReadonlyMap<string, RegionChronicleState>
   contestedRegionIds: ReadonlySet<string>
-  bridgeAmbush?: {
+  /** W2-2 — every caravan beat the atlas may chart, the old bridge ambush among them. */
+  caravanBeats?: readonly {
     id: string
     title: string
     regionId: string
     position: ExpeditionPoint
     task: string
     stake: string
-  } | null
+  }[]
 }
 
 export function createExpeditionState(): ExpeditionState {
@@ -198,11 +199,14 @@ export function normalizeExpeditionState(value: unknown): { state: ExpeditionSta
 function readTargetIdentity(value: unknown): ExpeditionTargetIdentity | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record: Record<string, unknown> = { ...value }
-  return (record.kind === 'objective' || record.kind === 'rumour' ||
-    record.kind === 'site' || record.kind === 'bridgeAmbush') &&
+  // W2-2 — a version-1 save that tracked the bridge ambush tracks the same beat, by the
+  // same id, now that the bridge is one caravan beat among others.
+  const kind = record.kind === 'bridgeAmbush' ? 'caravanBeat' : record.kind
+  return (kind === 'objective' || kind === 'rumour' ||
+    kind === 'site' || kind === 'caravanBeat') &&
     typeof record.id === 'string' && record.id.length > 0 && record.id.length <= 160 &&
     record.id.trim() === record.id
-    ? { kind: record.kind, id: record.id } : null
+    ? { kind, id: record.id } : null
 }
 
 export function serializeExpeditionState(state: ExpeditionState): SerializableState {
@@ -675,10 +679,9 @@ export function buildExpeditionTargets(blueprint: WorldBlueprint, input: Expedit
       stake: rumour.stake, timeRemaining: rumour.timeRemaining, exclusive: false, committed: rumour.pinned,
       payout: rumour.reward ?? null, travel: rumour.travel ?? null })
   }
-  if (input.bridgeAmbush) {
-    const target = input.bridgeAmbush
+  for (const target of input.caravanBeats ?? []) {
     add({
-      kind: 'bridgeAmbush',
+      kind: 'caravanBeat',
       id: target.id,
       position: target.position,
       regionId: target.regionId,
@@ -815,9 +818,9 @@ export class ExpeditionPlanner {
     const targets = buildExpeditionTargets(this.blueprint, input)
     if (this.state.mode === 'selected' && !targets.some((entry) =>
       this.state.target && entry.key === expeditionTargetKey(this.state.target))) {
-      const completedBridgeTarget = this.state.target?.kind === 'bridgeAmbush'
+      const completedBeatTarget = this.state.target?.kind === 'caravanBeat'
       this.state = { ...this.state, mode: 'campaign', target: null }
-      this.notice = completedBridgeTarget ? null : 'stale-target'
+      this.notice = completedBeatTarget ? null : 'stale-target'
       this.decisionKey = ''
     }
     const selected = this.state.target

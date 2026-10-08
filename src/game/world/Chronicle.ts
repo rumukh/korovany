@@ -278,8 +278,12 @@ export function getContestedRegionIds(
 export function getSupplyPriceMultiplier(
   state: RegionChronicleState | undefined,
 ): number {
-  const supply = state ? clamp01(state.supply) : SUPPLY_BASELINE
-  return 1 + (1 - supply) * SUPPLY_PRICE_SWING
+  return supplyPriceMultiplier(state ? state.supply : SUPPLY_BASELINE)
+}
+
+/** The same price rule for a supply figure that is not (yet) in a region's state. */
+export function supplyPriceMultiplier(supply: number): number {
+  return 1 + (1 - clamp01(supply)) * SUPPLY_PRICE_SWING
 }
 
 /**
@@ -554,6 +558,55 @@ export function resolveRegionalCaravanDelivery(context: {
       context.state,
       `${context.idPrefix}-1`,
       'caravanArrived',
+      context.regionId,
+      context.faction,
+      context.siteId,
+    ),
+  ]
+}
+
+/**
+ * W2-2 — the log ids a caravan beat writes start with this.
+ *
+ * The feed and the сводка's chronicle beats leave them out. The world's own lines say
+ * things like «ограбили раньше пользователя», which is a lie about a cart the player robbed
+ * themselves. The beat's notice, its journal card and the сводка's caravan line describe
+ * the outcome correctly instead.
+ */
+export const CARAVAN_BEAT_CHRONICLE_PREFIX = 'caravan-beat-'
+
+export function isCaravanBeatChronicleEvent(event: Pick<ChronicleEvent, 'id'>): boolean {
+  return event.id.startsWith(CARAVAN_BEAT_CHRONICLE_PREFIX)
+}
+
+/**
+ * W2-2 — a cart that never reached its market: the counterpart of
+ * `resolveRegionalCaravanDelivery`. It makes the same write `advanceCaravans` makes when it
+ * loses a cart, without a roll and without a caravan in `state.caravans`.
+ *
+ * Where the cart was lost and the market that misses it are separate squares, as they are
+ * for the chronicle's own losses. `loss` defaults to a robbed cart. A burned one passes the
+ * sabotage figure instead, because nothing is left to sell on.
+ */
+export function resolveRegionalCaravanLoss(context: {
+  state: ChronicleState
+  regions: Map<string, RegionChronicleState>
+  idPrefix: string
+  regionId: RegionId
+  supplyRegionId: RegionId
+  faction: Faction
+  siteId: SiteId | null
+  loss?: number
+}): ChronicleEvent[] {
+  const market = context.regions.get(String(context.supplyRegionId))
+  if (market) {
+    market.supply = clamp01(market.supply - (context.loss ?? SUPPLY_CARAVAN_LOSS))
+  }
+  return [
+    appendChronicleEvent(
+      context.state,
+      `${context.idPrefix}-1`,
+      'caravanLost',
       context.regionId,
       context.faction,
       context.siteId,

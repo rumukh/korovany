@@ -1,13 +1,19 @@
 import { formatRegionGridLabel } from '../content/gameCopy.ts'
 import { normalizeDoctrineRunState } from './doctrine.ts'
 import type { ActorRole, BodyPart, BodyState } from '../types.ts'
-import type { ChronicleEvent, ChronicleEventKind } from '../world/Chronicle.ts'
+import { summarizeCaravanBeats } from '../world/CaravanBeats.ts'
+import {
+  isCaravanBeatChronicleEvent,
+  type ChronicleEvent,
+  type ChronicleEventKind,
+} from '../world/Chronicle.ts'
 import { WORLD_HEIGHT, WORLD_WIDTH } from '../world/worldTypes.ts'
 import type {
   ActiveRunSaveV3,
   RunEndCause,
   RunEpilogue,
   RunEpilogueBeat,
+  RunEpilogueCaravan,
   RunEpilogueCompanion,
   RunEpilogueControl,
   RunEpilogueWound,
@@ -41,6 +47,8 @@ export const MAX_EPILOGUE_WOUNDS = 6
 export const MAX_EPILOGUE_COMPANIONS = 6
 /** Equipped doctrines. Roadmap 1.6 fills this; the three-slot cap bounds it long before. */
 export const MAX_EPILOGUE_DOCTRINES = 4
+/** W2-2 — settled caravan beats. A run plans at most three. */
+export const MAX_EPILOGUE_CARAVANS = 3
 
 /**
  * How loud a chronicle beat is, before witness weight.
@@ -118,7 +126,10 @@ function beatsOf(
   log: readonly ChronicleEvent[],
   discovered: ReadonlySet<string>,
 ): RunEpilogueBeat[] {
-  const ranked = [...log]
+  // W2-2 — a caravan beat's own entries are the player's doing, and the сводка says what
+  // became of each beat in its own line. The chronicle's words for them would be wrong.
+  const ranked = log
+    .filter((event) => !isCaravanBeatChronicleEvent(event))
     .map((event) => ({
       event,
       score:
@@ -202,6 +213,17 @@ function doctrinesOf(directorState: ActiveRunSaveV3['directorState']): string[] 
   )
 }
 
+/** W2-2 — what became of each caravan the run settled, as a reader needs it: where and how. */
+function caravansOf(directorState: ActiveRunSaveV3['directorState']): RunEpilogueCaravan[] {
+  return summarizeCaravanBeats(directorState.caravanBeats)
+    .slice(0, MAX_EPILOGUE_CARAVANS)
+    .map((beat) => ({
+      placement: beat.placement,
+      region: formatRegionIdLabel(beat.regionId),
+      ending: beat.ending,
+    }))
+}
+
 function causeOf(snapshot: ActiveRunSaveV3): RunEndCause {  if (snapshot.status === 'victory') return 'objectives'
   if (snapshot.status === 'abandoned') return 'abandoned'
   return snapshot.ending?.cause ?? 'unknown'
@@ -220,6 +242,7 @@ export function buildRunEpilogue(snapshot: ActiveRunSaveV3): RunEpilogue {
   const discovered = new Set(snapshot.discoveredRegionIds.map(String))
   const achievements = snapshot.achievementRunState
   const finalRegion = formatRegionIdLabel(snapshot.currentLocation.regionId)
+  const caravans = caravansOf(snapshot.directorState)
   return {
     route: routeOf(snapshot.discoveredRegionIds, finalRegion),
     routeTotal: discovered.size,
@@ -243,5 +266,6 @@ export function buildRunEpilogue(snapshot: ActiveRunSaveV3): RunEpilogue {
     caravansRobbed: Math.max(0, Math.trunc(achievements.caravansRobbed)),
     eventsCompleted: Math.max(0, Math.trunc(achievements.eventsCompleted)),
     bestKillStreak: Math.max(0, Math.trunc(achievements.bestKillStreak)),
+    ...(caravans.length > 0 ? { caravans } : {}),
   }
 }

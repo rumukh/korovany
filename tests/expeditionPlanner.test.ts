@@ -682,34 +682,42 @@ test('a taken escort rumour re-plans when its cart changes square, not on every 
   assert.deepEqual(compassProblems(planner.graph, moved, camp), [])
 })
 
-test('bridge tracking charts a real road without pinning campaign or rumour state', () => {
+test('caravan beat tracking charts a real road without pinning campaign or rumour state', () => {
   const { blueprint, input } = fixture('elf')
   const plan = createBridgeAmbushPlan(blueprint, 'elf')
   assert.ok(plan)
-  input.bridgeAmbush = {
+  input.caravanBeats = [{
     id: plan.id,
     title: 'Засада у старого моста',
     regionId: plan.regionId,
     position: plan.cargoStart,
     task: 'Дойти по дороге.',
     stake: 'Не принимает подряд.',
-  }
+  }]
   const before = JSON.stringify({
     objectives: input.objectives,
     contracts: input.contracts,
     rumours: input.rumours,
   })
   const planner = new ExpeditionPlanner(blueprint)
-  assert.equal(planner.select({ kind: 'bridgeAmbush', id: plan.id }, input), true)
+  assert.equal(planner.select({ kind: 'caravanBeat', id: plan.id }, input), true)
   const view = planner.buildView(input)
-  assert.equal(view.target?.kind, 'bridgeAmbush')
+  assert.equal(view.target?.kind, 'caravanBeat')
   assert.equal(view.target?.id, plan.id)
   assert.equal(view.route?.status, 'road')
   assert.deepEqual(validateExpeditionRoute(planner.graph, view.route!), [])
   assert.equal(view.bearingReason, null)
   assert.deepEqual(normalizeExpeditionState(planner.serialize()).state.target, {
-    kind: 'bridgeAmbush',
+    kind: 'caravanBeat',
     id: plan.id,
+  })
+  // A version-1 save that tracked the bridge ambush keeps tracking the same beat.
+  assert.deepEqual(normalizeExpeditionState({
+    version: 1, mode: 'selected', preference: 'shortest',
+    target: { kind: 'bridgeAmbush', id: plan.id },
+  }), {
+    state: { version: 1, mode: 'selected', preference: 'shortest', target: { kind: 'caravanBeat', id: plan.id } },
+    notice: null,
   })
   assert.equal(JSON.stringify({
     objectives: input.objectives,
@@ -717,7 +725,7 @@ test('bridge tracking charts a real road without pinning campaign or rumour stat
     rumours: input.rumours,
   }), before)
 
-  input.bridgeAmbush = null
+  input.caravanBeats = []
   const completed = planner.buildView(input)
   assert.equal(completed.mode, 'campaign')
   assert.equal(completed.notice, null)

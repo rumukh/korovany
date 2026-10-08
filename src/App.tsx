@@ -101,11 +101,11 @@ import { CombatCameraControls, CombatEvadeButton, CombatMasteryHud } from './gam
 import { ExpeditionAtlas, ExpeditionCompass, ExpeditionMinimap } from './game/ui/ExpeditionAtlas'
 import { SquadCommandPanel, SquadCommandStrip } from './game/ui/SquadCommandPanel'
 import { FinaleHud, FinaleResult } from './game/ui/FinaleHud'
-import { BridgeAmbushHud } from './game/ui/BridgeAmbushHud'
+import { CaravanBeatHud } from './game/ui/CaravanBeatHud'
 import { CaravanLootCue } from './game/ui/CaravanLootCue'
 import { CampaignJournal } from './game/ui/CampaignJournal'
 import { ChoicePrice } from './game/ui/ChoicePrice'
-import type { BridgeAmbushChoice } from './game/world/BridgeAmbush'
+import type { CaravanBeatOutcome } from './game/world/CaravanBeats'
 import { CompactMissionHud, CompactWorldNews } from './game/ui/CompactCombatHud'
 import {
   VisualSettingsControls,
@@ -2282,6 +2282,7 @@ function renderPostcardCanvas(copy: RunEpilogueCopy): HTMLCanvasElement | null {
   push(copy.body, bodyFont, '#efe3cd', 22)
   push(copy.squad, bodyFont, '#efe3cd', 6)
   if (copy.doctrines) push(copy.doctrines, bodyFont, '#efe3cd', 6)
+  if (copy.caravans) push(copy.caravans, bodyFont, '#efe3cd', 6)
   push(copy.cause, bodyFont, '#f6c66b', 18)
   push(copy.tally, tallyFont, '#bda87f', 24)
 
@@ -2380,6 +2381,7 @@ function RunPostcard({
         <li>{copy.body}</li>
         <li>{copy.squad}</li>
         {copy.doctrines ? <li>{copy.doctrines}</li> : null}
+        {copy.caravans ? <li>{copy.caravans}</li> : null}
         <li className="postcard-cause">{copy.cause}</li>
       </ul>
       {copy.beats.length > 0 ? (
@@ -2591,8 +2593,8 @@ export function GameScreen({
   onIssueSquadCommand,
   onOpenJournal,
   onCloseJournal,
-  onBridgeChoice,
-  onTrackBridge,
+  onBeatChoice,
+  onTrackBeat,
   onPinRumour,
   onPinObjective,
   onTakeDoctrine,
@@ -2654,8 +2656,8 @@ export function GameScreen({
   onIssueSquadCommand: (mode: SquadCommandMode, targetId?: string) => boolean
   onOpenJournal: () => void
   onCloseJournal: () => void
-  onBridgeChoice: (choice: BridgeAmbushChoice) => void
-  onTrackBridge: () => void
+  onBeatChoice: (beatId: string, outcome: CaravanBeatOutcome) => void
+  onTrackBeat: (beatId: string) => void
   onPinRumour: (rumourId: string | null) => void
   onPinObjective: (nodeId: string | null) => void
   onTakeDoctrine: (doctrineId: string) => void
@@ -2890,11 +2892,11 @@ export function GameScreen({
               {view.doctrines.offer.length > 0 ? <i className="journal-alert" aria-hidden="true" /> : null}
             </button>
           </nav>
-          {!view.bridgeAmbush?.active ? (
+          {!view.caravanBeats.active?.active ? (
             <ExpeditionCompass view={view} onOpen={onOpenAtlas} />
           ) : null}
-          <BridgeAmbushHud view={view.bridgeAmbush} paused={simulationPaused}
-            onChoose={onBridgeChoice} onSquad={onOpenSquadCommand} onTrack={onTrackBridge} />
+          <CaravanBeatHud view={view.caravanBeats.active} paused={simulationPaused}
+            onChoose={onBeatChoice} onSquad={onOpenSquadCommand} onTrack={onTrackBeat} />
           <FinaleHud finale={view.finale} />
           {visualPreferences.hudMode === 'compact' ? noticeStack : null}
           <CompactWorldNews mode={visualPreferences.hudMode} view={view}>
@@ -3176,19 +3178,19 @@ export function GameScreen({
             <ObjectiveList view={view} />
           </div>
           <div className="journal-world">
-            <BridgeAmbushHud view={view.bridgeAmbush} paused={false} inJournal
-              onChoose={onBridgeChoice}
-              onSquad={() => { onCloseJournal(); onOpenSquadCommand() }}
-              onTrack={onTrackBridge} />
+            {view.caravanBeats.beats.filter((beat) => beat.phase !== 'unavailable').map((beat) => (
+              <CaravanBeatHud key={beat.id} view={beat} paused={false} inJournal
+                onChoose={onBeatChoice}
+                onSquad={() => { onCloseJournal(); onOpenSquadCommand() }}
+                onTrack={onTrackBeat} />
+            ))}
             <MiniMap view={view} onOpenAtlas={() => { onCloseJournal(); onOpenAtlas() }} />
             <ChronicleFeed view={view} />
             <RumourBoard view={view} onPin={onPinRumour} />
-            {view.bridgeAmbush?.phase === 'unavailable' ? (
-              <section className="journal-consequence">
-                <h3>{view.bridgeAmbush.title}</h3>
-                <p>{view.bridgeAmbush.consequence ?? view.bridgeAmbush.description}</p>
-              </section>
-            ) : null}
+            {view.caravanBeats.beats.filter((beat) => beat.phase === 'unavailable').map((beat) => (
+              <CaravanBeatHud key={beat.id} view={beat} paused={false} inJournal
+                onChoose={onBeatChoice} onSquad={onOpenSquadCommand} onTrack={onTrackBeat} />
+            ))}
           </div>
         </CampaignJournal>
       ) : null}
@@ -4081,8 +4083,8 @@ function App() {
         onCloseSquadCommand={() => closeOverlay('orders')}
         onOpenJournal={toggleJournal}
         onCloseJournal={() => closeOverlay('journal')}
-        onBridgeChoice={(choice) => { engineRef.current?.chooseBridgeAmbush(choice) }}
-        onTrackBridge={() => { engineRef.current?.trackBridgeAmbush() }}
+        onBeatChoice={(beatId, outcome) => { engineRef.current?.chooseCaravanBeat(beatId, outcome) }}
+        onTrackBeat={(beatId) => { engineRef.current?.trackCaravanBeat(beatId) }}
         onIssueSquadCommand={(mode, targetId) => {
           if (topGameOverlay(overlaysRef.current) !== 'orders') return false
           const accepted = engineRef.current?.commandSquad(mode, targetId) ?? false

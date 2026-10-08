@@ -94,26 +94,39 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
     },
   }),
   expedition: (base) => ({ ...base, expedition: { ...base.expedition, mode: 'selected' } }),
-  bridgeAmbush: (base) => ({
-    ...base,
-    bridgeAmbush: base.bridgeAmbush ? { ...base.bridgeAmbush, active: true } : {
-      phase: 'approach',
+  bridgeAmbush: (base) => {
+    const beat = base.caravanBeats.beats[0] ?? {
+      id: 'bridge-ambush:bridge-hint',
+      placement: 'bridge' as const,
+      role: 'rob' as const,
+      owner: 'guard' as const,
+      tier: 'standard' as const,
+      phase: 'approach' as const,
       title: 'Засада у моста',
       description: 'Гружёная телега ждёт у моста.',
       hint: 'Подойди по дороге.',
+      regionLabel: 'C3',
+      x: 0,
+      z: 0,
       distance: 40,
       bearing: 0,
       remainingEnemies: 3,
       totalEnemies: 3,
+      escort: 'солдат, разведчик, лучник',
       cargoHealth: 100,
       cargoMaxHealth: 100,
       progress: 0,
       canChoose: false,
+      choices: [],
       outcome: null,
       consequence: null,
+      abandonRemaining: null,
       active: true,
-    },
-  }),
+      tracked: false,
+    }
+    const active = { ...beat, active: true }
+    return { ...base, caravanBeats: { beats: [active], active } }
+  },
   caravanLoot: (base) => ({
     ...base,
     caravanLoot: { progress: 0.4, looter: 'raider', defend: false, distance: 18 },

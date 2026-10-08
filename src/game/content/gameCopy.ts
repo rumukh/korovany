@@ -28,6 +28,11 @@ import type {
   RunHistorySummary,
 } from '../run/runTypes.ts'
 import type { CaravanLooterKind, CaravanRobber } from '../world/CaravanClaim.ts'
+import type {
+  CaravanBeatOutcome,
+  CaravanBeatPlacement,
+  CaravanBeatRole,
+} from '../world/CaravanBeats.ts'
 import type { ChronicleEventKind } from '../world/Chronicle.ts'
 import type { ContractId, ObjectiveKind, SiteKind } from '../world/worldTypes.ts'
 import type { SquadCommandMode, SquadMemberStatus } from '../world/SquadCommand.ts'
@@ -852,6 +857,11 @@ export function describeRandomEventStoodDown(title: string): string {
   return `«${title}» — отбой: пользователь пришёл по подряду. Ни штрафа, ни награды.`
 }
 
+/** W2-2 — the same stand-down when the player reached a caravan instead of a contract. */
+export function describeRandomEventStoodDownForCaravan(title: string): string {
+  return `«${title}» — отбой: пользователь пришёл грабить корованы. Ни штрафа, ни награды.`
+}
+
 /** W1-1 — a located fight handed back to the chronicle to make room for the contract. */
 export function describeEventHandbackForContract(regionLabel: string): string {
   return `Подряду нужны люди: бой в квадрате ${regionLabel} ушёл в хронику, чем кончился — прочитаешь там.`
@@ -1164,64 +1174,354 @@ export function describeCaravanAlreadyRobbed(robbedBy: CaravanRobber | null): st
   }
 }
 
-export const BRIDGE_AMBUSH_TITLE = 'Засада у старого моста'
-export const BRIDGE_AMBUSH_EXPEDITION_TASK =
-  'Добраться по настоящей дороге к гружёной телеге у моста.'
-export const BRIDGE_AMBUSH_EXPEDITION_STAKE =
-  'Необязательная встреча: маршрут не принимает слух и не меняет выбранный подряд.'
-export const BRIDGE_AMBUSH_SAVE_WARNING =
-  'Запись засады у моста повреждена. Встреча закрыта без награды; поход продолжается.'
-export const BRIDGE_AMBUSH_UNAVAILABLE_NOTICE =
-  'На открывающей дороге не нашлось доступного моста. Встреча отмечена как недоступная.'
-export const BRIDGE_AMBUSH_SECURED_NOTICE =
-  'Подступ к телеге свободен. Реши в панели: забрать груз или провести его через мост.'
-export const BRIDGE_AMBUSH_DELIVERY_STARTED_NOTICE =
-  'Веди телегу рядом с собой по дороге через мост.'
-export const BRIDGE_AMBUSH_CHOICE_FOCUS_NOTICE =
-  'Курсор свободен. Выбери: забрать груз сейчас или провести телегу через мост.'
-export const BRIDGE_AMBUSH_LOST_NOTICE =
-  'Налётчики разбили телегу. Груз у моста потерян.'
-export const BRIDGE_AMBUSH_CAPACITY_NOTICE =
-  'У моста сейчас слишком людно. Засада дождётся, пока освободится дорога.'
-export const BRIDGE_AMBUSH_SEIZED_GOLD = 85
-export const BRIDGE_AMBUSH_DELIVERED_SUPPLIES = 2
+// ---------------------------------------------------------------------------
+// W2-2 — caravan beats: «Можно грабить корованы», each side in its own words
+// ---------------------------------------------------------------------------
 
-export function describeBridgeAmbushApproach(faction: Faction): string {
-  return faction === 'guard'
-    ? 'На мостовой дороге налётчики зажали гружёную телегу. Подойди по дороге или с сухого берега и прикрой груз.'
-    : 'Охрана держит гружёную телегу у настоящего мостового перехода. Подойди по дороге или обойди по сухому берегу.'
+export const BRIDGE_AMBUSH_TITLE = 'Засада у старого моста'
+
+const CARAVAN_BEAT_PLACES: Record<CaravanBeatPlacement, string> = {
+  bridge: 'у старого моста',
+  forest: 'на лесной дороге',
+  open: 'на открытой дороге',
+  pass: 'на горном перевале',
 }
 
-export function describeBridgeAmbushFight(faction: Faction, remaining: number): string {
-  return faction === 'guard'
+const CARAVAN_OWNERS: Record<Faction, string> = {
+  elf: 'обоз лесных эльфов',
+  guard: 'обоз дворца',
+  villain: 'корован злодея',
+}
+
+export function describeCaravanBeatPlace(placement: CaravanBeatPlacement): string {
+  return CARAVAN_BEAT_PLACES[placement]
+}
+
+/** The guard's beats arrive as orders, because «надо слушаться командира». */
+export function describeCaravanBeatTitle(
+  placement: CaravanBeatPlacement,
+  faction: Faction,
+  role: CaravanBeatRole,
+): string {
+  const place = CARAVAN_BEAT_PLACES[placement]
+  if (faction === 'guard') return role === 'defend' ? `Приказ: обоз ${place}` : `Приказ: набег ${place}`
+  return placement === 'bridge' ? BRIDGE_AMBUSH_TITLE : `Корован ${place}`
+}
+
+export function describeCaravanBeatTask(placement: CaravanBeatPlacement): string {
+  return `Добраться по настоящей дороге к гружёной телеге ${CARAVAN_BEAT_PLACES[placement]}.`
+}
+
+export const CARAVAN_BEAT_OPTIONAL_STAKE =
+  'Необязательная встреча: маршрут не принимает слух и не меняет выбранный подряд.'
+export const CARAVAN_BEATS_SAVE_WARNING =
+  'Запись корованов повреждена. Встречи закрыты без награды; поход продолжается.'
+export const BRIDGE_AMBUSH_UNAVAILABLE_NOTICE =
+  'На открывающей дороге не нашлось доступного моста. Встреча отмечена как недоступная.'
+export const CARAVAN_BEAT_CHOICE_FOCUS_NOTICE =
+  'Курсор свободен. Выбери в панели, что делать с грузом.'
+export const CARAVAN_BEAT_CAPACITY_NOTICE =
+  'У корована сейчас слишком людно. Встреча дождётся, пока освободится дорога.'
+export const CARAVAN_BEAT_SQUAD_FULL_NOTICE =
+  'Войско полно: больше бойцов не прокормить. Выбери другой исход.'
+export const CARAVAN_BEAT_NO_ROOM_NOTICE =
+  'Обозникам негде встать рядом с телегой. Выбери другой исход.'
+export const CARAVAN_BEAT_REOPENED_NOTICE =
+  'Злодей обозы не водит: телега у моста снова ждёт твоего решения.'
+
+/** The prompt line beside a beat's cart, by what the player can do there right now. */
+export const CARAVAN_BEAT_PROMPTS = {
+  releaseCursor: '[E] Освободить курсор и выбрать судьбу груза',
+  chooseWithButtons: 'Выбери кнопкой, что делать с грузом',
+  approachToChoose: 'Подойди к телеге, чтобы решить судьбу груза',
+  walkBeside: 'Иди рядом: телега движется только с проводником',
+  returnToCart: 'Вернись к телеге — без проводника она стоит',
+  defend: 'Отбей налётчиков от телеги',
+  rob: 'Сначала одолей живых защитников телеги',
+  clear: 'Подступ к телеге свободен',
+} as const
+
+/** Where a staging point could not be found, said for the place it could not be found at. */
+export function describeCaravanBeatNoGround(placement: CaravanBeatPlacement): string {
+  return placement === 'bridge'
+    ? 'Берег у выбранного моста занят постройками; безопасно поставить встречу нельзя.'
+    : 'Обочина у корована занята постройками; безопасно поставить встречу нельзя.'
+}
+
+export function describeCaravanBeatApproach(
+  faction: Faction,
+  role: CaravanBeatRole,
+  owner: Faction,
+  placement: CaravanBeatPlacement,
+): string {
+  const place = CARAVAN_BEAT_PLACES[placement]
+  const cart = CARAVAN_OWNERS[owner]
+  if (role === 'defend') {
+    return `Приказ командира: налётчики зажали ${cart} ${place}. Отбей груз — его ждут на торгу.`
+  }
+  if (faction === 'guard') {
+    return `Приказ командира: ${cart} ${place} везёт врагу припасы. Положи охрану и конфискуй груз для дворца.`
+  }
+  if (faction === 'villain') {
+    return `${capitalize(cart)} идёт ${place}. Сам себе командир: охрану положить, а с грузом — как захочешь.`
+  }
+  return `${capitalize(cart)} идёт ${place} под охраной. Можно грабить корованы — сначала положи охрану.`
+}
+
+export function describeCaravanBeatFight(role: CaravanBeatRole, remaining: number): string {
+  return role === 'defend'
     ? `Налётчики бьют охрану и телегу. Осталось врагов: ${remaining}.`
     : `Охрана не отдаёт телегу. Осталось защитников: ${remaining}.`
 }
 
-export const BRIDGE_AMBUSH_SECURED_DESCRIPTION =
-  'Телега цела, противников не осталось. Груз можно присвоить или провести по дороге через мост.'
-export const BRIDGE_AMBUSH_DELIVERING_DESCRIPTION =
-  'Иди рядом с телегой: она движется только по оси моста и только с проводником рядом.'
-export const BRIDGE_AMBUSH_LOST_DESCRIPTION =
-  'Телега разбита. Этот груз уже не забрать и не доставить.'
-
-export function describeBridgeAmbushSeized(gold: number): string {
-  return `Груз присвоен: +${gold} золота. Местные склады ничего не получили.`
+export function describeCaravanBeatSecured(faction: Faction, role: CaravanBeatRole): string {
+  if (role === 'defend') return 'Налётчики отбиты, обоз цел. Проведи его сам или отпусти своим ходом.'
+  if (faction === 'guard') return 'Охрана легла. Груз конфискуется для дворца, командир платит награду.'
+  if (faction === 'villain') {
+    return 'Охрана легла. Сам себе командир: забрать добро, забрить обозников в войско или сжечь груз.'
+  }
+  return 'Охрана легла, телега цела. Груз можно забрать себе или отдать домикам деревяным.'
 }
 
-export function describeBridgeAmbushDelivered(supplies: number): string {
-  return `Телега прошла мост: +${supplies} пайка, а местные склады пополнены.`
+export function describeCaravanBeatSecuredNotice(role: CaravanBeatRole): string {
+  return role === 'defend'
+    ? 'Налётчики отбиты. Подойди к обозу и выбери в панели: вести его или отпустить.'
+    : 'Охрана легла. Подойди к телеге и выбери в панели, что делать с грузом.'
 }
 
-export function describeBridgeAmbushSeizeChoice(gold: number): string {
-  return `+${gold} золота сразу; местные склады останутся без этого груза.`
+export function describeCaravanBeatDelivering(outcome: CaravanBeatOutcome): string {
+  return outcome === 'give'
+    ? 'Веди телегу рядом: за отметкой её разберут домики деревяные.'
+    : 'Иди рядом с обозом до отметки: без проводника он стоит.'
 }
 
-export function describeBridgeAmbushDeliverChoice(
-  supplies: number,
-  regionLabel: string,
+export function describeCaravanBeatDeliveryStarted(outcome: CaravanBeatOutcome): string {
+  return outcome === 'give'
+    ? 'Веди телегу рядом с собой: домики деревяные ждут за отметкой.'
+    : 'Веди обоз рядом с собой до отметки.'
+}
+
+export function describeCaravanBeatHint(
+  phase: 'approach' | 'fighting' | 'secured' | 'delivering' | 'settled',
+  role: CaravanBeatRole,
+  placement: CaravanBeatPlacement,
+  routeLabel: string,
 ): string {
-  return `+${supplies} пайка; поставка пополнит снабжение региона ${regionLabel}.`
+  switch (phase) {
+    case 'approach':
+      return `Маршрут: ${routeLabel}. Запасной подход — ${placement === 'bridge' ? 'по сухому берегу' : 'по сухой обочине'} рядом с телегой.`
+    case 'fighting':
+      return role === 'defend'
+        ? 'Не дай налётчикам добить телегу; твой отряд принимает обычные приказы.'
+        : 'Выбор груза откроется только после последнего живого защитника.'
+    case 'secured':
+      return 'Подойди к телеге и выбери один исход. E ничего не тратит автоматически.'
+    case 'delivering':
+      return 'Держись рядом с телегой до отмеченного конца дороги.'
+    case 'settled':
+      return 'Исход записан в этом забеге; обязательные цели похода не менялись.'
+  }
+}
+
+/** Shown while the player is out of reach of an engaged cart and the clock is running. */
+export function describeCaravanBeatAbandon(
+  phase: 'fighting' | 'secured' | 'delivering',
+  role: CaravanBeatRole,
+  seconds: number,
+): string {
+  const left = `${Math.max(0, Math.ceil(seconds))} с`
+  if (phase === 'delivering') return `Без проводника телегу доведут сами, но без награды: ${left}.`
+  if (phase === 'secured') {
+    return role === 'defend'
+      ? `Обоз уйдёт своим ходом без жалованья: ${left}. Вернись к телеге.`
+      : `Брошенный груз растащат: ${left}. Вернись к телеге.`
+  }
+  return role === 'defend'
+    ? `Без тебя налётчики добьют обоз: ${left}. Вернись к телеге.`
+    : `Корован уйдёт без тебя: ${left}. Вернись к телеге.`
+}
+
+export const CARAVAN_BEAT_CHOICE_LABELS: Record<CaravanBeatOutcome, string> = {
+  take: 'Забрать груз',
+  give: 'Отдать домикам деревяным',
+  deliver: 'Довести обоз',
+  release: 'Отпустить своим ходом',
+  confiscate: 'Конфисковать для дворца',
+  plunder: 'Забрать добро',
+  press: 'Забрить в войско',
+  burn: 'Сжечь груз',
+}
+
+// W2-3 owns `RATION_FORMS`; the beat lines count rations in the same words its price cards do.
+function formatRations(count: number): string {
+  return `+${formatRussianCount(count, RATION_FORMS)}`
+}
+
+/** `1.18` → `×1,18`, the way the shop prints a surcharge. */
+export function formatPriceFactor(value: number): string {
+  return `×${value.toFixed(2).replace('.', ',')}`
+}
+
+/** What one caravan does to the world's one market, before and after. */
+export interface CaravanBeatMarketCopy {
+  regionLabel: string
+  before: number
+  after: number
+}
+
+export function describeCaravanBeatMarket(market: CaravanBeatMarketCopy | null): string {
+  if (!market) return 'торг этого не заметит'
+  return `цены в лавке ${market.regionLabel} ${formatPriceFactor(market.before)} → ${formatPriceFactor(market.after)}`
+}
+
+export interface CaravanBeatChoiceCopy {
+  outcome: CaravanBeatOutcome
+  gold: number
+  rations: number
+  thinsGarrison: boolean
+  squadSize: number
+  squadCap: number
+  market: CaravanBeatMarketCopy | null
+}
+
+export function describeCaravanBeatChoice(choice: CaravanBeatChoiceCopy): string {
+  const market = describeCaravanBeatMarket(choice.market)
+  switch (choice.outcome) {
+    case 'take':
+    case 'plunder':
+      return `+${choice.gold} золота сразу; ${market}.`
+    case 'give':
+      return `${formatRations(choice.rations)} от домиков; ${market}.`
+    case 'deliver':
+      return `+${choice.gold} от командира и ${formatRations(choice.rations)}, если идти рядом; ${market}.`
+    case 'release':
+      return `Сразу и без жалованья; ${market}.`
+    case 'confiscate':
+      return `+${choice.gold} награды от командира; ${market}.`
+    case 'press':
+      return `+1 боец в войско (${choice.squadSize}/${choice.squadCap}); ${market}.`
+    case 'burn':
+      return choice.thinsGarrison
+        ? `У ворот дворца станет на одного стражника меньше; ${market}.`
+        : `Только дым и злорадство; ${market}.`
+  }
+}
+
+export function describeCaravanBeatSquadFull(squadSize: number, squadCap: number): string {
+  return `Войско полно: ${squadSize}/${squadCap}. Больше не прокормить.`
+}
+
+export interface CaravanBeatOutcomeCopy {
+  outcome: CaravanBeatOutcome
+  gold: number
+  rations: number
+  thinnedGarrison: boolean
+  /** The player walked away from a delivery and it finished without them, unpaid. */
+  unattended: boolean
+  market: CaravanBeatMarketCopy | null
+}
+
+/** The line a resolved cart keeps: notice, journal card and сводка all say it. */
+export function describeCaravanBeatOutcome(result: CaravanBeatOutcomeCopy): string {
+  const market = capitalize(describeCaravanBeatMarket(result.market))
+  switch (result.outcome) {
+    case 'take':
+      return `Груз забран: +${result.gold} золота. ${market}.`
+    case 'give':
+      return result.unattended
+        ? `Домики деревяные забрали телегу сами, без пайков для пользователя. ${market}.`
+        : `Телега ушла к домикам деревяным: ${formatRations(result.rations)}. ${market}.`
+    case 'deliver':
+      return result.unattended
+        ? `Обоз дошёл без проводника, командир не заплатил. ${market}.`
+        : `Обоз доведён: +${result.gold} от командира, ${formatRations(result.rations)}. ${market}.`
+    case 'release':
+      return result.unattended
+        ? `Обоз ушёл своим ходом без тебя и дошёл. ${market}.`
+        : `Обоз отпущен своим ходом и дошёл. ${market}.`
+    case 'confiscate':
+      return `Груз конфискован для дворца: +${result.gold} награды. ${market}.`
+    case 'plunder':
+      return `Добро забрано: +${result.gold} золота. ${market}.`
+    case 'press':
+      return `Обозники забриты в войско: +1 боец. ${market}.`
+    case 'burn':
+      return result.thinnedGarrison
+        ? `Груз сожжён. Дворец без подвоза: у ворот на одного стражника меньше. ${market}.`
+        : `Груз сожжён. ${market}.`
+  }
+}
+
+export type CaravanBeatLossCause = 'destroyed' | 'looted' | 'abandoned'
+
+export function describeCaravanBeatLost(
+  role: CaravanBeatRole,
+  cause: CaravanBeatLossCause,
+  market: CaravanBeatMarketCopy | null,
+): string {
+  const tail = capitalize(describeCaravanBeatMarket(market))
+  if (cause === 'destroyed') return `Налётчики разбили телегу. ${tail}.`
+  if (cause === 'looted') return `Груз растащили без тебя. ${tail}.`
+  return role === 'defend'
+    ? `Без тебя налётчики добили обоз. ${tail}.`
+    : `Брошенный груз растащили. ${tail}.`
+}
+
+export function describeCaravanBeatEscaped(market: CaravanBeatMarketCopy | null): string {
+  return `Корован ушёл, пока тебя не было, и дошёл. ${capitalize(describeCaravanBeatMarket(market))}.`
+}
+
+export const CARAVAN_BEAT_UNAVAILABLE_HINT =
+  'Поход и его цели продолжаются без этой необязательной встречи.'
+
+const CARAVAN_BEAT_ENDING_WORDS: Record<CaravanBeatOutcome | 'lost' | 'escaped', string> = {
+  take: 'ограблен',
+  give: 'отдан домикам',
+  deliver: 'доведён',
+  release: 'отпущен',
+  confiscate: 'конфискован',
+  plunder: 'ограблен',
+  press: 'обозники забриты',
+  burn: 'сожжён',
+  lost: 'потерян',
+  escaped: 'ушёл',
+}
+
+export function describeCaravanBeatEnding(ending: CaravanBeatOutcome | 'lost' | 'escaped'): string {
+  return CARAVAN_BEAT_ENDING_WORDS[ending]
+}
+
+/** W1-2 backlog — a chronicle ambush of the player's own side's cart is defended, not robbed. */
+export function describeCaravanAmbushDefence(context: LocatedEventCopyContext): LocatedEventCopy {
+  return {
+    title: 'Свой корован под ножом',
+    description: `Налётчики режут корован (${factionName(context.faction)}) до точки «${context.siteLabel ?? 'склад'}». Свой груз не грабят — отбей его.`,
+  }
+}
+
+export function describeCaravanAmbushDefenceStart(context: LocatedEventCopyContext): string {
+  return `В квадрате ${context.regionLabel} режут свой корован. Успей отбить.`
+}
+
+export const CARAVAN_AMBUSH_DEFENCE_PROMPT = 'Отбей налётчиков от корована'
+
+export function describeCaravanAmbushDefended(reward: number): string {
+  return `Корован отбит и идёт дальше целым. Хозяева груза заплатили: +${reward} золота.`
+}
+
+/** The guard's rich-caravan raid, said the way the guard does it: confiscation, not robbery. */
+export const RICH_CARAVAN_CONFISCATE_DESCRIPTION =
+  'Конфискуй груз для дворца и отойди от места на 18 метров.'
+/** The guard's E at any enemy cart it raids: the rich caravan or a chronicle ambush. */
+export const CARAVAN_CONFISCATE_PROMPT = '[E] Конфисковать груз для дворца'
+/** A chronicle ambush the guard won as a raid: the cargo went to the palace, not to its pocket. */
+export const CARAVAN_AMBUSH_CONFISCATED_OUTCOME =
+  'Груз конфискован для дворца по всем правилам. Конкуренты остались с пустой телегой.'
+export const RICH_CARAVAN_CONFISCATED_NOTICE = 'Груз конфискован. Теперь уходи от погони!'
+
+/** W2-3 — the amount is handed in from `WORLD_EVENT_REWARDS`, like every other success line. */
+export function describeRichCaravanConfiscated(gold: number): string {
+  return `Груз конфискован для дворца, погоня позади. Командир выдал награду: +${gold} золота.`
 }
 
 const SQUAD_NAMES: Record<Faction, string> = {
@@ -1599,6 +1899,18 @@ function describeEpilogueCause(epilogue: RunEpilogue): string {
   }
 }
 
+/**
+ * W2-2 — what became of the run's caravans, by square and by how they ended. The guard's line
+ * says «обозы»: it escorts and confiscates, it does not rob, and its сводка should not say so.
+ */
+function describeEpilogueCaravans(summary: RunHistorySummary, epilogue: RunEpilogue): string | null {
+  const caravans = epilogue.caravans ?? []
+  if (caravans.length === 0) return null
+  const parts = caravans.map((caravan) =>
+    `${caravan.region} ${CARAVAN_BEAT_PLACES[caravan.placement]} — ${describeCaravanBeatEnding(caravan.ending)}`)
+  return `${summary.faction === 'guard' ? 'Обозы' : 'Корованы'}: ${parts.join('; ')}.`
+}
+
 function describeEpilogueTally(summary: RunHistorySummary, epilogue: RunEpilogue): string {
   return [
     `побед — ${String(summary.kills)}`,
@@ -1620,6 +1932,8 @@ export interface RunEpilogueCopy {
   squad: string
   /** `null` when the run drafted no doctrines. Readers must render nothing. */
   doctrines: string | null
+  /** W2-2 — `null` when no caravan beat settled. Readers must render nothing. */
+  caravans: string | null
   cause: string
   tally: string
   /**
@@ -1649,6 +1963,7 @@ export function describeRunEpilogue(
   const body = describeEpilogueBody(epilogue)
   const squad = describeEpilogueSquad(epilogue)
   const doctrines = describeEpilogueDoctrines(epilogue)
+  const caravans = describeEpilogueCaravans(summary, epilogue)
   const cause = describeEpilogueCause(epilogue)
   const tally = describeEpilogueTally(summary, epilogue)
   const ruleset = computeRunRulesetFingerprint({
@@ -1669,6 +1984,7 @@ export function describeRunEpilogue(
     body,
     squad,
     ...(doctrines ? [doctrines] : []),
+    ...(caravans ? [caravans] : []),
     cause,
     '',
     tally,
@@ -1685,6 +2001,7 @@ export function describeRunEpilogue(
     body,
     squad,
     doctrines,
+    caravans,
     cause,
     tally,
     ruleset,
@@ -1912,7 +2229,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'info',
   },
   bridgeAmbush: {
-    text: 'На ранней дороге отмечена необязательная засада у моста. Подойди, расставь отряд и реши судьбу телеги только после боя.',
+    text: 'Корован — не декорация: сначала бой, потом выбор. Эльф забирает груз или отдаёт домикам, охрана ведёт обоз по приказу, злодей грабит, забривает или жжёт. Исход меняет цены в лавке.',
     tone: 'info',
   },
   caravanLoot: {
@@ -2037,7 +2354,7 @@ export const EXPEDITION_COPY = {
   objective: 'Пункт похода',
   rumour: 'Слух',
   site: 'Открытая точка',
-  bridgeAmbush: 'Засада у моста',
+  caravanBeat: 'Корован',
   arrive: 'Ты у цели. Действие — отдельно.',
   nextBridge: 'Через мост',
   nextRoad: 'По дороге',

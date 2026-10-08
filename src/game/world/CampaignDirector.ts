@@ -45,6 +45,7 @@ import {
   getChronicleProtectedRegionIds,
   getChronicleSettlementSiteIds,
   getCaravanRegionId,
+  isCaravanBeatChronicleEvent,
   isProtectedSite,
   isRegionRazed,
   resolveEscortedCaravanDelivery,
@@ -566,6 +567,13 @@ export const WORLD_EVENT_REWARDS: Readonly<Record<WorldEventKind, EventReward>> 
   beastRaid: { ...NO_EXTRAS, gold: 95 },
 }
 
+/**
+ * W2-2 — a chronicle ambush of the player's own side's cart is defended, not robbed, and its
+ * owners pay less than the cargo is worth: 0.65 of the `caravanAmbush` win above. Contract
+ * ambushes are always of an opponent's cart, so no contract card is ever priced at this.
+ */
+export const CARAVAN_AMBUSH_DEFENDED_REWARD = 90
+
 /** The most damage champion wins can add across a whole run. */
 export const CHAMPION_DAMAGE_CAP = 18
 
@@ -677,13 +685,19 @@ export function buildChronicleFeedSignature(
   return `${tick}:${discoveredCount}:${log.length}:${log[log.length - 1]?.id ?? ''}`
 }
 
-/** The events the feed shows: discovered regions only, newest first, capped. */
+/**
+ * The events the feed shows: discovered regions only, newest first, capped.
+ *
+ * W2-2 — a caravan beat's own entries stay out. The feed is what the world did without the
+ * player, and the beat already has its notice and its card.
+ */
 export function selectChronicleFeedEvents(
   log: readonly ChronicleEvent[],
   discoveredRegionIds: ReadonlySet<string>,
 ): ChronicleEvent[] {
   return log
-    .filter((event) => discoveredRegionIds.has(String(event.regionId)))
+    .filter((event) =>
+      discoveredRegionIds.has(String(event.regionId)) && !isCaravanBeatChronicleEvent(event))
     .slice(-CHRONICLE_FEED_LIMIT)
     .reverse()
 }
