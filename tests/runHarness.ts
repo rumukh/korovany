@@ -233,6 +233,7 @@ import {
   eventCooldownRange,
   findContractTemplate,
   findRumourCandidates,
+  findEscortMeeting,
   fitRumourOffer,
   getContractProgress,
   getContractStatus,
@@ -653,6 +654,20 @@ export type MeleeDefence = 'none' | 'heavy' | 'all'
  * - `commit` is the treatment: pin one, honour it, burn the depot if that is what it asks.
  */
 export type RumourPolicy = 'off' | 'ignore' | 'walk' | 'commit'
+
+/**
+ * W2-3 — where the scripted player walks for an escort it steers by.
+ *
+ * - `cart` is **the default and stays the default**: the square the cart is in now, which is
+ *   where the compass led before W2-3's follow-up and where every pinned number walked to. It
+ *   is the control.
+ * - `meeting` is the shipped compass: the square `findEscortMeeting` names, worked out once a
+ *   chronicle tick as the engine works it out, and the cart's square when no meeting fits.
+ *
+ * A defence or a sabotage is walked to the same spot under both. `walk` and `commit` steer the
+ * same way, so the placebo still takes the commitment's detours.
+ */
+export type RumourSteering = 'cart' | 'meeting'
 
 /**
  * Roadmap 1.4 — how the scripted player picks which arm of the fork to do first.
@@ -1097,6 +1112,9 @@ export interface RumourMetrics {
   kept: number
   broken: number
   brokenWhileCommitted: number
+  /** W2-3 — the same verdicts by kind, so an escort's keep rate can be read on its own. */
+  keptByKind: Record<string, number>
+  brokenByKind: Record<string, number>
   /** Chronicle events the settlements themselves wrote. */
   events: number
   /** Simulated seconds the player spent inside a pinned rumour's square. */
@@ -1405,6 +1423,8 @@ export interface RunReport {
   meleeDefence: MeleeDefence
   /** Roadmap 1.3 — which rumour arm this run was. */
   rumourPolicy: RumourPolicy
+  /** W2-3 — where that arm walked an escort to. */
+  rumourSteering: RumourSteering
   /** Roadmap 1.4 — which fork arm this run was. */
   contractPolicy: ContractPolicy
   /** Roadmap 1.4 — branched, or the linearised placebo. */
@@ -1522,6 +1542,8 @@ export interface RunOptions {
   meleeDefence?: MeleeDefence
   /** Defaults to `off`, which is the pre-1.3 world every pinned number describes. */
   rumourPolicy?: RumourPolicy
+  /** W2-3 — defaults to `cart`, the square every pinned number walked an escort to. */
+  rumourSteering?: RumourSteering
   /** Defaults to `firstReady`, which is the pre-1.4 ordering every pinned number describes. */
   contractPolicy?: ContractPolicy
   /** Defaults to `branched`. `chain` is the anti-placebo control. */
@@ -1613,11 +1635,16 @@ export interface RunOptions {
  * window, `regionWindow: 'engine'`. It is derived rather than listed here, so a run that
  * turns either of them on by hand gets the engine's window too. Pass `regionWindow:
  * 'square'` to measure what the pinned window does to these arms.
+ *
+ * `rumourSteering: 'meeting'` is the shipped compass for a taken escort. It changes nothing
+ * while rumours are ignored, and it is what a run that turns `commit` on over these arms
+ * follows.
  */
 export const HARNESS_SHIPPED_ARMS = {
   meleeModel: 'honest',
   meleeDefence: 'heavy',
   rumourPolicy: 'ignore',
+  rumourSteering: 'meeting',
   contractPolicy: 'nearest',
   doctrinePolicy: 'seeded',
   squad: 'starting',
@@ -1839,6 +1866,7 @@ export function runHarness(options: RunOptions): RunReport {
   const meleeModel = options.meleeModel ?? 'legacy'
   const meleeDefence = options.meleeDefence ?? 'heavy'
   const rumourPolicy = options.rumourPolicy ?? 'off'
+  const rumourSteering = options.rumourSteering ?? 'cart'
   const contractPolicy = options.contractPolicy ?? 'firstReady'
   const campaignShape = options.campaignShape ?? 'branched'
   const contractOutcome = options.contractOutcome ?? 'honour'
@@ -1912,6 +1940,8 @@ export function runHarness(options: RunOptions): RunReport {
     kept: 0,
     broken: 0,
     brokenWhileCommitted: 0,
+    keptByKind: {},
+    brokenByKind: {},
     events: 0,
     embodiedSeconds: 0,
     candidatesSeen: 0,
@@ -5433,7 +5463,8 @@ export function runHarness(options: RunOptions): RunReport {
    *
    * `commit` follows the pin. `walk` — the placebo — follows the *first offered* rumour
    * without ever pinning it, so the two arms take the same detours and differ only in
-   * whether a commitment exists. Both are capped by `HARNESS_RUMOUR_DETOUR`.
+   * whether a commitment exists. Both are capped by `HARNESS_RUMOUR_DETOUR`, measured to
+   * where they would walk.
    */
   const steeringRumour = (): ChronicleRumour | null => {
     const candidate =
@@ -5443,14 +5474,56 @@ export function runHarness(options: RunOptions): RunReport {
           ? (commitments.rumours.find((rumour) => withinDetour(rumour)) ?? null)
           : null
     if (!candidate) return null
-    return withinDetour(candidate) ? candidate : null
+    return nearEnough(steeringTarget(candidate)) ? candidate : null
   }
 
+  /** True when the spot is close enough to be worth leaving the road for. */
+  const nearEnough = (target: { x: number; z: number } | null): boolean =>
+    target !== null &&
+    Math.hypot(target.x - player.x, target.z - player.z) <= HARNESS_RUMOUR_DETOUR
+
   /** True when the rumour is close enough to be worth leaving the road for. */
-  const withinDetour = (rumour: ChronicleRumour): boolean => {
-    const target = rumourTarget(rumour)
-    if (!target) return false
-    return Math.hypot(target.x - player.x, target.z - player.z) <= HARNESS_RUMOUR_DETOUR
+  const withinDetour = (rumour: ChronicleRumour): boolean => nearEnough(rumourTarget(rumour))
+
+  /** W2-3 — this body's walking pace for a rumour: the kit's walk on the legs it has. */
+  const rumourWalkSpeed = (): number =>
+    (shippedKit ? HARNESS_SHIPPED_PLAYER_SPEED : HARNESS_PLAYER_SPEED) *
+    (sustainOn ? playerLegMobility(player.body) : 1)
+
+  /**
+   * W2-3 — where the arm walks for the rumour it steers by, which is where the compass leads.
+   * Under `rumourSteering: 'meeting'` an escort is walked to the square `findEscortMeeting`
+   * names, worked out once a chronicle tick from where the player stands, as the engine
+   * works it out; `cart` walks to the cart's square now.
+   */
+  let escortMeeting: {
+    rumourId: string
+    tick: number
+    target: { x: number; z: number } | null
+  } | null = null
+  const steeringTarget = (rumour: ChronicleRumour): { x: number; z: number } | null => {
+    if (rumour.kind !== 'escort' || rumourSteering === 'cart') return rumourTarget(rumour)
+    if (
+      !escortMeeting ||
+      escortMeeting.rumourId !== rumour.id ||
+      escortMeeting.tick !== chronicleState.tick
+    ) {
+      const from = { x: player.x, z: player.z }
+      const speed = rumourWalkSpeed()
+      const regionId = findEscortMeeting(
+        rumour,
+        { blueprint, state: chronicleState },
+        (point) => estimateWalkSeconds(blueprint, from, point, speed),
+        chronicleState.tick,
+        chronicleAccumulator,
+      )
+      escortMeeting = {
+        rumourId: rumour.id,
+        tick: chronicleState.tick,
+        target: regionId === null ? null : rumourTarget({ ...rumour, regionId: String(regionId) }),
+      }
+    }
+    return escortMeeting.target ?? rumourTarget(rumour)
   }
 
   /**
@@ -5498,6 +5571,7 @@ export function runHarness(options: RunOptions): RunReport {
       rumours.resolved += 1
       if (verdict.outcome === 'kept') {
         rumours.kept += 1
+        rumours.keptByKind[verdict.kind] = (rumours.keptByKind[verdict.kind] ?? 0) + 1
         // W2-3 — the engine's `payKeptRumour`, into this run's purse when it has one.
         if (sustainOn) {
           const reward = rumourKeptReward(options.faction)
@@ -5508,6 +5582,7 @@ export function runHarness(options: RunOptions): RunReport {
         }
       } else {
         rumours.broken += 1
+        rumours.brokenByKind[verdict.kind] = (rumours.brokenByKind[verdict.kind] ?? 0) + 1
         if (verdict.committed) rumours.brokenWhileCommitted += 1
       }
     }
@@ -5515,8 +5590,7 @@ export function runHarness(options: RunOptions): RunReport {
     // player stands, at this body's own pace on the legs it has. No forest stride, as in the
     // engine, which leaves it out on purpose.
     const from = { x: player.x, z: player.z }
-    const offerSpeed = (shippedKit ? HARNESS_SHIPPED_PLAYER_SPEED : HARNESS_PLAYER_SPEED) *
-      (sustainOn ? playerLegMobility(player.body) : 1)
+    const offerSpeed = rumourWalkSpeed()
     const travel = (point: { x: number; z: number }): number =>
       estimateWalkSeconds(blueprint, from, point, offerSpeed)
     if (
@@ -5866,7 +5940,7 @@ export function runHarness(options: RunOptions): RunReport {
     // "walking somewhere else did it". `travelSite` replaces the objective as a destination
     // only; objective completion below still reads `objectiveSite`.
     const steering = steeringRumour()
-    const rumourSite = steering ? rumourTarget(steering) : null
+    const rumourSite = steering ? steeringTarget(steering) : null
     const travelSite = goal?.point ?? rumourSite ?? objectiveSite
 
     if (policy !== 'idle' && (travelSite || fightTarget)) {
@@ -6486,6 +6560,7 @@ export function runHarness(options: RunOptions): RunReport {
     meleeModel,
     meleeDefence,
     rumourPolicy,
+    rumourSteering,
     contractPolicy,
     campaignShape,
     contractOutcome,
