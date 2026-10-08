@@ -38,7 +38,7 @@ export async function captureNoticeLayout(browser, originalViewport, record, che
         const area = (a,b) => Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left)) *
           Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));
         const selectors = ['.vitals','.meter.health','.meter.stamina','.squad-command-strip',
-          '.combat-mastery-hud','.minimap-card','.expedition-compass','.touch-controls'];
+          '.combat-mastery-hud','.expedition-compass','.touch-controls'];
         const rect = rectangle(notice);
         const essentials = Object.fromEntries(selectors.map(selector => {
           const node = document.querySelector(selector);
@@ -64,6 +64,8 @@ export async function captureNoticeLayout(browser, originalViewport, record, che
       if (measurement.viewport.width === 390) {
         assert.ok(measurement.notice.right <= 390 && measurement.notice.left >= 0)
         assert.ok(measurement.touchButtons.every(rect => rect.width >= 44 && rect.height >= 44))
+        // W3-6 — narrow layouts keep the one live region at the foot of the left column.
+        assert.equal(measurement.parent, 'left-hud')
       }
     }
     return { complete: true, actualGuardNotice: true, viewports: measurements.map(entry => entry.viewport) }
@@ -78,7 +80,7 @@ export async function captureNoticeLayout(browser, originalViewport, record, che
 
 /** Uses actual server-rendered components and production CSS, without creating an engine. */
 export async function captureNoticeComponentLayout(browser, packet, buildHtml, record, checkTime) {
-  assert.equal(packet.kind, 'production-hud-component-layout-v1')
+  assert.equal(packet.kind, 'production-hud-component-layout-v2')
   assert.deepEqual(packet.cases.map(entry => entry.id),
     ['compact-finale', 'compact-ordinary', 'full-finale', 'full-ordinary'])
   const styles = [...buildHtml.matchAll(/<style\b[^>]*>[\s\S]*?<\/style>/g)].map(match => match[0]).join('\n')
@@ -94,7 +96,7 @@ export async function captureNoticeComponentLayout(browser, packet, buildHtml, r
       await browser.send('Page.setDocumentContent', {
         frameId: frameTree.frame.id,
         html: `<!doctype html><html lang="ru" data-theme="dark"><head><meta charset="UTF-8">${styles}</head>
-          <body><div id="root">${entry.markup}</div>
+          <body><div id="root">${viewport.width === 390 ? entry.narrowMarkup : entry.markup}</div>
           <div style="position:fixed;left:40%;bottom:0;z-index:10000;background:#111;color:#fff;font:12px monospace;pointer-events:none">
           STAGED COMPONENT LAYOUT: ${entry.id}; no engine/boss gameplay</div></body></html>`,
       })
@@ -109,8 +111,11 @@ export async function captureNoticeComponentLayout(browser, packet, buildHtml, r
         const notice = document.querySelector('.notice'), stack = document.querySelector('.notice-stack');
         if (!notice || !stack) throw new Error('Missing actual notice component');
         const style = getComputedStyle(stack), rect = rectangle(notice);
-        const essentials = Object.fromEntries(['.identity-panel','.hud-pause','.vitals','.meter.health','.meter.stamina','.combat-mastery-hud',
-          '.finale-hud','.touch-controls','.bottom-hud','.action-prompt','.expedition-compass'].map(selector => {
+        // The bottom HUD is a transparent full-width row; what it paints is its body panel and
+        // control ribbon, so those are the essentials (W3-6: the row's empty box was a false hit).
+        const essentials = Object.fromEntries(['.identity-panel','.hud-pause','.vitals','.meter.health','.meter.stamina',
+          '.squad-command-strip','.combat-mastery-hud','.finale-hud','.touch-controls','.body-panel','.control-ribbon',
+          '.action-prompt','.expedition-compass'].map(selector => {
           const node = document.querySelector(selector);
           return [selector,node ? rectangle(node) : null];
         }));
@@ -124,7 +129,7 @@ export async function captureNoticeComponentLayout(browser, packet, buildHtml, r
           liveRegions:document.querySelectorAll('.notice-stack[aria-live="polite"]').length,
           engineAbsent:window.__korovanyGraphics === undefined && !document.querySelector('.game-canvas')};
       })()`)
-      const result = { ...entry, markup: undefined, ...measurement, limitation: packet.limitation }
+      const result = { ...entry, markup: undefined, narrowMarkup: undefined, ...measurement, limitation: packet.limitation }
       measurements.push(result)
       await record(`${entry.id}-${viewport.width}`, result)
     }
@@ -134,11 +139,11 @@ export async function captureNoticeComponentLayout(browser, packet, buildHtml, r
     assert.equal(measurement.noticeCount, 1)
     assert.equal(measurement.liveRegions, 1)
     assert.equal(measurement.message, describeHint('perfectGuard').text)
-    if (measurement.mode !== 'compact') continue
+    // W3-6 — every case, Full included, now keeps the notice off the essential HUD.
     for (const [selector, area] of Object.entries(measurement.intersections)) {
       assert.equal(area, 0, `${measurement.id} ${measurement.viewport.width}px notice intersects ${selector}`)
     }
-    if (measurement.finale && measurement.viewport.width === 1920) {
+    if (measurement.mode === 'compact' && measurement.finale && measurement.viewport.width === 1920) {
       const originalLane = measurements.find(entry => entry.id === 'full-finale' && entry.viewport.width === 1920)
       for (const edge of ['left', 'right', 'bottom']) {
         assert.equal(measurement.stack[edge], originalLane.stack[edge], `Compact finale retains original lane ${edge}`)
@@ -146,7 +151,7 @@ export async function captureNoticeComponentLayout(browser, packet, buildHtml, r
     }
     if (measurement.viewport.width === 390) {
       assert.equal(measurement.style.position, 'static')
-      assert.equal(measurement.parent, 'top-hud-side')
+      assert.equal(measurement.parent, 'left-hud')
       assert.ok(measurement.notice.right <= 390 && measurement.notice.left >= 0)
     }
   }

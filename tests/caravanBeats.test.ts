@@ -34,7 +34,15 @@ import {
 } from '../src/game/run/doctrine.ts'
 import type { ActiveRunSaveV3 } from '../src/game/run/runTypes.ts'
 import { normalizeActiveRunSaveV3 } from '../src/game/run/storage.ts'
-import { createHealthyBody, type ActorRole, type Allegiance, type Faction, type Objective } from '../src/game/types.ts'
+import { createHealthyBody, type ActorRole, type Allegiance, type Faction, type NoticeOrigin, type NoticeTone, type Objective } from '../src/game/types.ts'
+import {
+  NARROW_NOTICE_LIMITS,
+  NOTICE_MAX_WAITING,
+  advanceNotices,
+  createNoticeQueue,
+  nextNoticeDeadline,
+  pushNotice,
+} from '../src/game/ui/noticeQueue.ts'
 import { ACTOR_BUDGET, ActorBudget, MAX_ACTORS } from '../src/game/world/ActorBudget.ts'
 import {
   createBridgeAmbushPlan,
@@ -1354,6 +1362,93 @@ test('walking away settles an engaged cart: the robbery escapes, the escort goes
   assert.equal(standing.state.phase, 'escaped')
 })
 
+test('W3-6: how a cart ended without the player is a line the notice queue never drops, even in a dense narrow burst', () => {
+  interface Sent { at?: number; message: string; tone: NoticeTone | undefined; origin: NoticeOrigin | undefined }
+  const walkAway = (value: ReturnType<typeof harness>, phase: string): Sent => {
+    const sent: Sent[] = []
+    Reflect.set(value.engine, 'callbacks', {
+      onNotice: (message: string, tone?: NoticeTone, origin?: NoticeOrigin) => sent.push({ message, tone, origin }),
+      onSaveRequest() {},
+    })
+    value.player.position.set(value.cart.position.x + CARAVAN_BEAT_ABANDON_RANGE + 5, 0, value.cart.position.z)
+    for (let step = 0; step < CARAVAN_BEAT_ABANDON_SECONDS; step += 1) invoke(value.engine, 'updateCaravanBeats', 1)
+    assert.equal(value.state.phase, phase)
+    assert.deepEqual(sent.map((entry) => entry.message), [value.state.consequence], 'one line per ending')
+    return sent[0]
+  }
+  const released = harness('guard')
+  released.secure()
+  const delivered = harness('guard')
+  delivered.secure()
+  assert.equal(delivered.choose('deliver'), true)
+  const given = harness('elf')
+  given.secure()
+  assert.equal(given.choose('give'), true)
+  const escaped = harness('elf')
+  assert.equal(invoke<boolean>(escaped.engine, 'materializeCaravanBeat', escaped.entry()), true)
+  const abandoned = harness('elf')
+  abandoned.secure()
+  const endings = {
+    released: walkAway(released, 'resolved'),
+    delivered: walkAway(delivered, 'resolved'),
+    given: walkAway(given, 'resolved'),
+    escaped: walkAway(escaped, 'escaped'),
+    abandoned: walkAway(abandoned, 'lost'),
+  }
+  // Every ending moves the finale gate's count, so every one says so in a kept line, in the
+  // tone of what happened: a delivery or a release succeeded, an escape is a warning, a loss
+  // is danger. The three unattended walks used to be plain info.
+  for (const [name, line] of Object.entries(endings)) assert.equal(line.origin, 'outcome', name)
+  assert.deepEqual(Object.values(endings).map((line) => line.tone),
+    ['success', 'success', 'success', 'warning', 'danger'])
+  assert.match(endings.released.message, /своим ходом без тебя/)
+  assert.match(endings.delivered.message, /без проводника/)
+  assert.match(endings.given.message, /забрали телегу сами/)
+
+  // A dense burst on a phone: three dangers hold the one place for news, the five endings and
+  // a flavour line arrive behind them, and a dozen warnings overflow the line.
+  const flavour = 'У кого-то сдали нервы: бежит и не оборачивается.'
+  const burst = (lines: readonly Sent[]): Sent[] => [
+    ...[1, 2, 3].map((index): Sent => ({ at: 0, message: `Ранение ${String(index)}.`, tone: 'danger', origin: undefined })),
+    ...lines.map((line, index): Sent => ({ ...line, at: 100 + index * 50 })),
+    { at: 400, message: flavour, tone: 'info', origin: undefined },
+    ...Array.from({ length: NOTICE_MAX_WAITING }, (_, index): Sent =>
+      ({ at: 500 + index * 50, message: `По квадрату A${String(index + 1)} ходит ватага.`, tone: 'warning', origin: undefined })),
+  ]
+  const play = (arrivals: readonly Sent[]) => {
+    let queue = createNoticeQueue()
+    let due: number | null = null
+    let index = 0
+    const shown = new Set<string>()
+    for (;;) {
+      const arrival = arrivals[index]
+      const now = Math.min(arrival?.at ?? Infinity, due ?? Infinity)
+      if (!Number.isFinite(now)) break
+      if (arrival && arrival.at === now) {
+        queue = pushNotice(queue, { message: arrival.message, tone: arrival.tone ?? 'info', origin: arrival.origin },
+          now, NARROW_NOTICE_LIMITS)
+        index += 1
+      } else {
+        queue = advanceNotices(queue, now, NARROW_NOTICE_LIMITS)
+      }
+      due = nextNoticeDeadline(queue, NARROW_NOTICE_LIMITS, now)
+      for (const notice of queue.shown) shown.add(notice.message)
+    }
+    return { shown, queue }
+  }
+  const lines = Object.values(endings)
+  const dense = play(burst(lines))
+  for (const line of lines) assert.ok(dense.shown.has(line.message), `dropped: ${line.message}`)
+  assert.equal(dense.queue.waiting.length, 0)
+  // Control: the flavour line in the same burst is dropped, and so is the unattended delivery
+  // when it is sent the way it used to be, as plain untagged info.
+  assert.equal(dense.shown.has(flavour), false, 'the flavour line survived the burst')
+  assert.ok(dense.queue.stats.dropped > 1)
+  const untagged = lines.map((line): Sent => line === endings.delivered
+    ? { message: line.message, tone: 'info', origin: undefined } : line)
+  assert.equal(play(burst(untagged)).shown.has(endings.delivered.message), false)
+})
+
 test('a secured cart left standing can be loaded by a passer-by, but never by the squad', () => {
   const value = harness('elf')
   value.secure()
@@ -2345,9 +2440,23 @@ test('PR B — a crowded road holds a caravan honestly, the wait survives a cont
   assert.ok(Math.abs((restored.state?.beats.find((beat) => beat.id === first.id)?.stagingStalled ?? 0) - 10) < 0.01)
 
   // Twenty more seconds by the cart, and it goes through without its fight: the run moves on.
+  // W3-6 — that still counts for the gate, so it says so in a line the queue never drops.
+  const sent: [string, NoticeTone | undefined, NoticeOrigin | undefined][] = []
+  const callbacks = Reflect.get(value.engine, 'callbacks') as {
+    onNotice: (message: string, tone?: NoticeTone, origin?: NoticeOrigin) => void
+  }
+  Reflect.set(value.engine, 'callbacks', {
+    ...callbacks,
+    onNotice: (message: string, tone?: NoticeTone, origin?: NoticeOrigin) => {
+      sent.push([message, tone, origin])
+      callbacks.onNotice(message, tone, origin)
+    },
+  })
   for (let index = 0; index < 41 && state(first.id).phase === 'approach'; index += 1) step(0.5)
   assert.equal(state(first.id).phase, 'unavailable')
   assert.match(state(first.id).unavailableReason ?? '', /проехал без драки/)
+  assert.deepEqual(sent.filter(([message]) => message === state(first.id).unavailableReason),
+    [[state(first.id).unavailableReason, 'warning', 'outcome']])
   assert.equal(state(first.id).rewardPaid, false)
   assert.equal(caravanSpineHoldsCamp(plans, Reflect.get(value.engine, 'caravanBeats')), false, 'the camp settles')
   assert.equal(state(second.id).phase, 'approach', 'the other offer is still on its road')

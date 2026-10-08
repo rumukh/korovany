@@ -45,6 +45,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type ReactNode,
 } from 'react'
@@ -83,6 +84,8 @@ import {
   type Faction,
   type GameView,
   type LootRarity,
+  type NoticeOrigin,
+  type NoticeTone,
   type PartStatus,
   type ShopItem,
   type WorldEventView,
@@ -107,6 +110,21 @@ import { CampaignJournal } from './game/ui/CampaignJournal'
 import { ChoicePrice } from './game/ui/ChoicePrice'
 import type { CaravanBeatOutcome } from './game/world/CaravanBeats'
 import { CompactMissionHud, CompactWorldNews } from './game/ui/CompactCombatHud'
+import {
+  NARROW_HUD_QUERY,
+  NOTICE_FRAME_CAP_MS,
+  advanceNotices,
+  createNoticeQueue,
+  nextNoticeDeadline,
+  noticeLaneFor,
+  noticeLimitsFor,
+  noticeLogEnabled,
+  noticeViews,
+  pushNotice,
+  type NoticeLimits,
+  type NoticeQueue,
+  type NoticeView,
+} from './game/ui/noticeQueue'
 import {
   VisualSettingsControls,
   type VisualPreferencesControlProps,
@@ -206,12 +224,6 @@ import {
   WORLD_GENERATOR_VERSION,
   type WorldBlueprint,
 } from './game/world/worldTypes'
-
-interface Notice {
-  id: number
-  message: string
-  tone: 'info' | 'success' | 'warning' | 'danger'
-}
 
 interface TerminalRunSummary {
   runId: string
@@ -484,6 +496,27 @@ function readVisualPreferences(): VisualPreferences {
     return DEFAULT_VISUAL_PREFERENCES
   }
 }
+
+// W3-6 — the same query the CSS's narrow HUD block uses, read live so a rotation or a
+// resize moves the notice lane together with the layout around it.
+function subscribeNarrowHud(onChange: () => void): () => void {
+  const query = window.matchMedia(NARROW_HUD_QUERY)
+  query.addEventListener('change', onChange)
+  return () => query.removeEventListener('change', onChange)
+}
+
+function readNarrowHud(): boolean {
+  return window.matchMedia(NARROW_HUD_QUERY).matches
+}
+
+interface NoticeLogEntry {
+  at: number
+  message: string
+  tone: NoticeTone
+  origin: NoticeOrigin | null
+}
+
+type NoticeLogWindow = Window & { __korovanyNoticeLog?: NoticeLogEntry[]; __korovanyNoticeQueue?: NoticeQueue }
 
 function formatTime(seconds: number): string {
   const minutes = Math.floor(seconds / 60)
@@ -2571,6 +2604,7 @@ export function GameScreen({
   view,
   worldRef,
   notices,
+  narrowHud = false,
   achievementBanner,
   runAchievements,
   activeOverlay,
@@ -2634,7 +2668,12 @@ export function GameScreen({
 }: {
   view: GameView
   worldRef: React.RefObject<HTMLDivElement | null>
-  notices: Notice[]
+  notices: NoticeView[]
+  /**
+   * W3-6 — the layout the CSS calls narrow (`NARROW_HUD_QUERY`). Notices then sit at the
+   * foot of the left column in either HUD mode. Defaults to the wide layout.
+   */
+  narrowHud?: boolean
   achievementBanner: AchievementUnlock | null
   runAchievements: AchievementView[]
   activeOverlay: GameOverlay | null
@@ -2816,9 +2855,13 @@ export function GameScreen({
     onBlur: () => onInput(code, false),
   })
 
+  // W3-6 — one live region, placed by layout: the foot of the left column on narrow
+  // layouts, otherwise where GFX-05 and W1-4 put it. The narrow lane grows upward from the
+  // column's foot, so it lists the newest first and a notice already up never moves.
+  const noticeLane = noticeLaneFor(visualPreferences.hudMode, narrowHud)
   const noticeStack = (
     <div className="notice-stack" aria-live="polite">
-      {notices.map((notice) => (
+      {(noticeLane === 'column' ? [...notices].reverse() : notices).map((notice) => (
         <div className={`notice ${notice.tone}`} key={notice.id}>
           {notice.tone === 'success' ? (
             <Check aria-hidden="true" />
@@ -2830,6 +2873,9 @@ export function GameScreen({
             <Sparkles aria-hidden="true" />
           )}
           <span>{notice.message}</span>
+          {notice.count > 1 ? (
+            <b className="notice-count" aria-hidden="true">×{notice.count}</b>
+          ) : null}
         </div>
       ))}
     </div>
@@ -2912,7 +2958,7 @@ export function GameScreen({
           {!view.caravanBeats.active?.active ? (
             <CaravanOpeningCard opening={view.caravanBeats.opening ?? null} faction={view.faction} onTake={onTakeOffer} />
           ) : null}          <FinaleHud finale={view.finale} />
-          {visualPreferences.hudMode === 'compact' ? noticeStack : null}
+          {noticeLane === 'side' ? noticeStack : null}
           <CompactWorldNews mode={visualPreferences.hudMode} view={view}>
             <ChronicleFeed view={view} />
             <RumourBoard view={view} onPin={onPinRumour} />
@@ -3004,9 +3050,10 @@ export function GameScreen({
           </CompactMissionHud>
           <EventBanner event={view.activeEvent} />
         </div>
+        {noticeLane === 'column' ? noticeStack : null}
       </div>
 
-      {visualPreferences.hudMode === 'full' ? noticeStack : null}
+      {noticeLane === 'screen' ? noticeStack : null}
       <LootToast toast={view.lootToast} />
       <AchievementBanner achievement={achievementBanner} />
 
@@ -3263,7 +3310,7 @@ function App() {
     useState<GeneratedRunLaunch | null>(null)
   const [seedInput, setSeedInput] = useState(() => String(createRandomSeed()))
   const [gameView, setGameView] = useState<GameView | null>(null)
-  const [notices, setNotices] = useState<Notice[]>([])
+  const [noticeQueue, setNoticeQueue] = useState<NoticeQueue>(createNoticeQueue)
   const [achievementCatalogue, setAchievementCatalogue] = useState<AchievementView[]>(() =>
     readAchievementCatalogue(),
   )
@@ -3293,7 +3340,13 @@ function App() {
   const profileRef = useRef(profile)
   const overlaysRef = useRef(overlayState)
   const focusBeforeOverlayRef = useRef<HTMLElement | null>(null)
-  const noticeCounter = useRef(0)
+  const noticeQueueRef = useRef(noticeQueue)
+  /** Painted, unpaused milliseconds: the only clock notices age on (W3-6). */
+  const noticeClockRef = useRef(0)
+  const noticeDueRef = useRef<number | null>(null)
+  const narrowHud = useSyncExternalStore(subscribeNarrowHud, readNarrowHud, () => false)
+  const noticeLimits = noticeLimitsFor(narrowHud)
+  const noticeLimitsRef = useRef(noticeLimits)
   const musicMutedRef = useRef(musicMuted)
   const sfxVolumeRef = useRef(sfxVolume)
   const dynamicDayNightRef = useRef(dynamicDayNight)
@@ -3411,16 +3464,57 @@ function App() {
     }
   }, [activeOverlay])
 
-  const addNotice = useMemo(
-    () => (message: string, tone: Notice['tone'] = 'info') => {
-      const id = ++noticeCounter.current
-      setNotices((current) => [...current.slice(-3), { id, message, tone }])
-      window.setTimeout(() => {
-        setNotices((current) => current.filter((notice) => notice.id !== id))
-      }, 4300)
+  // W3-6 — every notice goes through one queue. The ref is the source of truth, so several
+  // notices in one engine frame apply in order; the state only draws it. Each update also
+  // books the next moment the queue can change, which is all the frame loop below checks.
+  const updateNotices = useCallback(
+    (step: (queue: NoticeQueue, now: number, limits: NoticeLimits) => NoticeQueue) => {
+      const now = noticeClockRef.current
+      const next = step(noticeQueueRef.current, now, noticeLimitsRef.current)
+      noticeDueRef.current = nextNoticeDeadline(next, noticeLimitsRef.current, now)
+      if (next === noticeQueueRef.current) return
+      noticeQueueRef.current = next
+      setNoticeQueue(next)
+      if (noticeLogEnabled(window.location.search)) (window as NoticeLogWindow).__korovanyNoticeQueue = next
     },
     [],
   )
+
+  const addNotice = useMemo(
+    () => (message: string, tone: NoticeTone = 'info', origin?: NoticeOrigin) => {
+      if (noticeLogEnabled(window.location.search)) {
+        const target = window as NoticeLogWindow
+        target.__korovanyNoticeLog ??= []
+        target.__korovanyNoticeLog.push({ at: noticeClockRef.current, message, tone, origin: origin ?? null })
+      }
+      updateNotices((queue, now, limits) => pushNotice(queue, { message, tone, origin }, now, limits))
+    },
+    [updateNotices],
+  )
+
+  useEffect(() => {
+    noticeLimitsRef.current = noticeLimits
+    updateNotices(advanceNotices)
+  }, [noticeLimits, updateNotices])
+
+  // Notices age only on painted frames of an unpaused game: a stall counts as one capped
+  // frame, a hidden tab paints nothing, and any overlay stops the clock.
+  const noticeClockRunning = screen === 'game' && activeOverlay === null &&
+    (noticeQueue.shown.length > 0 || noticeQueue.waiting.length > 0)
+  useEffect(() => {
+    if (!noticeClockRunning) return
+    let frame = 0
+    let last: number | null = null
+    const tick = (time: number) => {
+      if (last !== null) noticeClockRef.current += Math.min(NOTICE_FRAME_CAP_MS, Math.max(0, time - last))
+      last = time
+      const due = noticeDueRef.current
+      if (due !== null && noticeClockRef.current >= due) updateNotices(advanceNotices)
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [noticeClockRunning, updateNotices])
 
   // The hint ledger has to survive a reload mid-run, not just a run boundary, so it is
   // written the moment a line is shown rather than folded into the run checkpoint. The ref
@@ -3694,7 +3788,7 @@ function App() {
   ])
 
   const resetGameUi = () => {
-    setNotices([])
+    updateNotices(createNoticeQueue)
     setAchievementQueue([])
     setRunAchievements([])
     applyGameOverlays(initialGameOverlayState())
@@ -4059,7 +4153,8 @@ function App() {
         key={runId}
         view={gameView}
         worldRef={worldRef}
-        notices={notices}
+        notices={noticeViews(noticeQueue)}
+        narrowHud={narrowHud}
         achievementBanner={achievementQueue[0] ?? null}
         runAchievements={runAchievements}
         activeOverlay={activeOverlay}

@@ -138,20 +138,6 @@
 }
 
 @media (max-width: 720px), (pointer: coarse) {
-  .game-screen[data-hud="compact"] .notice-stack {
-    position: static;
-    transform: none;
-    width: 100%;
-  }
-
-  .game-screen[data-hud="compact"] .notice-stack:empty {
-    display: none;
-  }
-
-  .game-screen[data-hud="compact"] .notice {
-    overflow-wrap: anywhere;
-  }
-
   .game-screen[data-hud="compact"] .top-hud-side {
     width: 100%;
   }

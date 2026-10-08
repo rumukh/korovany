@@ -3228,6 +3228,14 @@ button {
   flex: 0 0 auto;
 }
 
+/* W3-6 — a repeated notice is one line that counts its repeats. */
+.notice-count {
+  color: var(--cp-text-muted);
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
 .notice.success {
   border-left: 3px solid var(--cp-success);
 }
@@ -4234,6 +4242,8 @@ kbd {
   left: 50%;
   max-width: min(31rem, calc(100% - 2rem));
   padding: 0.85rem 1rem;
+  /* W3-6 — a trophy is read, not pressed: it never takes the tap meant for a control under it. */
+  pointer-events: none;
   position: absolute;
   top: 1rem;
   transform: translateX(-50%);
@@ -4728,6 +4738,7 @@ kbd {
     --mobile-objectives-left: max(0.55rem, env(safe-area-inset-left, 0px));
     --mobile-touch-controls-height: 8.85rem;
     --mobile-prompt-height: 5.5rem;
+    --mobile-notice-status-reserve: 15rem;
   }
 
   .achievement-gallery {
@@ -5191,8 +5202,46 @@ kbd {
     grid-template-columns: 1fr 1fr;
   }
 
-  .notice-stack {
-    top: 5.3rem;
+  /* W3-6 — no lane over this screen is free of controls, and W2-2's cards fill the right
+     column, so both HUD modes keep the one live notice region at the foot of the left
+     column, below the mission panel. The panel yields its height while a notice shows; its
+     content stays put and scrolls. On very short screens the reserve keeps the vitals card
+     and squad strip whole, and the notices scroll instead. At most one notice and one
+     first-time line show, newest on top, so a notice already up never moves. */
+  .game-screen[data-hud] .left-hud > .notice-stack {
+    flex: 0 0 auto;
+    max-height: max(4.5rem, calc(100% - var(--mobile-notice-status-reserve)));
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    pointer-events: auto;
+    position: static;
+    scrollbar-width: thin;
+    touch-action: pan-y;
+    transform: none;
+    width: 100%;
+  }
+
+  /* Empty, the lane leaves the column's flow but stays in the accessibility tree, so the
+     first notice into it is still announced: a live region that is `display: none` until
+     it has content is often missed by screen readers. */
+  .game-screen[data-hud] .left-hud > .notice-stack:empty {
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    pointer-events: none;
+    position: absolute;
+    width: 1px;
+  }
+
+  .game-screen[data-hud] .left-hud > .notice-stack .notice {
+    overflow-wrap: anywhere;
+    padding: 0.4rem 0.6rem;
+  }
+
+  .game-screen[data-zone] .left-hud:has(> .notice-stack > .notice) > .mission-hud {
+    flex-basis: 0;
+    min-height: 0;
   }
 
   .loot-toast {
@@ -5340,6 +5389,21 @@ kbd {
   .shop-item .buy-button {
     grid-column: 1 / -1;
     width: 100%;
+  }
+}
+
+/* W3-6 — a phone at least 780px tall holds the whole status column, a notice and a
+   first-time line beside a mission panel that yields. There the status column never gives
+   way to the notices; when two long ones meet, the lane scrolls, newest on top, so only
+   the older one is cut short. Shorter phones keep the reserve above instead. */
+@media (max-width: 720px) and (min-height: 780px), (pointer: coarse) and (min-height: 780px) {
+  .game-screen[data-hud] .left-hud:has(> .notice-stack > .notice) > .status-hud {
+    flex-shrink: 0;
+  }
+
+  .game-screen[data-hud] .left-hud > .notice-stack {
+    flex-shrink: 1;
+    min-height: 0;
   }
 }
 
