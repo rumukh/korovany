@@ -66,7 +66,7 @@ function screen(overrides: Partial<ComponentProps<typeof GameScreen>> = {}): Com
     restored: undefined,
   })
   return {
-    view, worldRef: createRef(), notices: [], achievementBanner: null, runAchievements: [],
+    view, worldRef: createRef(), notices: [], runAchievements: [],
     activeOverlay: null, simulationPaused: true, touchCaptures: new GameplayPointerCaptures(),
     endResult: null, terminalRun: null,
     onResume: noop, onPause: noop, onSave: noop, onAchievements: noop, onMenu: noop,
