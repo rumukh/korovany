@@ -235,6 +235,7 @@ test('the villain spends one old-fort muster only after a casualty', () => {
   assert.equal(value.notices.at(-1)?.tone, 'success')
   assert.equal(value.notices.at(-1)?.origin, 'outcome')
   assert.equal(invoke<boolean>(value.engine, 'handleVillainMusterInteraction'), false)
+  assert.match(invoke<string>(value.engine, 'getVillainMusterPrompt'), /уже потрачен · 0\/1/)
 
   const control = musterFixture(0)
   assert.equal(invoke<string | null>(control.engine, 'getVillainMusterPrompt'), null)
@@ -331,6 +332,8 @@ test('a defended wooden house adds one elf partisan, but a full squad adds none'
   const partisan = value.actors.find((actor) => actor.id === 'defend-home-test:partisan')
   assert.ok(partisan)
   assert.equal(partisan.role, 'scout')
+  assert.equal(value.notices[0]?.tone, 'success')
+  assert.equal(value.notices[0]?.origin, 'outcome')
   assert.equal(value.notices.at(-1)?.tone, 'success')
   assert.equal(value.notices.at(-1)?.origin, 'outcome')
 

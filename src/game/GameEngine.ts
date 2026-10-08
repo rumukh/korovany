@@ -7291,20 +7291,16 @@ export class GameEngine {
 
   private getVillainMusterPrompt(): string | null {
     if (!this.isAtVillainMusterSite()) return null
+    const resource = this.getSquadResourceState()
+    if (resource.casualties <= 0) return null
     const livingSquad = this.livingSquadCount()
-    if (!canVillainMuster({
-      state: this.getSquadResourceState(),
-      faction: this.faction,
-      livingSquad,
-      atOldFort: true,
-    })) return null
     return describeVillainMusterPrompt({
-      casualties: this.getSquadResourceState().casualties,
-      squadSize: livingSquad + this.getSquadResourceState().pending.length,
+      casualties: resource.casualties,
+      squadSize: livingSquad + resource.pending.length,
       cap: SQUAD_RESOURCE_CAP,
       remaining: Math.max(
         0,
-        VILLAIN_MUSTER_LIMIT - this.getSquadResourceState().villainMustersUsed,
+        VILLAIN_MUSTER_LIMIT - resource.villainMustersUsed,
       ),
     })
   }
@@ -13488,7 +13484,7 @@ export class GameEngine {
       this.callbacks.onNotice(
         message,
         !contributed && WORLD_EVENT_REWARDS[event.kind].gold > 0 ? 'warning' : 'success',
-        (!contributed && WORLD_EVENT_REWARDS[event.kind].gold > 0) ||
+        WORLD_EVENT_REWARDS[event.kind].gold > 0 ||
           (event.kind === 'rescue' && event.companionJoined === true)
           ? 'outcome'
           : undefined,
@@ -13547,7 +13543,7 @@ export class GameEngine {
     this.callbacks.onNotice(
       this.describeFightReward(describeContractKept(template.id, credit.gold), credit),
       credit.reduced ? 'warning' : 'success',
-      credit.reduced ? 'outcome' : undefined,
+      'outcome',
     )
     this.completeGeneratedObjective(node)
   }

@@ -114,14 +114,24 @@ errands, all replenishment sources and cap controls, persistence, contribution c
 non-droppable notice tags. UI tests cover price disclosure, shop targets, journal muster, hints
 and 44 px care controls.
 
-The required isolated Chromium executable could not expose WebGL1 or WebGL2 on this host, even
-with both SwiftShader ANGLE backends, so the real renderer could not mount headlessly. A bounded
-Vite browser harness rendered the production `GameScreen` and its real orders, shop, journal and
-event components instead. At 1366x768 and 390x844 it observed:
+The final browser pass ran the real `THREE.WebGLRenderer / WebGL2` game in Chrome 153 through
+CDP 9793 against Vite 5193. Its labelled staging seams changed only route prerequisites and kept
+production actors, interactions, save storage, notices and UI. At 1366x768 and 390x844 it observed:
 
-- a 44 px keyboard/click ration action with player HP and the last-ration warning;
-- no horizontal overflow, with the narrow dialog inside 8-382 px and 8-836 px;
-- 44 px shop target and buy controls, live companion selection and healing;
-- the old-fort muster line and 44 px journal action;
-- `Плата: 70 · без тебя 35` on one line at 390 px;
-- reduced motion and bloom off without removing any information.
+- recovery prompts moving `2/2 -> 1/2 -> 0/2`; the player moved 50 -> 90 -> 100 HP, a nearby
+  companion 20 -> 60 -> 70 HP, and a companion 20 m away stayed at 20 HP;
+- the exhausted healer saying `[E] Осмотреть · лекарь занят · лечений 0/2`, then completing the
+  guard errand without restoring a treatment;
+- live T-panel ration care moving one companion 20 -> 55 HP and stock 2 -> 1, then showing
+  `последний — себе не останется`; the narrow panel stayed inside 8-382 px and 8-836 px with no
+  horizontal overflow and 44 px controls;
+- one casualty-gated old-fort muster adding exactly `squad:villain:muster:0`; the prompt then said
+  `Сбор в старом форте уже потрачен · 0/1`, and a second `E` changed nothing;
+- a squad-only bounty showing +35 of 70 as a warning outcome, while a real enemy contact followed
+  by the same victory showed the full +70 as a success outcome;
+- save and «Продолжить забег» preserving companion HP 20, one treatment, spent muster, one pending
+  entitlement and the same three unique companion IDs.
+
+The live pass found two integration gaps and fixed them: spent/full muster copy now remains
+reachable at the old fort, and successful full-gold fight notices use the same non-droppable
+`outcome` lane as reduced pay.
