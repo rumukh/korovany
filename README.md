@@ -139,6 +139,36 @@ commander's call ever takes the room a contract would stage in: it waits for his
 share of the field. The guard used to reach a contract beside the palace and find the square
 already full of soldiers nobody had sent for.
 
+When your own side still fills the field, it makes room. If a contract you have reached is
+short of room once the game's own events have made way, your side's idle packs step back into
+their squares, farthest first and only as many as it needs. A pack steps back only if it is not
+hostile to you, at least 60 m away, outside the camera's view, unhurt and not fighting. Enemies
+never step back, and neither do the squad, a stronghold's garrison, a unique, an objective, the
+finale or anyone an event put down. Stepping back is not losing: the pack is not counted as
+beaten, and it drops and pays nothing. It comes home to its stations once nothing has asked for
+room for 4 seconds and the whole pack fits, at the first moment none of its stations is in view
+and all are at least 60 m from you, or with its square when that streams back in. Walk up to an
+empty post, within 25 m of one of its stations, and the pack is called home: from then on it
+only waits for you to look away. Seed 1's guard used to lose «Зверьё у домиков», beside the
+palace's two strongholds, as crowded every time.
+
+Known behaviour: until a pack is back, its post stands empty and the journal map shows none of
+its dots. Looking away at the post, or going 60 m off, ends that as soon as the field has room.
+
+## Rumours
+
+The **Слухи** board offers a rumour only when you can meet it from where you stand, and never for more than about
+25 seconds of walking. The walk along the itinerary the compass would chart, at walking pace on the legs you have, is
+stretched by half again plus eight seconds for fights and detours, and it still has to fit the rumour's clock. A
+defence or a sabotage then gets a clock fitted to that walk, between 48 and 80 seconds. An escort keeps its cart's
+clock, and is offered only when you can be in the cart's square at every check it needs, wherever the cart will have
+rolled by then. A new rumour comes at most every 32 seconds, two at a time, and none while you have taken one.
+
+Each card reads **идти ~N с · осталось M с** and says whether you will make it: «успеешь», «впритык» (only with no
+margin left) or «не успеть». Keeping a rumour pays a little, once, when its verdict lands: the palace guard's
+commander and the villain's own purse pay 15 gold, and the elves' wooden houses share a ration. A broken or untaken
+rumour pays nothing, and it still happens without you.
+
 ## Caravan beats
 
 «Можно грабить корованы» is a decision, not scenery, and every new run is built round it. A

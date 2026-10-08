@@ -41,8 +41,38 @@
   color: var(--cp-danger);
 }
 
+/* W2-3 — a rumour card's reach line: the compass's walk against the clock. Coloured by the
+   verdict as well as named by it, never by colour alone. */
+.rumour-reach {
+  color: var(--cp-text-muted);
+  font-size: 0.6rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.rumour-reach svg {
+  display: inline-block;
+  height: 1em;
+  margin-right: 0.3em;
+  vertical-align: -0.15em;
+  width: 1em;
+}
+
+.rumour-reach.yes {
+  color: var(--cp-success);
+}
+
+.rumour-reach.tight {
+  color: var(--cp-warning);
+}
+
+.rumour-reach.no {
+  color: var(--cp-danger);
+}
+
 /* The journal reads the same cards at its own prose size, so the price does too. */
-.campaign-journal .choice-price p {
+.campaign-journal .choice-price p,
+.campaign-journal .rumour-reach {
   font-size: 1rem;
   line-height: 1.5;
 }

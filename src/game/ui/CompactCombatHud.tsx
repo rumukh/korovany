@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { COMPACT_HUD_COPY as copy } from '../content/gameCopy.ts'
+import { COMPACT_HUD_COPY as copy, describeRumourReach } from '../content/gameCopy.ts'
 import type { GameView } from '../types.ts'
 import type { HudMode } from '../visualSettings.ts'
 import { keepDisclosureKeyLocal } from '../input/CombatInput.ts'
@@ -58,7 +58,9 @@ export function CompactWorldNews({ view, mode, children }: {
         <span>{copy.chronicle}: {view.chronicle.length}</span>
         {view.rumours.map((rumour) => <span key={rumour.id} className="compact-hud-deadline">
           {rumour.regionLabel} · {rumour.title}
-          {rumour.outcome === null ? `: ${Math.ceil(rumour.timeRemaining)} ${copy.seconds}` : ` · ${rumour.outcomeText}`}
+          {rumour.outcome === null
+            ? `: ${describeRumourReach(rumour.travel?.seconds ?? null, rumour.timeRemaining, rumour.reach ?? null)}`
+            : ` · ${rumour.outcomeText}`}
         </span>)}
       </>
     }>{children}</Disclosure>

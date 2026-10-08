@@ -417,3 +417,24 @@ an estimate per 4 m of player movement, and on the launch path directly, after t
 boon's reveal, so initial and live views agree. The atlas list row shows a short form
 («300 золотых · идти ~45 с»); the detail shows the full price. The bridge-ambush destination is
 left unpriced for the caravan-beat work that replaces it.
+
+### 2026-10-08: reachable rumours (W2-3, part 2)
+
+A rumour destination now carries the same `payout` and `travel` as a contract. The payout is
+what keeping it pays, from `rumourKeptReward`: 15 gold for the guard and the villain, a ration
+for the elf. The travel is the walk to `rumourTargetPoint`, the point the compass and the map
+pin already use: the depot for a sabotage, the middle of the square otherwise, and for an
+escort the square its cart is in now.
+
+The rumour card itself adds a reach line, «идти ~N с · осталось M с · успеешь». The verdict comes
+from `estimateRumourReach`, the rule the board used to make the offer, read again from where the
+player stands, with the seconds already spent in the current chronicle tick. «Успеешь» means
+the walk fits with the offer's margin (×1.5 and 8 s), «впритык» only without it, and «не
+успеть» not at all. An escort is timed square by square, to wherever its cart will have rolled
+by each check.
+
+The offer is timed by `estimateWalkSeconds`: the same itinerary, without the per-4 m memo and
+without knowledge, so an offer depends on the player's position and body and nothing else. The
+shortest itinerary never weighs danger, so the fog cannot move it. The board asks for no walk
+longer than `RUMOUR_OFFER_WALK_SECONDS`, 25 s at the player's own pace; the card's verdict
+leaves that ceiling out, because it judges a rumour already on the board.

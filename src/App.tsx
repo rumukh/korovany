@@ -159,6 +159,7 @@ import {
   RUMOUR_PANEL_TITLE,
   RUMOUR_PIN_LABEL,
   RUMOUR_UNPIN_LABEL,
+  describeRumourReach,
   RUN_REWARD_LINES_LABEL,
   describeDoctrineSlots,
   describePurseReward,
@@ -775,6 +776,13 @@ function RumourBoard({
               </div>
               <p className="rumour-task">{rumour.task}</p>
               <p className="rumour-stake">{rumour.stake}</p>
+              {rumour.travel || rumour.reach ? (
+                <p className={`rumour-reach${rumour.reach ? ` ${rumour.reach}` : ''}`}>
+                  <Footprints aria-hidden="true" />
+                  {describeRumourReach(rumour.travel?.seconds ?? null, rumour.timeRemaining, rumour.reach ?? null)}
+                </p>
+              ) : null}
+              <ChoicePrice payout={rumour.reward} />
               {rumour.pinned ? (
                 <div className="rumour-progress" aria-hidden="true">
                   <i style={{ width: `${String(Math.round(rumour.progress * 100))}%` }} />

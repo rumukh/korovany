@@ -617,6 +617,22 @@ function knowledgeKey(knowledge: ExpeditionKnowledge): string {
   ].join('|')
 }
 
+const NO_KNOWLEDGE: ExpeditionKnowledge = { discoveredRegionIds: new Set(), risks: new Map() }
+
+/**
+ * W2-3 — the walk's seconds for a decision rather than a card: no memo and no knowledge, so
+ * the answer depends only on where the player stands. The shortest itinerary never weighs
+ * danger, so nothing the fog hides can move it.
+ */
+export function estimateWalkSeconds(
+  blueprint: WorldBlueprint,
+  from: ExpeditionPoint,
+  to: ExpeditionPoint,
+  speed: number,
+): number {
+  return estimateChoiceTravel(blueprint, from, to, NO_KNOWLEDGE, speed).seconds
+}
+
 function withinRegion(graph: ExpeditionGraph, regionId: string, point: ExpeditionPoint): boolean {
   const bounds = graph.regions.get(regionId)
   return bounds !== undefined && point.x >= bounds.minX - EPSILON && point.x <= bounds.maxX + EPSILON &&
@@ -669,7 +685,8 @@ export function buildExpeditionTargets(blueprint: WorldBlueprint, input: Expedit
     const regionId = regionAt(getExpeditionGraph(blueprint), position)
     if (!regionId) continue
     add({ kind: 'rumour', id: rumour.id, position, regionId, title: rumour.title, task: rumour.task,
-      stake: rumour.stake, timeRemaining: rumour.timeRemaining, exclusive: false, committed: rumour.pinned })
+      stake: rumour.stake, timeRemaining: rumour.timeRemaining, exclusive: false, committed: rumour.pinned,
+      payout: rumour.reward ?? null, travel: rumour.travel ?? null })
   }
   for (const target of input.caravanBeats ?? []) {
     add({

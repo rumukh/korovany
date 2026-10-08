@@ -12,23 +12,18 @@
  *
  * Everything below drives production engine methods — `syncGeneratedRegions` and the spawner
  * under it, `updateCommander`, `startContractEvent`, `updateFactionContract` and the budget
- * seams — on an engine whose render, audio and actor-mesh boundaries are replaced, the way
- * `tests/contractArrival.test.ts` does it. Every claim carries a negative control: the legacy
- * rule is put back on the instance, and the same assertion has to fail against it.
+ * seams — on an engine whose render, audio and actor-mesh boundaries are replaced
+ * (`tests/contractRoomField.ts`, the way `tests/contractArrival.test.ts` does it). Every claim
+ * carries a negative control: the legacy rule is put back on the instance, and the same
+ * assertion has to fail against it.
+ *
+ * The player's own packs stepping back for a staging — W1-6's second half — is off here
+ * unless a case says otherwise, so what these cases measure is the commander rule alone.
  */
 
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
-import { registerHooks } from 'node:module'
-import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import * as THREE from 'three'
-import {
-  createGeneratedEncounterPlans,
-  getBlueprintRegionBounds,
-  getSiteWorldPosition2D,
-  type GeneratedEncounterPlan,
-} from '../src/game/content/registry.ts'
 import {
   REINFORCEMENTS_ORDERED_NOTICE,
   describeContractAbandoned,
@@ -36,426 +31,38 @@ import {
   formatRegionGridLabel,
   generatedSiteLabel,
 } from '../src/game/content/gameCopy.ts'
-import { RandomStream } from '../src/game/random/RandomStream.ts'
-import { createDoctrineRunState, resolveDoctrineEffects } from '../src/game/run/doctrine.ts'
-import {
-  createHealthyBody,
-  type ActorRole,
-  type Allegiance,
-  type Faction,
-} from '../src/game/types.ts'
-import { ACTOR_BUDGET, ActorBudget, MAX_ACTORS } from '../src/game/world/ActorBudget.ts'
+import type { Faction } from '../src/game/types.ts'
+import { ACTOR_BUDGET, MAX_ACTORS } from '../src/game/world/ActorBudget.ts'
 import {
   CONTRACT_TEMPLATES,
-  completeObjectiveEntry,
-  createCampaignContractState,
-  createChronicleCommitmentState,
-  createGeneratedObjectives,
   findContractTemplate,
   getContractNodes,
-  getContractStatus,
-  type CampaignContractState,
 } from '../src/game/world/CampaignDirector.ts'
-import { createChronicleRegions, createChronicleState } from '../src/game/world/Chronicle.ts'
-import { createPlayerMeleeState } from '../src/game/world/CombatResolver.ts'
-import { createCombatMasteryState } from '../src/game/world/CombatMastery.ts'
-import { createFinaleIdentity, createFinaleState } from '../src/game/world/FinaleDirector.ts'
-import { RegionManager } from '../src/game/world/RegionManager.ts'
-import { createSquadCommandState } from '../src/game/world/SquadCommand.ts'
-import { generateWorld } from '../src/game/world/WorldGenerator.ts'
-import type { FactionObjectiveNode, WorldBlueprint } from '../src/game/world/worldTypes.ts'
+import type { FactionObjectiveNode } from '../src/game/world/worldTypes.ts'
+import {
+  COMMANDER_CALL_INTERVAL,
+  FACTIONS,
+  FRAME,
+  field,
+  invoke,
+  siteOf,
+  world,
+  type Category,
+  type Probe,
+  type World,
+} from './contractRoomField.ts'
 
-const hooks = registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier.startsWith('.') && context.parentURL) {
-      for (const suffix of ['.ts', '/index.ts']) {
-        const url = new URL(specifier + suffix, context.parentURL)
-        if (existsSync(fileURLToPath(url))) return nextResolve(url.href, context)
-      }
-    }
-    return nextResolve(specifier, context)
-  },
-})
-const { GameEngine } = await import('../src/game/GameEngine.ts')
-hooks.deregister()
-
-const FRAME = 0.25
 /** `GameEngine`'s `COMMANDER_REINFORCEMENT_INTERVAL` and `COMMANDER_REINFORCEMENT_LIMIT`. */
-const CALL_INTERVAL = 25
+const CALL_INTERVAL = COMMANDER_CALL_INTERVAL
 const CALL_LIMIT = 4
 /** Long enough for all four calls, with a frame to spare. */
 const RESIDENCY = CALL_INTERVAL * CALL_LIMIT + 1
-const FACTIONS: readonly Faction[] = ['elf', 'guard', 'villain']
 /** The reproduction: the guard's «Домики жгут» between the two palace strongholds. */
 const REPRO_SEED = 95_029
 /** The longest start grace any shipped template has, plus a margin. */
 const PAST_GRACE = Math.max(
   ...Object.values(CONTRACT_TEMPLATES).map((template) => template.startGraceSeconds),
 ) + 3
-
-type Category = 'squad' | 'campaign' | 'chronicle' | 'ambient'
-
-interface HeadlessActor {
-  id: string
-  allegiance: Allegiance
-  role: ActorRole
-  mesh: THREE.Group
-  alive: boolean
-  hp: number
-  maxHp: number
-  targetId: string | null
-  generatedSpawnId: string | null
-  generatedRegionId: string | null
-  generatedEncounterId: string | null
-  generatedObjectiveId: string | null
-  generatedUnique: boolean
-  objectiveEligible: boolean
-  squadEligible: boolean
-  squadSlot: number | null
-  budgetCategory: Category
-  eventOwnerId: string | null
-  eventPropTargetId: string | null
-  aiMode: string
-  hostileToPlayer: boolean
-  playerAggro: boolean
-  reinforcementTimer: number
-  reinforcementsCalled: number
-  phase: number
-  home: THREE.Vector3
-  wanderTarget: THREE.Vector3
-  order: null | { kind: string; position: THREE.Vector3; timer: number }
-  routTimer: number
-  attackCooldown: number
-  action: null | { kind: string }
-  deathAt: number | null
-  healthBar: THREE.Sprite
-  healthBarTexture: THREE.Texture
-  reaction: string
-  reactionRemaining: number
-  poise: number
-  maxPoise: number
-  velocity: THREE.Vector3
-  knockbackVelocity: THREE.Vector3
-}
-
-interface Point {
-  x: number
-  z: number
-}
-
-function invoke<T = void>(engine: object, method: string, ...args: unknown[]): T {
-  const callable: unknown = Reflect.get(engine, method)
-  assert.equal(typeof callable, 'function', `${method} must be a production engine method`)
-  return Reflect.apply(callable as (...values: unknown[]) => T, engine, args)
-}
-
-/** One generated world, its plans as the engine groups them, and its region streamer. */
-interface World {
-  seed: number
-  blueprint: WorldBlueprint
-  manager: RegionManager
-  plans: Map<Faction, Map<string, GeneratedEncounterPlan[]>>
-}
-
-const worlds = new Map<number, World>()
-
-function world(seed: number): World {
-  const cached = worlds.get(seed)
-  if (cached) return cached
-  const blueprint = generateWorld(seed)
-  const plans = new Map<Faction, Map<string, GeneratedEncounterPlan[]>>()
-  for (const faction of FACTIONS) {
-    // The constructor's grouping. Its chronicle refresh is a no-op on a fresh run, because
-    // every square's control is still its territory.
-    const byRegion = new Map<string, GeneratedEncounterPlan[]>()
-    for (const plan of Object.values(createGeneratedEncounterPlans(blueprint, faction))) {
-      const key = String(plan.regionId)
-      byRegion.set(key, [...(byRegion.get(key) ?? []), plan])
-    }
-    plans.set(faction, byRegion)
-  }
-  const created: World = { seed, blueprint, manager: new RegionManager(blueprint), plans }
-  worlds.set(seed, created)
-  return created
-}
-
-function siteOf(blueprint: WorldBlueprint, node: FactionObjectiveNode): Point {
-  const position = getSiteWorldPosition2D(blueprint, node.siteId)
-  assert.ok(position, `${node.id} has no site position`)
-  return position
-}
-
-interface FieldOptions {
-  /** The contract the player has taken on and stands at. */
-  node?: FactionObjectiveNode
-  /** Simulate the 3x3 visible square, as the harness once did, instead of the engine's plus. */
-  wide?: boolean
-}
-
-/**
- * A fresh engine with the player at `options.node`'s site (or the start), the engine's own
- * window streamed in around them, and nothing spawned yet.
- */
-function field(source: World, faction: Faction, options: FieldOptions = {}) {
-  const { blueprint, manager } = source
-  const graph = blueprint.objectives[faction]
-  const objectives = createGeneratedObjectives(blueprint, faction)
-  for (const rootId of graph.rootNodeIds) completeObjectiveEntry(objectives, rootId)
-  const board: CampaignContractState = createCampaignContractState()
-  const node = options.node ?? null
-  if (node) {
-    for (const id of node.prerequisiteIds) completeObjectiveEntry(objectives, id)
-    board.pinnedNodeId = node.id
-  }
-  const start = siteOf(blueprint, graph.nodes.find((entry) => entry.id === graph.rootNodeIds[0])!)
-  const standing = node ? siteOf(blueprint, node) : start
-  const regionId = blueprint.regions.find((region) => {
-    const bounds = getBlueprintRegionBounds(blueprint, region.id)
-    return bounds !== undefined && bounds !== null &&
-      standing.x >= bounds.minX && standing.x <= bounds.maxX &&
-      standing.z >= bounds.minZ && standing.z <= bounds.maxZ
-  })?.id
-  assert.ok(regionId, 'the player stands in a square')
-  manager.update(regionId)
-  const player = new THREE.Group()
-  player.position.set(standing.x, 0, standing.z)
-  const actors: HeadlessActor[] = []
-  const notices: string[] = []
-  const regionIds = blueprint.regions.map((region) => String(region.id))
-  const called = new Set<string>()
-  let serial = 0
-  const engine: object = Object.create(GameEngine.prototype)
-  const generatedWorld = {
-    bounds: blueprint.bounds,
-    // The engine reads its window off the streamer; `wide` swaps in the visible 3x3.
-    regions: {
-      getSimulatedRegionIds: () =>
-        options.wide ? manager.getVisibleRegionIds() : manager.getSimulatedRegionIds(),
-      getVisibleRegionIds: () => manager.getVisibleRegionIds(),
-      getSavedDelta: (id: string) => manager.getSavedDelta(id),
-      applyRegionDelta: (id: string, delta: unknown) => manager.applyRegionDelta(id, delta),
-    },
-    discoveredRegionIds: [...regionIds],
-    sampleHeight: () => 0,
-    getRegionIdAt: (x: number, z: number) => regionIds.find((id) => {
-      const bounds = getBlueprintRegionBounds(blueprint, id)
-      return bounds !== undefined && bounds !== null &&
-        x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ
-    }),
-    getRegionBounds: (id: string) => getBlueprintRegionBounds(blueprint, id),
-    getSitePosition: (id: string) => {
-      const position = getSiteWorldPosition2D(blueprint, id)
-      return position ? { ...position, y: 0 } : undefined
-    },
-  }
-  Object.assign(engine, {
-    faction,
-    generatedBlueprint: blueprint,
-    generatedWorld,
-    bridgeAmbushPlan: null,
-    bridgeAmbushState: null,
-    bridgeAmbushCart: null,
-    player,
-    actors,
-    eventPropTargets: new Map(),
-    simulatedGeneratedRegions: new Set<string>(),
-    generatedEncounterPlans: source.plans.get(faction),
-    generatedActivationSpawns: new Map(),
-    generatedNavigationCache: new Map(),
-    actorSequence: 0,
-    elapsed: 30,
-    paused: false,
-    ended: false,
-    gold: 55,
-    objectives,
-    threatTier: 1,
-    eventCooldown: 70,
-    eventSequence: 0,
-    activeEvents: [],
-    activeContractNodeId: null,
-    contractWaitExplained: null,
-    campaignContracts: board,
-    chronicleCommitments: createChronicleCommitmentState(),
-    chronicleRegions: createChronicleRegions(blueprint),
-    chronicleState: createChronicleState(),
-    chronicleContestedRegionIds: new Set(),
-    chronicleProtectedRegionIds: new Set(),
-    doctrines: createDoctrineRunState([]),
-    doctrineEffects: resolveDoctrineEffects([]),
-    finale: createFinaleState(createFinaleIdentity(blueprint, faction)),
-    squadCommand: createSquadCommandState({ x: standing.x, z: standing.z, heading: 0 }, false),
-    squadNavigation: new Map(),
-    squadBlockedSeconds: new Map(),
-    squadIntents: new Map(),
-    hints: { pending: () => [] },
-    lootPickups: [],
-    cameraYaw: 0,
-    body: createHealthyBody(),
-    combatMastery: createCombatMasteryState(),
-    melee: createPlayerMeleeState(),
-    callbacks: {
-      onNotice: (message: string) => notices.push(message),
-      onSaveRequest() {},
-    },
-    scene: new THREE.Scene(),
-    projectiles: [],
-    projectileSourcesToClear: new Set(),
-    updatingProjectiles: false,
-    particles: [],
-    materializeCooldown: Number.POSITIVE_INFINITY,
-    materializedSituationIds: new Set(),
-    seenAftermathRegionIds: new Set(),
-    locatedEventCopy: new Map(),
-    finaleTelegraphs: [],
-    finaleTelegraphAction: null,
-  })
-  const stream = new RandomStream(3)
-  Reflect.set(engine, 'eventRng', () => stream.next())
-  Reflect.set(engine, 'actorBudget', new ActorBudget((category, count) =>
-    invoke<number>(engine, 'yieldActorSlots', category, count)))
-  for (const method of [
-    'emitView',
-    'playSound',
-    'drawActorHealthBar',
-    'releaseActorTelegraph',
-    'removeAndDisposeObject',
-    'registerNamedInteractableOutline',
-    'spawnDecal',
-    'spawnSmokeParticle',
-  ]) {
-    Reflect.set(engine, method, () => {})
-  }
-  Reflect.set(engine, 'groundHeightAt', () => 0)
-  Reflect.set(engine, 'isWalkablePosition', () => true)
-  Reflect.set(engine, 'createHouseFireEffect', () => new THREE.Group())
-  const spawn = (
-    allegiance: Allegiance,
-    role: ActorRole,
-    x: number,
-    z: number,
-    category: Category,
-    extra: Partial<HeadlessActor> = {},
-  ): HeadlessActor => {
-    assert.ok(actors.length < MAX_ACTORS, 'a spawn went past the actor cap')
-    serial += 1
-    const mesh = new THREE.Group()
-    mesh.position.set(x, 0, z)
-    const spawned: HeadlessActor = {
-      id: `actor-${String(serial)}`,
-      allegiance,
-      role,
-      mesh,
-      alive: true,
-      hp: 60,
-      maxHp: 60,
-      targetId: null,
-      generatedSpawnId: null,
-      generatedRegionId: null,
-      generatedEncounterId: null,
-      generatedObjectiveId: null,
-      generatedUnique: false,
-      objectiveEligible: false,
-      squadEligible: false,
-      squadSlot: null,
-      budgetCategory: category,
-      eventOwnerId: null,
-      eventPropTargetId: null,
-      aiMode: 'normal',
-      hostileToPlayer: allegiance !== faction,
-      playerAggro: false,
-      // `spawnActor`'s own start: the first call comes a full interval after spawning.
-      reinforcementTimer: CALL_INTERVAL,
-      reinforcementsCalled: 0,
-      phase: 0,
-      home: mesh.position.clone(),
-      wanderTarget: mesh.position.clone(),
-      order: null,
-      routTimer: 0,
-      attackCooldown: 0,
-      action: null,
-      deathAt: null,
-      healthBar: new THREE.Sprite(),
-      healthBarTexture: new THREE.Texture(),
-      reaction: 'none',
-      reactionRemaining: 0,
-      poise: 72,
-      maxPoise: 72,
-      velocity: new THREE.Vector3(),
-      knockbackVelocity: new THREE.Vector3(),
-      ...extra,
-    }
-    actors.push(spawned)
-    return spawned
-  }
-  Reflect.set(engine, 'spawnActor', (
-    allegiance: Allegiance,
-    role: ActorRole,
-    x: number,
-    z: number,
-    _index: number,
-    options: Partial<HeadlessActor> & { budget?: Category },
-  ) => {
-    const { budget, ...rest } = options
-    const spawned = spawn(allegiance, role, x, z, budget ?? 'campaign', rest)
-    // A commander's call is the one engine spawn with neither a generator slot nor an event.
-    if (options.generatedEncounterId === undefined && options.eventOwnerId === undefined) {
-      called.add(spawned.id)
-    }
-    return spawned
-  })
-
-  const probe = {
-    engine,
-    blueprint,
-    faction,
-    node,
-    player,
-    actors,
-    notices,
-    spawn,
-    /** The squad that walked here with the player. */
-    squad(count = ACTOR_BUDGET.squad): HeadlessActor[] {
-      return Array.from({ length: count }, (_, index) =>
-        spawn(faction, 'soldier', standing.x + 1 + index, standing.z + 1, 'squad', {
-          squadEligible: true,
-          hostileToPlayer: false,
-        }))
-    },
-    /** The engine's own streaming pass: the window's packs, through the production spawner. */
-    streamIn(): void {
-      invoke(engine, 'syncGeneratedRegions')
-    },
-    commanders: (): HeadlessActor[] =>
-      actors.filter((actor) => actor.alive && actor.role === 'commander'),
-    /** The soldiers a commander's call put on the field, and nobody else. */
-    reinforcements: (): HeadlessActor[] => actors.filter((actor) => called.has(actor.id)),
-    usage: (): Record<Category, number> => invoke(engine, 'actorUsageByCategory'),
-    chronicleRoom: (): number => invoke<number>(engine, 'chronicleCapacity'),
-    /** `seconds` of the production `updateCommander` for every living commander. */
-    residency(seconds: number): void {
-      const steps = Math.round(seconds / FRAME)
-      for (let step = 0; step < steps; step += 1) {
-        Reflect.set(engine, 'elapsed', Reflect.get(engine, 'elapsed') + FRAME)
-        for (const commander of probe.commanders()) {
-          invoke(engine, 'updateCommander', commander, FRAME)
-        }
-      }
-    },
-    status: (target: FactionObjectiveNode) =>
-      getContractStatus(Reflect.get(engine, 'campaignContracts'), target),
-    /** The engine's own contract frames, as `update` runs them. */
-    contractFrames(seconds: number): void {
-      const steps = Math.round(seconds / 0.1)
-      for (let step = 0; step < steps; step += 1) {
-        Reflect.set(engine, 'elapsed', Reflect.get(engine, 'elapsed') + 0.1)
-        invoke(engine, 'updateFactionContract', 0.1)
-      }
-    },
-  }
-  return probe
-}
-
-type Probe = ReturnType<typeof field>
 
 /**
  * Puts the rule W1-6 replaced back on the instance: every commander gathers men all the

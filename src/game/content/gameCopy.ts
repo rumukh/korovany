@@ -554,6 +554,51 @@ export function describeRumourDropped(kind: RumourKind): string {
   return `Бросил: «${RUMOUR_TITLES[kind]}». Мир доведёт до конца сам, и не в твою пользу.`
 }
 
+/**
+ * W2-3 — the verdict on a rumour card: whether the walk fits the clock with room to spare,
+ * only just, or not at all. «Впритык» is the honest middle: it fits with no margin for a
+ * fight on the way.
+ */
+export const RUMOUR_REACH_WORDS: Readonly<Record<'yes' | 'tight' | 'no', string>> = {
+  yes: 'успеешь',
+  tight: 'впритык',
+  no: 'не успеть',
+}
+
+/** W2-3 — «идти ~30 с · осталось 48 с · успеешь»: the walk the compass charts against the clock. */
+export function describeRumourReach(
+  walkSeconds: number | null,
+  remainingSeconds: number,
+  reach: 'yes' | 'tight' | 'no' | null,
+): string {
+  const parts: string[] = []
+  if (walkSeconds !== null) {
+    parts.push(walkSeconds <= 0 ? 'ты на месте' : `идти ~${String(walkSeconds)} с`)
+  }
+  parts.push(`осталось ${String(Math.ceil(remainingSeconds))} с`)
+  if (reach) parts.push(RUMOUR_REACH_WORDS[reach])
+  return parts.join(' · ')
+}
+
+/** W2-3 — what keeping a rumour paid, in the faction's own voice. */
+export function describeRumourReward(faction: Faction, reward: ChoicePayoutView): string {
+  const amount = reward.gold > 0
+    ? `+${String(reward.gold)} золота`
+    : `+${formatRussianCount(reward.supplies, RATION_FORMS)}`
+  if (faction === 'guard') return `Командир доволен: ${amount}.`
+  if (faction === 'villain') return `Сам себе командир — сам себе и премия: ${amount}.`
+  return `Домики деревяные делятся пайком: ${amount}.`
+}
+
+/** W2-3 — the kept verdict's notice, with what keeping it paid. */
+export function describeRumourVerdictPaid(
+  verdictLine: string,
+  faction: Faction,
+  reward: ChoicePayoutView,
+): string {
+  return `${verdictLine} ${describeRumourReward(faction, reward)}`
+}
+
 /** The prompt at the depot, once the player has actually committed to burning it. */
 export function describeSabotagePrompt(siteLabel: string | null): string {
   return `[E] Поджечь склад: ${siteLabel ?? DEFAULT_SITE_LABEL}`
@@ -908,6 +953,7 @@ export function describeChoiceSummary(
 ): string | null {
   const parts: string[] = []
   if (payout && payout.gold > 0) parts.push(formatRussianCount(payout.gold, GOLD_FORMS))
+  else if (payout && payout.supplies > 0) parts.push(formatRussianCount(payout.supplies, RATION_FORMS))
   if (travel) {
     parts.push(travel.basis === 'arrived' ? 'на месте' : `идти ~${String(travel.seconds)} с`)
   }
@@ -2356,7 +2402,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'info',
   },
   rumours: {
-    text: 'Слух — единственное место, где мир спрашивает, а не докладывает. Взяться можно за один: провести корован, постоять в квадрате или сжечь склад. Пройдёшь мимо — случится и без тебя.',
+    text: 'Слух — где мир спрашивает, а не докладывает. Взяться можно за один: провести корован, постоять в квадрате, сжечь склад. На карточке — путь, срок и плата. Пройдёшь мимо — случится и без тебя.',
     tone: 'info',
   },
   contracts: {
