@@ -58,6 +58,9 @@
  *   engine simulates. That is the five-square plus around the player's square, not the 3x3
  *   it shows. This follows W1-6's finding, and the fidelity test walks a real runtime over
  *   the whole map to hold it.
+ * - W3-4's `world/StreamingCentre.ts` and `world/EncounterRemnants.ts`, shared with the
+ *   engine: the window holds its centre for 16 m when the player turns back into the square
+ *   just left, and a square that streams back in fields what is left of its packs.
  * - `world/StagingRoom.ts` — W1-6's rule for making room: when a contract the player stands
  *   on is short of it, the player's own idle packs out of the camera's sight step back into
  *   their squares and come home later (`StagingModel`). The camera is the third-person one
@@ -315,7 +318,7 @@ import {
   type AiPositionOf,
   type MoraleBreak,
 } from '../src/game/world/ActorAi.ts'
-import type { FactionObjectiveNode, Territory, WorldBlueprint } from '../src/game/world/worldTypes.ts'
+import type { FactionObjectiveNode, RegionId, Territory, WorldBlueprint } from '../src/game/world/worldTypes.ts'
 import {
   BEAST_PROFILES,
   BEAST_LEASH_RANGE,
@@ -375,6 +378,12 @@ import {
   remnantSignature,
   takeRemnantWound,
 } from '../src/game/world/EncounterRemnants.ts'
+import {
+  STREAMING_RETURN_HOLD_METRES,
+  advanceStreamingCentre,
+  createStreamingCentreState,
+  recentreStreaming,
+} from '../src/game/world/StreamingCentre.ts'
 import { getStartingBoonEffects } from '../src/game/run/profile.ts'
 import {
   FINALE_ARENA_RADIUS,
@@ -908,6 +917,18 @@ export const HARNESS_ENGINE_REGION_STREAMING = {
   simulationRadius: 1,
   discoverVisibleRegions: false,
 } as const
+
+/**
+ * W3-4 — where the engine's window is centred.
+ *
+ * `instant` (the default) is the engine before W3-4, which every pinned number was measured
+ * with: the centre is the square under the player's feet, frame by frame, so a player crossing
+ * an edge back and forth recentres the window on every crossing. `held` is the shipped rule,
+ * `world/StreamingCentre.ts`, which the harness shares with `GeneratedWorldRuntime`: turning
+ * back into the square just left keeps the centre for `STREAMING_RETURN_HOLD_METRES`. Read only
+ * in the `engine` window.
+ */
+export type StreamingModel = 'instant' | 'held'
 
 /**
  * W1-6 — what a `commander` does besides swing.
@@ -1456,6 +1477,17 @@ export interface EncounterMetrics {
    * field alive with its square: the churn of a player crossing back and forth.
    */
   refieldedWithin30s: number
+  /** W3-4 — times the window moved its centre (`streaming`). */
+  centreSwitches: number
+  /** W3-4 — squares that entered the simulated plus after the first frame. */
+  simulatedActivations: number
+  /** W3-4 — squares that entered the visible 3x3 after the first frame: scene squares built. */
+  visibleActivations: number
+  /**
+   * W3-4 — hostile members chasing the player (`playerAggro`) that left the field because their
+   * square streamed out: pursuers the player shed by crossing a square's edge.
+   */
+  pursuersStreamedOut: number
 }
 
 /**
@@ -1557,6 +1589,8 @@ export interface RunReport {
   errand: ErrandModel
   /** W3-4 — whether a pack's dead and wounds outlived its square streaming out. */
   encounterMemory: EncounterMemory
+  /** W3-4 — where the engine window was centred. */
+  streaming: StreamingModel
   /** W3-4 — the opt-in encounter trace, present only when `encounterTrace` asked for it. */
   encounterTrace?: EncounterTraceEvent[]
   /** Frames per simulated second the run was driven at. */
@@ -1767,6 +1801,17 @@ export interface RunOptions {
   encounterMemory?: EncounterMemory
   /** W3-4 — records every encounter member fielded, leaving alive or falling, for the invariant test. */
   encounterTrace?: boolean
+  /**
+   * W3-4 — defaults to `instant`, the engine before W3-4: the window is centred on the square
+   * under the player's feet. `held` is the shipped `StreamingCentre` hold. Read only in the
+   * `engine` window.
+   */
+  streaming?: StreamingModel
+  /**
+   * W3-4 — the hold under `streaming: 'held'`, in metres. Defaults to the shipped
+   * `STREAMING_RETURN_HOLD_METRES`; other values exist to measure that constant.
+   */
+  streamingHoldMetres?: number
 }
 
 /**
@@ -1802,6 +1847,8 @@ export interface RunOptions {
  *
  * `encounterMemory: 'remnants'` is W3-4's ledger: a square that streams back in fields what is
  * left of its packs, not the packs whole again. `encounterMemory: 'fresh'` is the run before it.
+ * `streaming: 'held'` is W3-4's hold on the window's centre: turning back into the square just
+ * left does not recentre the window for 16 m. `streaming: 'instant'` is the run before it.
  */
 export const HARNESS_SHIPPED_ARMS = {
   meleeModel: 'honest',
@@ -1823,6 +1870,7 @@ export const HARNESS_SHIPPED_ARMS = {
   caravanBeats: 'shipped',
   errand: 'press',
   encounterMemory: 'remnants',
+  streaming: 'held',
 } as const satisfies Partial<RunOptions>
 
 // ---------------------------------------------------------------------------
@@ -2068,6 +2116,8 @@ export function runHarness(options: RunOptions): RunReport {
   const encounterMemory: EncounterMemory = options.encounterMemory ?? 'fresh'
   const remnantsOn = encounterMemory === 'remnants' && shippedEncounters
   const encounterTrace: EncounterTraceEvent[] | null = options.encounterTrace ? [] : null
+  // W3-4 — where the engine window is centred; the pinned 3x3 has no centre to hold.
+  const streamingModel: StreamingModel = options.streaming ?? 'instant'
   // W3-5 — the errand's stand-in, or the engine's press.
   const errandModel: ErrandModel = options.errand ?? 'clear'
 
@@ -2386,8 +2436,11 @@ export function runHarness(options: RunOptions): RunReport {
   // The streaming window. `simulatedRegionIds` is what the engine would be simulating:
   // encounters, materialization, the chronicle's freeze and navigation all read it. The
   // pinned `square` window simulates its whole visible block, so there the two are one.
-  const windowAt = createRegionWindow(blueprint, terrain, regionWindow)
-  let simulatedRegionIds = new Set(windowAt(player.x, player.z).simulated)
+  const windowAt = createRegionWindow(blueprint, terrain, regionWindow, streamingModel, options.streamingHoldMetres)
+  const firstWindow = windowAt(player.x, player.z)
+  let simulatedRegionIds = new Set(firstWindow.simulated)
+  /** W3-4 — the visible squares on the last frame, for the streaming cost. */
+  let visibleRegionIds = new Set(firstWindow.visible)
   navigation.setActiveRegions(simulatedRegionIds)
   discoveredRegionIds.add(regionIdAt(player.x, player.z))
 
@@ -2487,6 +2540,10 @@ export function runHarness(options: RunOptions): RunReport {
     remnantSurvivorsRestored: 0,
     remnantFallenSkipped: 0,
     refieldedWithin30s: 0,
+    centreSwitches: 0,
+    simulatedActivations: 0,
+    visibleActivations: 0,
+    pursuersStreamedOut: 0,
   }
   const fieldedEncounterIds = new Set<string>()
   /** Live encounter bodies times seconds, divided out into `meanOnField` at the end. */
@@ -4386,6 +4443,7 @@ export function runHarness(options: RunOptions): RunReport {
       if (actor.encounterId === '' && actor.eventOwnerId !== null) continue
       // W3-4 — when a member last left alive with its square, for the churn count.
       if (actor.alive && remnantPlanOf(actor)) leftFieldAt.set(spawnIdOf(actor), elapsed)
+      if (actor.alive && actor.hostileToPlayer && actor.playerAggro) encounterMetrics.pursuersStreamedOut += 1
       removeActor(actor.id)
     }
     encounterActivated.delete(regionId)
@@ -6491,7 +6549,16 @@ export function runHarness(options: RunOptions): RunReport {
       simulatedRegionIds = nextActive
       navigation.setActiveRegions(simulatedRegionIds)
       encounterScanCooldown = 0
+      // W3-4 — the streaming cost: the window moved, and what it had to bring in.
+      encounterMetrics.centreSwitches += 1
+      for (const regionId of nextActive) if (!previous.has(regionId)) encounterMetrics.simulatedActivations += 1
       w15Streamed(previous)
+    }
+    if (streamWindow.visible.some((regionId) => !visibleRegionIds.has(regionId))) {
+      for (const regionId of streamWindow.visible) {
+        if (!visibleRegionIds.has(regionId)) encounterMetrics.visibleActivations += 1
+      }
+      visibleRegionIds = new Set(streamWindow.visible)
     }
     // Streamed-in regions count as discovered here, which is **not** what the engine does
     // and is stated rather than assumed. `GeneratedWorldRuntime` builds its `RegionManager`
@@ -7026,6 +7093,7 @@ export function runHarness(options: RunOptions): RunReport {
     staging: stagingModel,
     errand: errandModel,
     encounterMemory,
+    streaming: streamingModel,
     ...(encounterTrace ? { encounterTrace } : {}),
     hz,
     outcome,
@@ -7082,11 +7150,18 @@ export interface RegionWindowSets {
  * `HARNESS_ENGINE_REGION_STREAMING`, and returns the squares in the order its getters
  * return them, which is the order `syncGeneratedRegions` spawns in. When the player
  * stands on no square it keeps the last sets, as `GeneratedWorldRuntime.update` does.
+ *
+ * W3-4 — `streaming` says where the `engine` window is centred. `instant` centres it on the
+ * player's square, as the engine did before W3-4; `held` advances the same
+ * `world/StreamingCentre.ts` state `GeneratedWorldRuntime.update` does, so the window holds for
+ * the first `STREAMING_RETURN_HOLD_METRES` back into the square just left.
  */
 export function createRegionWindow(
   blueprint: WorldBlueprint,
   terrain: TerrainSystem,
   window: RegionWindow,
+  streaming: StreamingModel = 'instant',
+  holdMetres = STREAMING_RETURN_HOLD_METRES,
 ): (x: number, z: number) => RegionWindowSets {
   if (window === 'square') {
     return (x, z) => {
@@ -7105,13 +7180,19 @@ export function createRegionWindow(
     }
   }
   const manager = new RegionManager(blueprint, undefined, HARNESS_ENGINE_REGION_STREAMING)
-  let currentId: string | null = null
+  const centre = createStreamingCentreState<RegionId>()
+  let centreId: string | null = null
   let sets: RegionWindowSets = { visible: [], simulated: [] }
   return (x, z) => {
-    const regionId = terrain.getRegionIdAt(x, z)
-    if (regionId === undefined || String(regionId) === currentId) return sets
-    manager.update(regionId)
-    currentId = String(regionId)
+    const square = terrain.getRegionAt(x, z)
+    if (square === undefined) return sets
+    if (streaming === 'held') {
+      advanceStreamingCentre(centre, square, { x, z }, (id) => terrain.getRegion(id), holdMetres)
+    } else recentreStreaming(centre, square.id)
+    const next = centre.centre ?? square.id
+    if (String(next) === centreId) return sets
+    manager.update(next)
+    centreId = String(next)
     sets = {
       visible: manager.getVisibleRegionIds().map(String),
       simulated: manager.getSimulatedRegionIds().map(String),
@@ -7714,6 +7795,14 @@ export interface BalanceCell {
     meanRemnantFallenSkipped: number
     /** W3-4 — bodies fielded within 30 s of leaving with their square, per run: the churn. */
     meanRefieldedWithin30s: number
+    /** W3-4 — the window's centre moves per minute of run, averaged over the runs. */
+    meanCentreSwitchesPerMinute: number
+    /** W3-4 — squares entering the simulated plus per minute of run, averaged over the runs. */
+    meanSimulatedActivationsPerMinute: number
+    /** W3-4 — squares entering the visible 3x3 per minute of run, averaged over the runs. */
+    meanVisibleActivationsPerMinute: number
+    /** W3-4 — pursuers shed by crossing a square's edge, per run. */
+    meanPursuersStreamedOut: number
   }
   meanGoldEarned: number
   meanGoldSpent: number
@@ -7846,6 +7935,10 @@ function summarizeCell(
     meanRemnantSurvivorsRestored: 0,
     meanRemnantFallenSkipped: 0,
     meanRefieldedWithin30s: 0,
+    meanCentreSwitchesPerMinute: 0,
+    meanSimulatedActivationsPerMinute: 0,
+    meanVisibleActivationsPerMinute: 0,
+    meanPursuersStreamedOut: 0,
   }
   let damage = 0
   let kills = 0
@@ -7903,6 +7996,11 @@ function summarizeCell(
     encounters.meanRemnantSurvivorsRestored += balance.encounters.remnantSurvivorsRestored / runs
     encounters.meanRemnantFallenSkipped += balance.encounters.remnantFallenSkipped / runs
     encounters.meanRefieldedWithin30s += balance.encounters.refieldedWithin30s / runs
+    const minutes = Math.max(1 / 60, report.elapsed / 60)
+    encounters.meanCentreSwitchesPerMinute += balance.encounters.centreSwitches / minutes / runs
+    encounters.meanSimulatedActivationsPerMinute += balance.encounters.simulatedActivations / minutes / runs
+    encounters.meanVisibleActivationsPerMinute += balance.encounters.visibleActivations / minutes / runs
+    encounters.meanPursuersStreamedOut += balance.encounters.pursuersStreamedOut / runs
     goldEarned += balance.sustain.goldEarned
     goldSpent += balance.sustain.goldSpent
     healed += balance.sustain.healed

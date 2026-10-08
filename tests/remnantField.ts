@@ -1,11 +1,12 @@
 /**
- * W3-4 — a headless `GameEngine` on one generated world, for the tests of «Недобитые».
+ * W3-4 — a headless `GameEngine` on one generated world, for the tests of «Недобитые» and the
+ * streaming hold.
  *
  * The engine is the shipped class with its render and audio boundaries replaced, the way
  * `tests/contractArrival.test.ts` does it: `syncGeneratedRegions` and the production spawner,
  * `damageActor`, `killActor` and `recordGeneratedActorDeath`, `removeActorById`,
  * `parkGeneratedPack` and `saveGeneratedRun` all run as they ship. The window is a real
- * `RegionManager`.
+ * `RegionManager`, or, with `runtime`, a real `GeneratedWorldRuntime` and its streaming hold.
  */
 import assert from 'node:assert/strict'
 import * as THREE from 'three'
@@ -32,6 +33,7 @@ import { ExpeditionPlanner } from '../src/game/world/ExpeditionPlanner.ts'
 import { createFinaleIdentity, createFinaleState } from '../src/game/world/FinaleDirector.ts'
 import { RegionManager } from '../src/game/world/RegionManager.ts'
 import { createSquadCommandState } from '../src/game/world/SquadCommand.ts'
+import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import type { WorldBlueprint } from '../src/game/world/worldTypes.ts'
 import { GameEngine, invoke } from './contractRoomField.ts'
@@ -96,9 +98,14 @@ export function farFrom(blueprint: WorldBlueprint, regionId: string): string {
 }
 
 /** The live engine on one world, streaming the real window around wherever the player stands. */
-export function field(faction: Faction, blueprint = generateWorld(SEED)) {
+export function field(faction: Faction, blueprint = generateWorld(SEED), options: { runtime?: boolean } = {}) {
   const plans = plansByRegion(blueprint, faction)
-  const regions = new RegionManager(blueprint)
+  // A real `GeneratedWorldRuntime`, with its streaming hold, or a bare `RegionManager` centred on
+  // whichever square the test names.
+  const runtime = options.runtime
+    ? new GeneratedWorldRuntime(new THREE.Scene(), blueprint, { decorationDensity: 0, terrainResolution: 6 })
+    : null
+  const regions = runtime?.regions ?? new RegionManager(blueprint)
   const regionIds = blueprint.regions.map((region) => String(region.id))
   const runId = `encounter-remnants-${faction}`
   const player = new THREE.Group()
@@ -111,7 +118,7 @@ export function field(faction: Faction, blueprint = generateWorld(SEED)) {
   }
   let serial = 0
   const engine: object = Object.create(GameEngine.prototype)
-  const generatedWorld = {
+  const generatedWorld = runtime ?? {
     bounds: blueprint.bounds,
     regions,
     discoveredRegionIds: [...regionIds],
@@ -285,16 +292,33 @@ export function field(faction: Faction, blueprint = generateWorld(SEED)) {
     blueprint,
     faction,
     regions,
+    runtime,
     plans,
     player,
     actors,
     notices,
     /** Walks to the middle of `regionId` and runs the engine's own streaming pass. */
     standIn(regionId: string): void {
-      regions.update(regionId)
       const centre = centreOf(blueprint, regionId)
-      player.position.set(centre.x, 0, centre.z)
+      if (runtime) probe.walkTo(centre.x, centre.z)
+      else {
+        regions.update(regionId)
+        player.position.set(centre.x, 0, centre.z)
+        invoke(engine, 'syncGeneratedRegions')
+      }
+    },
+    /**
+     * W3-4 — one frame of the player standing at `(x, z)`: the runtime's own update, with its
+     * streaming hold, then the engine's own streaming pass. Needs `runtime`.
+     */
+    walkTo(x: number, z: number): void {
+      assert.ok(runtime, 'walkTo streams through a real GeneratedWorldRuntime')
+      player.position.set(x, 0, z)
+      runtime.update({ focus: { x, z }, deltaSeconds: 1 / 30 })
       invoke(engine, 'syncGeneratedRegions')
+    },
+    dispose(): void {
+      runtime?.dispose()
     },
     pack: (plan: GeneratedEncounterPlan): Body[] =>
       actors.filter((actor) => actor.generatedEncounterId === plan.encounterId),

@@ -330,6 +330,16 @@ road cart's escort and the soldiers a commander calls keep their own rules. A sa
 this fields every pack it met whole, as it did then; a damaged record is dropped with a warning,
 and those packs are fielded whole.
 
+The world streams in around the square you stand in, and it no longer jumps back and forth
+with you. Walk on into the next square and it recentres at once, as before; turn back into
+the square you just left and it waits until you are 16 m inside it. Fighting across an edge,
+or walking a road that wanders over one, no longer rebuilds the squares around you or sends
+their packs home and back, and the packs and fights of the squares behind you stay on the
+field for those 16 m instead of vanishing the moment you step back over a line you cannot
+see. A square you step into that is not the one you just left still recentres the world at
+once, so near a corner a pack can still appear when you arrive in its square, as before.
+None of this is saved: a continue centres the world on the square you stand in.
+
 ## Threat, doctrines and night
 
 The threat tier in the corner rises with whichever comes first: the clock, one tier every

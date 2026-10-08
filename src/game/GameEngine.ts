@@ -4723,7 +4723,7 @@ export class GameEngine {
       return { actor, position: entry.position }
     })
     if (request.player) this.player.position.copy(request.player)
-    this.generatedWorld.update({ focus: this.player.position, deltaSeconds: 0 })
+    this.generatedWorld.update({ focus: this.player.position, deltaSeconds: 0, recentre: true })
     this.syncGeneratedRegions()
     this.refreshGeneratedCameraObstacles()
     for (const { actor, position } of companions) {
