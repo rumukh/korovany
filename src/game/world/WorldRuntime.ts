@@ -30,6 +30,8 @@ export interface WorldMarker {
 export interface WorldRuntimeUpdate {
   deltaSeconds: number
   focus?: Point2
+  /** W3-4 — a teleport: centre the streamed world on the focus at once, with no hold. */
+  recentre?: boolean
 }
 
 export interface WorldRuntimeState {

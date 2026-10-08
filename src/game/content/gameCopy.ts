@@ -2300,6 +2300,9 @@ export function describeFinaleDefeat(profile: keyof typeof FINALE_COPY): string 
 }
 export const FINALE_RESTORE_WARNING =
   'Запись финального боя повреждена: состояние отвергнуто. Отметки побед сохранены.'
+/** W3-4 — a saved remnant block that could not be trusted: every pack is fielded whole again. */
+export const ENCOUNTER_REMNANTS_SAVE_WARNING =
+  'Запись о недобитых отрядах повреждена: в своих квадратах они встанут в полном составе. Поход продолжается.'
 
 export type HintId =
   | 'health'

@@ -75,6 +75,11 @@ import {
   type SiteLayout,
 } from './SiteComposition.ts'
 import {
+  advanceStreamingCentre,
+  createStreamingCentreState,
+  recentreStreaming,
+} from './StreamingCentre.ts'
+import {
   TerrainSystem,
   type Bounds2D,
   type NormalizedRegion,
@@ -348,6 +353,14 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
    */
   private readonly spawnKeepOutSkips = { building: 0, prop: 0, decoration: 0 }
   private readonly sitePositions = new Map<string, Point3>()
+  /**
+   * W3-4 — the square the streamed world is centred on, held on the way back
+   * (`StreamingCentre`). The player's own square is `focusRegionId`.
+   */
+  private readonly streamingCentre = createStreamingCentreState<RegionId>()
+  private focusRegionId: RegionId | undefined
+  /** W3-4 — lifetime count of squares built for the visible set: the streaming cost. */
+  private sceneRegionBuilds = 0
   private disposedMaterialCount = 0
   private disposed = false
 
@@ -414,6 +427,7 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
           },
         })
         this.sceneRegions.set(context.regionId, runtime)
+        this.sceneRegionBuilds += 1
         return runtime
       },
       {
@@ -447,8 +461,22 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     return this.props.retentionIsIntact
   }
 
+  /** The square the player stands in, as of the last update. */
   get currentRegionId(): RegionId | undefined {
+    return this.focusRegionId ?? this.regions.currentRegionId
+  }
+
+  /**
+   * W3-4 — the square the streamed world is centred on. It is the player's square, except for
+   * the first `STREAMING_RETURN_HOLD_METRES` after turning back into the square just left.
+   */
+  get streamingCentreId(): RegionId | undefined {
     return this.regions.currentRegionId
+  }
+
+  /** W3-4 — squares built for the visible set since the runtime was made: the streaming cost. */
+  get regionBuildCount(): number {
+    return this.sceneRegionBuilds
   }
 
   get discoveredRegionIds(): readonly RegionId[] {
@@ -849,9 +877,19 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     let updateError: unknown
     try {
       if (update.focus) {
-        const regionId = this.getRegionIdAt(update.focus.x, update.focus.z)
-        if (!regionId) return
-        this.regions.update(regionId, deltaSeconds)
+        const region = this.terrain.getRegionAt(update.focus.x, update.focus.z)
+        if (!region) return
+        // W3-4 — the centre holds for the first stretch back into the square just left, so a
+        // player crossing an edge back and forth does not rebuild and refield the squares
+        // around them on every crossing. A teleport recentres at once.
+        if (update.recentre) recentreStreaming(this.streamingCentre, region.id)
+        else {
+          advanceStreamingCentre(this.streamingCentre, region, update.focus, (id) => this.terrain.getRegion(id))
+        }
+        this.focusRegionId = region.id
+        this.regions.update(this.streamingCentre.centre ?? region.id, deltaSeconds)
+        // Discovery stays "the square you step into", in the order you step into it.
+        this.regions.markDiscovered(region.id)
       } else if (this.currentRegionId) {
         this.regions.update(undefined, deltaSeconds)
       } else {

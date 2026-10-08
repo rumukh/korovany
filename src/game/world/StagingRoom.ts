@@ -22,7 +22,7 @@
  * 2. **What going means.** The pack is not beaten. It is never counted cleared, the members
  *    it lost before it went stay dead, and nothing drops, pays or is recorded, because nobody
  *    died. Its members are not saved anywhere: like every pack, they come back with their
- *    square.
+ *    square, and since W3-4 the ones it lost stay dead then too (`EncounterRemnants`).
  * 3. **How it comes back.** Once no staging has asked for room for
  *    {@link STAGING_PARK_HOLD_SECONDS}, when the whole pack fits and none of its stations is
  *    near the player or in sight (`canReturnPack`). A player who walks up to its empty post

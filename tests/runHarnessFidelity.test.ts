@@ -1440,6 +1440,89 @@ test('the shipped arms simulate the squares the engine simulates, and the pinned
   assert.equal(visited, 50)
 })
 
+test('W3-4: the held window turns back with the engine on edge walks, and the instant window does not', () => {
+  // The same real `GeneratedWorldRuntime` and the engine's own `syncGeneratedRegions`, walked
+  // frame by frame over paths that turn back across an edge: back and forth inside the hold, a
+  // return deeper than it, and round a corner of four squares. The harness's `held` window has
+  // to name the squares the engine simulates and sees, in its spawn order, on every frame; the
+  // `instant` window, the rule before W3-4, has to be told apart on the walks that turn back.
+  const { blueprint, terrain } = bench(SEEDS[0])
+  const square = (x: number, y: number) =>
+    terrain.layout.regions.find((region) => region.coordinate.x === x && region.coordinate.z === y)!
+  const west = square(1, 2)
+  const north = square(1, 1)
+  assert.ok(square(2, 2), 'the walks cross into the square east of the start')
+  const edgeX = west.bounds.maxX
+  const rowZ = (west.bounds.minZ + west.bounds.maxZ) / 2
+  const cornerZ = west.bounds.minZ
+  const line = (from: { x: number; z: number }, to: { x: number; z: number }, steps: number) =>
+    Array.from({ length: steps }, (_, index) => ({
+      x: from.x + ((to.x - from.x) * (index + 1)) / steps,
+      z: from.z + ((to.z - from.z) * (index + 1)) / steps,
+    }))
+  const start = { x: edgeX - 40, z: rowZ }
+  const paths: Record<string, Array<{ x: number; z: number }>> = {
+    oscillation: [start, ...line(start, { x: edgeX + 10, z: rowZ }, 100), ...Array.from({ length: 8 }, (_, index) =>
+      line({ x: edgeX + (index % 2 === 0 ? 10 : -10), z: rowZ }, { x: edgeX + (index % 2 === 0 ? -10 : 10), z: rowZ }, 40)).flat()],
+    deepReturn: [start, ...line(start, { x: edgeX + 30, z: rowZ }, 140), ...line({ x: edgeX + 30, z: rowZ }, { x: edgeX - 30, z: rowZ }, 120),
+      ...line({ x: edgeX - 30, z: rowZ }, { x: edgeX + 30, z: rowZ }, 120)],
+    corner: [start, ...line(start, { x: edgeX + 6, z: cornerZ + 6 }, 120), ...line({ x: edgeX + 6, z: cornerZ + 6 }, { x: edgeX - 6, z: cornerZ + 6 }, 24),
+      ...line({ x: edgeX - 6, z: cornerZ + 6 }, { x: edgeX - 6, z: cornerZ - 6 }, 24), ...line({ x: edgeX - 6, z: cornerZ - 6 }, { x: edgeX + 6, z: cornerZ - 6 }, 24)],
+  }
+  assert.equal(north.coordinate.z, west.coordinate.z - 1, 'the corner walk goes round four squares')
+  const differences: Record<string, number> = {}
+  let frames = 0
+  for (const [name, path] of Object.entries(paths)) {
+    const runtime = new GeneratedWorldRuntime(new THREE.Scene(), blueprint, { decorationDensity: 0, terrainResolution: 6 })
+    try {
+      const finale = createFinaleState(createFinaleIdentity(blueprint, 'elf'))
+      const spawnedIn: string[] = []
+      const engine = Object.assign(Object.create(RuntimeEngine.prototype), {
+        generatedWorld: runtime,
+        generatedNavigationRegionSignature: '',
+        generatedNavigationCache: new Map(),
+        simulatedGeneratedRegions: new Set<string>(),
+        generatedActivationSpawns: new Map<string, Set<string>>(),
+        actors: [],
+        faction: 'elf',
+        finale,
+        spawnGeneratedRegionEncounters: (regionId: string) => {
+          spawnedIn.push(regionId)
+        },
+        removeActorById: () => {},
+        clearFinaleThreats: () => {},
+      })
+      const held = createRegionWindow(blueprint, terrain, 'engine', 'held')
+      const instant = createRegionWindow(blueprint, terrain, 'engine', 'instant')
+      const finaleFirst = (left: string, right: string) =>
+        Number(right === finale.identity.regionId) - Number(left === finale.identity.regionId)
+      differences[name] = 0
+      for (const [index, point] of path.entries()) {
+        runtime.update({ focus: point, deltaSeconds: 1 / 30 })
+        spawnedIn.length = 0
+        engine.syncGeneratedRegions()
+        const simulated = runtime.regions.getSimulatedRegionIds().map(String)
+        const visible = runtime.regions.getVisibleRegionIds().map(String)
+        const ours = held(point.x, point.z)
+        const label = `${name}, frame ${index} at (${point.x.toFixed(1)}, ${point.z.toFixed(1)})`
+        assert.deepEqual([...ours.simulated], simulated, `${label}: simulated`)
+        assert.deepEqual([...ours.visible], visible, `${label}: visible`)
+        assert.deepEqual([...ours.simulated].sort(finaleFirst), spawnedIn, `${label}: spawn order`)
+        const old = instant(point.x, point.z)
+        if (old.simulated.join('|') !== simulated.join('|')) differences[name] += 1
+        frames += 1
+      }
+    } finally {
+      runtime.dispose()
+    }
+  }
+  // The control tells the rules apart wherever the walk turns back inside the hold.
+  assert.ok(differences.oscillation > 100, `instant differed on ${differences.oscillation} oscillation frames`)
+  assert.ok(differences.deepReturn > 0)
+  assert.ok(differences.corner > 0)
+  assert.ok(frames > 900)
+})
+
 // ---------------------------------------------------------------------------
 // W1-6 — a commander's call for men
 // ---------------------------------------------------------------------------
