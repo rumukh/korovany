@@ -401,6 +401,9 @@ test('cached pursuit yields to archer range as soon as the obstruction clears', 
       id: 'cover', regionId: 'region-2-2', x: 5, z: 0, halfWidth: 1, halfDepth: 4,
     })
     if (keepWaypointPriority) {
+      // Negative control for both ordering gates: without W3-3's in-band hold and with
+      // the cached waypoint kept first, the archer walks into melee before it fires.
+      Reflect.set(field, 'shouldHoldArcherRange', () => false)
       const navigate = field.getSquadNavigation.bind(field)
       field.getSquadNavigation = (actor, destination) => {
         const result = navigate(actor, destination)

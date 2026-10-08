@@ -206,6 +206,14 @@ test('staged prerequisites are validated before moving gameplay roots', () => {
       { id: 'duplicate', position: { x: 1, y: 0, z: 0 } },
     ],
   }))
+  validateGraphicsStage({
+    label: 'combat cover',
+    combatCover: true,
+  })
+  assert.throws(() => validateGraphicsStage({
+    label: 'combat cover',
+    combatCover: 'yes' as never,
+  }))
   const player = new THREE.Group()
   const engine = Object.assign(Object.create(GameEngine.prototype), {
     graphicsDiagnostics: null, player,

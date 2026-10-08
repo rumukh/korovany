@@ -40,7 +40,9 @@ test('managed care changes real whole runs while the legacy arm remains the matc
 test('a squad-only settlement withholds exactly half personal gold in the managed arm', () => {
   const options = {
     ...HARNESS_SHIPPED_ARMS,
-    seed: 95029,
+    // W3-3's first-staging roles move seed 95029's settlement. Re-picked by the same
+    // invariant: the first stride seed with one squad-only 70-gold settlement.
+    seed: 340518,
     faction: 'villain',
     policy: 'beeline',
     hz: 30,

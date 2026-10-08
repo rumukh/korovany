@@ -18,12 +18,20 @@ import {
 } from '../src/game/content/registry.ts'
 import { RandomStream } from '../src/game/random/RandomStream.ts'
 import { createDoctrineRunState, resolveDoctrineEffects } from '../src/game/run/doctrine.ts'
-import { createHealthyBody, type ActorRole, type Allegiance, type Faction } from '../src/game/types.ts'
+import {
+  areAllegiancesHostile,
+  createHealthyBody,
+  getEnemyScalingTier,
+  type ActorRole,
+  type Allegiance,
+  type Faction,
+} from '../src/game/types.ts'
 import { ActorBudget, MAX_ACTORS } from '../src/game/world/ActorBudget.ts'
 import {
   createCampaignContractState,
   createChronicleCommitmentState,
   createGeneratedObjectives,
+  enemyHealthMultiplier,
 } from '../src/game/world/CampaignDirector.ts'
 import { createChronicleRegions, createChronicleState } from '../src/game/world/Chronicle.ts'
 import { actorBaseHealth, createPlayerMeleeState } from '../src/game/world/CombatResolver.ts'
@@ -263,7 +271,15 @@ export function field(faction: Faction, blueprint = generateWorld(SEED), options
     assert.ok(actors.length < MAX_ACTORS, 'a spawn went past the actor cap')
     serial += 1
     const { budget, healthScale, ...rest } = options
-    const maxHp = Math.round(actorBaseHealth(role) * Math.max(0.1, healthScale ?? 1))
+    const clockMultiplier = enemyHealthMultiplier(
+      getEnemyScalingTier(Reflect.get(engine, 'elapsed')),
+      areAllegiancesHostile(faction, allegiance),
+    )
+    const maxHp = Math.round(
+      actorBaseHealth(role) *
+      clockMultiplier *
+      Math.max(0.1, healthScale ?? 1),
+    )
     const mesh = new THREE.Group()
     mesh.position.set(x, 0, z)
     const body: Body = {
@@ -381,4 +397,3 @@ export function woundKillAndLeave(probe: Probe, plan: GeneratedEncounterPlan) {
   assert.equal(probe.pack(plan).length, 0, 'the pack left the field with its square')
   return { wounded: left, killedId: killed.generatedSpawnId!, paid }
 }
-

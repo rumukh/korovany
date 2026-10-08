@@ -430,3 +430,51 @@ natural encounter or difficulty claims.
 At 390×844 the villain view had `scrollWidth === innerWidth`; all thirteen visible touch
 buttons measured 44×44 CSS pixels, and the evade label read `Готов · 19`. JPEG pairs and
 the focus/timing traces are retained in the W3-2 session artifacts outside the repository.
+
+## 11. W3-3 ordinary cover
+
+W3-3 adds cover after W3-2's contact admission; it does not change a tell shape,
+range, heading lock, target collider, forgiveness, or lock share.
+
+Ordinary NPC and player melee first passes `isWithinLockedMeleeShape` (or the
+player's existing arc), then tests three two-dimensional sight segments against
+registered colliders: target centre and the two target-radius tangent points.
+Contact is blocked only when all three are blocked. A wall corner clipping the
+centre ray therefore does not erase an exposed-body hit, while a full wall does.
+
+Ordinary archers require a clear line before starting their wind-up and recheck
+at release. An archer already inside its 8-12 unit band holds when blocked rather
+than entering a new reposition state. Every in-flight ordinary NPC arrow tests
+its physical segment and stops at the nearest solid collider.
+
+Only enabled, movement-blocking registered colliders count: buildings, walls,
+structural dressing and solid props. Water, foliage, `soft`-tagged and
+non-blocking colliders never block ordinary combat. The player's arrows keep
+their existing render-surface and terrain collision. Villain cleave, boar
+charges, event props and finale signatures retain their existing rules; finale
+cover still uses its own scope and projectile radius.
+
+Broad-phase candidate queries are cached per frame by collision revision and an
+outward-rounded 4-unit envelope. The 64-query cap applies only to NPC cache
+misses. Player melee is exempt and never fails closed. Over-budget archer
+admission waits for the next frame; an over-budget NPC contact or arrow may fail
+closed and is counted. The 25-actor-plus-projectile stress control must report
+zero overflow.
+
+An isolated Chrome 153 SwiftShader run used Vite port 5195 and CDP port 9795,
+with focus emulation enabled. Tier-2 generated mixes were staged for all three
+factions. A 25-actor settlement sample reported zero overflow, 0.10 ms p95 in
+the ordinary LOS resolver, 0 of 15 player melee contacts rejected by LOS, and
+0 of 87 NPC melee contacts rejected. These are controlled engine samples, not
+natural difficulty or frame-rate claims.
+
+The registered-wall fixture kept a ready archer inside its 8-12 unit band for
+12.0 continuous seconds without a shot. That exceeds the 10-second follow-up
+threshold: a later narrow change should try one bounded existing-navigation
+sidestep after a long blocked hold, without adding a new AI state. W3-3 keeps
+the approved honest hold and records the duration instead.
+
+At 390×844 the active 25-actor view kept
+`document.documentElement.scrollWidth === innerWidth === 390`; the existing
+HUD and touch controls remained inside the viewport. W3-3 adds no control or
+HUD surface.

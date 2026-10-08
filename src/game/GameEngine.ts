@@ -334,6 +334,8 @@ import {
   FINALE_COPY,
   describeFinaleDefeat,
   FINALE_RESTORE_WARNING,
+  ENCOUNTER_COMPOSITIONS_CAP_WARNING,
+  ENCOUNTER_COMPOSITIONS_SAVE_WARNING,
   ENCOUNTER_REMNANTS_SAVE_WARNING,
   type LocatedEventCopyContext,
   type ContractCopyContext,
@@ -731,6 +733,17 @@ import {
 } from './world/CaravanBeats'
 import { createCaravanSpine, restoreCaravanSpine } from './world/CaravanSpine'
 import {
+  applyStoredEncounterComposition,
+  cappedEncounterHealthScale,
+  createEncounterCompositions,
+  forgetEncounterComposition,
+  normalizeEncounterCompositions,
+  recoverEncounterCompositionFromRemnant,
+  serializeEncounterCompositions,
+  stageEncounterComposition,
+  type EncounterCompositions,
+} from './world/EncounterComposition'
+import {
   createEncounterRemnants,
   forgetRemnant,
   isRemnantFallen,
@@ -738,12 +751,18 @@ import {
   noteRemnantDeparture,
   noteRemnantFall,
   reconcileEncounterRemnants,
+  remnantEncounterIds,
+  savedRemnantSignature,
   serializeEncounterRemnants,
   takeRemnantWound,
   type EncounterRemnants,
   type EncounterRemnantsSave,
   type LiveRemnantBody,
 } from './world/EncounterRemnants'
+import {
+  CombatLineOfSight,
+  type CombatLosFrameStats,
+} from './world/CombatLineOfSight'
 import { chooseGeneratedInteraction } from './world/GeneratedInteraction'
 import {
   FINALE_ATTACKS,
@@ -1457,6 +1476,40 @@ interface ProjectileHit {
 }
 
 type ProjectileQuery = Pick<Projectile, 'owner' | 'allegiance' | 'sourceActorId' | 'finale'>
+
+interface CombatLosRuntimeDiagnostics {
+  frames: number
+  npcBroadPhaseQueries: number
+  playerBroadPhaseQueries: number
+  cacheHits: number
+  archerDeferrals: number
+  npcMeleeFailClosed: number
+  npcArrowFailClosed: number
+  playerMeleeAttempts: number
+  playerMeleeRejected: number
+  npcMeleeAttempts: number
+  npcMeleeRejected: number
+  longestBlockedArcherHold: number
+  resolverFrameMilliseconds: number[]
+}
+
+function createCombatLosRuntimeDiagnostics(): CombatLosRuntimeDiagnostics {
+  return {
+    frames: 0,
+    npcBroadPhaseQueries: 0,
+    playerBroadPhaseQueries: 0,
+    cacheHits: 0,
+    archerDeferrals: 0,
+    npcMeleeFailClosed: 0,
+    npcArrowFailClosed: 0,
+    playerMeleeAttempts: 0,
+    playerMeleeRejected: 0,
+    npcMeleeAttempts: 0,
+    npcMeleeRejected: 0,
+    longestBlockedArcherHold: 0,
+    resolverFrameMilliseconds: [],
+  }
+}
 
 type AttackKind = CombatAttackKind
 type HitWeight = CombatHitWeight
@@ -2267,6 +2320,10 @@ export class GameEngine {
   private caravanGateWasOpen: boolean | null = null
   private readonly caravanBeatRuntime = new Map<string, CaravanBeatRuntime>()
   private readonly generatedEncounterPlans = new Map<string, GeneratedEncounterPlan[]>()
+  /** W3-3 — base plans stay immutable; staged roles live here and in director state. */
+  private stagedEncounterPlans = new Map<string, GeneratedEncounterPlan>()
+  private encounterCompositions: EncounterCompositions = createEncounterCompositions()
+  private encounterCompositionOverflowNoticed = false
   private readonly generatedActivationSpawns = new Map<string, Set<string>>()
   /**
    * W1-6 — spawns of the player's own packs that stepped back into their squares to make room
@@ -2407,6 +2464,11 @@ export class GameEngine {
   private readonly graphicsClock: GraphicsClock | null
   private graphicsDiagnostics: GraphicsDiagnostics | null = null
   private graphicsFoundation: GraphicsFoundationFixture | null = null
+  private graphicsCombatCover: {
+    colliderId: string
+    actorId: string
+    wall: THREE.Mesh
+  } | null = null
   private graphicsCharacterPortrait: GraphicsCharacterPortrait | null = null
   private readonly artLibrary: StylizedArtLibrary
   /** Shape cache shared by every actor: one buffer per shape, not one per actor. */
@@ -2620,6 +2682,9 @@ export class GameEngine {
   private readonly bowRayDirection = new THREE.Vector3()
   private readonly bowIntersections: THREE.Intersection[] = []
   private readonly projectileCenter = new THREE.Vector3()
+  private combatLineOfSight: CombatLineOfSight | null = null
+  private combatLosRuntime = createCombatLosRuntimeDiagnostics()
+  private blockedArcherHoldSeconds = new Map<string, number>()
   private readonly bowFirstHit = (start: THREE.Vector3, end: THREE.Vector3): number | null =>
     this.findProjectileHit({ owner: 'player', allegiance: this.faction, sourceActorId: null, finale: false },
       start, end)?.fraction ?? null
@@ -2931,6 +2996,10 @@ export class GameEngine {
         water: this.palette.link,
       },
     })
+    this.combatLineOfSight = new CombatLineOfSight(
+      this.generatedWorld.collision,
+      this.graphicsClock ? () => performance.now() : null,
+    )
     if (restoredRun) {
       try {
         const applied = this.generatedWorld.regions.applyState({
@@ -3022,7 +3091,10 @@ export class GameEngine {
     this.finale = finaleRestore.state
     if (restoredRun) prepareFinaleResume(this.finale)
     if (finaleRestore.rejected) this.callbacks.onNotice(FINALE_RESTORE_WARNING, 'warning')
-    this.restoreEncounterRemnants(restoredRun?.directorState.encounterRemnants)
+    this.restoreEncounterRemnants(
+      restoredRun?.directorState.encounterRemnants,
+      restoredRun?.directorState.encounterCompositions,
+    )
     this.body = generatedPlayer ? { ...generatedPlayer.body } : createHealthyBody()
     this.upgrades = normalizeUpgradeLevels(generatedPlayer?.upgrades)
     const baseMaxHealth = getMaxHealth(this.upgrades)
@@ -3482,6 +3554,7 @@ export class GameEngine {
     if (document.pointerLockElement === this.renderer.domElement) {
       attempt(() => document.exitPointerLock())
     }
+    attempt(() => this.clearGraphicsCombatCover())
     attempt(() => this.generatedWorld.dispose())
     attempt(() => this.graphicsFoundation?.dispose())
     attempt(() => this.graphicsCharacterPortrait?.dispose())
@@ -4058,6 +4131,24 @@ export class GameEngine {
     }
     const target = this.actors.find((actor) => actor.id === chosen.id)
     if (!target?.alive) return
+    if (this.combatLineOfSight) {
+      const line = this.combatLineOfSight.melee(
+        this.player.position,
+        target.mesh.position,
+        this.actorColliderRadiusForRole(target.role),
+        'playerMelee',
+      )
+      const rejected = line.status === 'blocked'
+      this.recordOrdinaryMeleeLos('player', rejected)
+      if (rejected) {
+        this.playSound('swing')
+        this.playSound('whiff', {
+          position: this.player.position,
+          intensity: 0.5,
+        })
+        return
+      }
+    }
 
     // The soft half of the assist: face what the swing found. It is inside the arc by
     // construction, so this can only ever turn the player *within* the arc they aimed.
@@ -4469,6 +4560,9 @@ export class GameEngine {
         // W3-4 — what is left of every pack met and not beaten, the field's own wounds included,
         // so a continue fields no more of a pack than a walk out of its square would.
         encounterRemnants: this.serializeEncounterRemnantsForSave(),
+        encounterCompositions: serializeEncounterCompositions(
+          this.encounterCompositions ?? createEncounterCompositions(),
+        ),
         pendingHints: this.hints.pending(),
         combatMastery: serializeCombatMastery(
           this.combatMastery, this.melee, this.abilityCooldown, this.attackCooldown, this.shieldActive,
@@ -4574,7 +4668,114 @@ export class GameEngine {
     this.graphicsDiagnostics?.endFrame()
   }
 
+  private combatLosDiagnostics(): CombatLosRuntimeDiagnostics {
+    this.combatLosRuntime ??= createCombatLosRuntimeDiagnostics()
+    return this.combatLosRuntime
+  }
+
+  private captureCombatLosFrame(): void {
+    const lineOfSight = this.combatLineOfSight
+    if (!lineOfSight) return
+    const frame: CombatLosFrameStats = lineOfSight.snapshot()
+    const total = this.combatLosDiagnostics()
+    total.frames += 1
+    total.npcBroadPhaseQueries += frame.npcBroadPhaseQueries
+    total.playerBroadPhaseQueries += frame.playerBroadPhaseQueries
+    total.cacheHits += frame.cacheHits
+    total.archerDeferrals += frame.archerDeferrals
+    total.npcMeleeFailClosed += frame.npcMeleeFailClosed
+    total.npcArrowFailClosed += frame.npcArrowFailClosed
+    if (
+      frame.npcBroadPhaseQueries > 0 ||
+      frame.playerBroadPhaseQueries > 0 ||
+      frame.cacheHits > 0
+    ) {
+      total.resolverFrameMilliseconds.push(frame.resolverMilliseconds)
+      if (total.resolverFrameMilliseconds.length > 600) {
+        total.resolverFrameMilliseconds.shift()
+      }
+    }
+  }
+
+  private recordOrdinaryMeleeLos(
+    owner: 'player' | 'npc',
+    rejected: boolean,
+  ): void {
+    const diagnostics = this.combatLosDiagnostics()
+    if (owner === 'player') {
+      diagnostics.playerMeleeAttempts += 1
+      if (rejected) diagnostics.playerMeleeRejected += 1
+    } else {
+      diagnostics.npcMeleeAttempts += 1
+      if (rejected) diagnostics.npcMeleeRejected += 1
+    }
+  }
+
+  private advanceBlockedArcherHolds(
+    blockedIds: ReadonlySet<string>,
+    delta: number,
+  ): void {
+    this.blockedArcherHoldSeconds ??= new Map()
+    for (const actorId of [...this.blockedArcherHoldSeconds.keys()]) {
+      if (!blockedIds.has(actorId)) {
+        this.blockedArcherHoldSeconds.delete(actorId)
+      }
+    }
+    const diagnostics = this.combatLosDiagnostics()
+    for (const actorId of blockedIds) {
+      const held =
+        (this.blockedArcherHoldSeconds.get(actorId) ?? 0) +
+        Math.max(0, delta)
+      this.blockedArcherHoldSeconds.set(actorId, held)
+      diagnostics.longestBlockedArcherHold = Math.max(
+        diagnostics.longestBlockedArcherHold,
+        held,
+      )
+    }
+  }
+
+  private combatLosSnapshot() {
+    const diagnostics = this.combatLosDiagnostics()
+    const {
+      resolverFrameMilliseconds,
+      ...counts
+    } = diagnostics
+    const timings = [...resolverFrameMilliseconds]
+      .sort((left, right) => left - right)
+    const timingTotal = timings.reduce(
+      (sum, value) => sum + value,
+      0,
+    )
+    return {
+      ...counts,
+      resolverTiming: {
+        samples: timings.length,
+        meanMilliseconds:
+          timings.length > 0 ? timingTotal / timings.length : 0,
+        p95Milliseconds:
+          timings.length > 0
+            ? timings[Math.ceil(timings.length * 0.95) - 1]
+            : 0,
+      },
+      playerMeleeRejectedShare:
+        diagnostics.playerMeleeAttempts > 0
+          ? diagnostics.playerMeleeRejected /
+            diagnostics.playerMeleeAttempts
+          : 0,
+      npcMeleeRejectedShare:
+        diagnostics.npcMeleeAttempts > 0
+          ? diagnostics.npcMeleeRejected /
+            diagnostics.npcMeleeAttempts
+          : 0,
+      currentBlockedArcherHolds: Object.fromEntries(
+        [...(this.blockedArcherHoldSeconds ?? new Map())]
+          .sort(([left], [right]) => left.localeCompare(right)),
+      ),
+    }
+  }
+
   private update(delta: number): void {
+    this.combatLineOfSight?.beginFrame()
     this.elapsed += delta
     // Layer 5 — the world's night and the world's weather, read once per frame from
     // `WorldEnvironment` rather than from the renderer. `this.nightFactor` is pinned to
@@ -4623,6 +4824,7 @@ export class GameEngine {
     }
     this.updateProjectiles(delta)
     this.updateActors(delta)
+    this.captureCombatLosFrame()
     this.syncCaravanBeatCombat()
     this.updateTorches()
     this.updateCampfires(delta)
@@ -4833,6 +5035,7 @@ export class GameEngine {
         actions: this.actors.map((actor) => ({ id: actor.id, action: actor.action, reaction: actor.reaction,
           reactionRemaining: actor.reactionRemaining, deathAge: actor.deathAge })),
       },
+      combatLineOfSight: this.combatLosSnapshot(),
       rngStates: Object.fromEntries(Object.entries(this.generatedRngStreams).map(([key, stream]) => [key, stream.getState()])),
       actors: this.actors.map((actor) => ({
         id: actor.id, role: actor.role, allegiance: actor.allegiance, budget: actor.budgetCategory,
@@ -4852,6 +5055,7 @@ export class GameEngine {
   private stageGraphicsFixture(request: GraphicsFixtureStage): void {
     if (!this.graphicsDiagnostics?.manual) throw new Error('Graphics staging requires explicit manual diagnostics')
     validateGraphicsStage(request)
+    this.clearGraphicsCombatCover()
     if (request.portrait !== undefined) {
       const subject = request.portrait ? this.graphicsPortraitSubject(request.portrait) : null
       this.graphicsCharacterPortrait?.dispose()
@@ -4889,6 +5093,7 @@ export class GameEngine {
       this.cameraPitch = request.camera.pitch
     }
     if (request.crowd) this.stageGraphicsCrowd()
+    if (request.combatCover) this.stageGraphicsCombatCover()
     if (request.foundation !== undefined) {
       this.graphicsFoundation?.dispose()
       this.graphicsFoundation = request.foundation
@@ -4993,6 +5198,87 @@ export class GameEngine {
     if (this.reserveActorSlots('ambient', 1)) throw new Error('Production NPC cap unexpectedly admitted a 26th slot')
   }
 
+  private stageGraphicsCombatCover(): void {
+    const origin = this.player.position
+    const regionId = this.generatedRegionIdAt(origin.x, origin.z)
+    if (!regionId) throw new Error('Combat-cover fixture is outside a generated region')
+    const direction = origin.z + 12 < this.generatedWorld.bounds.maxZ ? 1 : -1
+    const wallZ = origin.z + direction * 5
+    const archerZ = origin.z + direction * 10
+    const colliderId = 'graphics-fixture:combat-cover'
+    this.generatedWorld.collision.registerBox({
+      id: colliderId,
+      regionId,
+      x: origin.x,
+      z: wallZ,
+      halfWidth: 36,
+      halfDepth: 0.25,
+      tags: ['wall', 'graphics-fixture'],
+    })
+    const wall = new THREE.Mesh(
+      new THREE.BoxGeometry(72, 3, 0.5),
+      new THREE.MeshStandardMaterial({
+        color: this.palette.borderStrong,
+        roughness: 0.9,
+      }),
+    )
+    wall.name = colliderId
+    wall.position.set(
+      origin.x,
+      this.groundHeightAt(origin.x, wallZ) + 1.5,
+      wallZ,
+    )
+    this.scene.add(wall)
+
+    if (!this.reserveActorSlots('campaign', 1)) {
+      this.generatedWorld.collision.removeCollider(colliderId)
+      this.scene.remove(wall)
+      wall.geometry.dispose()
+      wall.material.dispose()
+      throw new Error('Production actor budget refused the combat-cover archer')
+    }
+    const enemyFaction: Faction =
+      this.faction === 'guard' ? 'villain' : 'guard'
+    const archer = this.spawnActor(
+      enemyFaction,
+      'archer',
+      origin.x,
+      archerZ,
+      this.actors.length,
+      {
+        budget: 'campaign',
+        appearanceId: 'graphics-combat-cover:archer',
+        objectiveEligible: false,
+        squadEligible: false,
+        hostileToPlayer: true,
+      },
+    )
+    archer.playerAggro = true
+    archer.home.copy(archer.mesh.position)
+    archer.wanderTarget.copy(archer.mesh.position)
+    this.graphicsCombatCover = {
+      colliderId,
+      actorId: archer.id,
+      wall,
+    }
+  }
+
+  private clearGraphicsCombatCover(): void {
+    const fixture = this.graphicsCombatCover
+    if (!fixture) return
+    this.graphicsCombatCover = null
+    this.generatedWorld.collision.removeCollider(fixture.colliderId)
+    this.removeActorById(fixture.actorId)
+    this.scene.remove(fixture.wall)
+    fixture.wall.geometry.dispose()
+    const material = fixture.wall.material
+    if (Array.isArray(material)) {
+      for (const entry of material) entry.dispose()
+    } else {
+      material.dispose()
+    }
+  }
+
   private generatedRegionIdAt(x: number, z: number): string | null {
     const regionId = this.generatedWorld.getRegionIdAt(x, z)
     return regionId === undefined ? null : String(regionId)
@@ -5074,6 +5360,85 @@ export class GameEngine {
   }
 
   /**
+   * W3-3 — the generated plan as this run first staged it. The generator's plan remains the
+   * immutable base, so an ownership change can validate and discard an old composition.
+   */
+  private runtimeEncounterPlan(
+    plan: GeneratedEncounterPlan,
+  ): GeneratedEncounterPlan {
+    this.stagedEncounterPlans ??= new Map()
+    const staged = this.stagedEncounterPlans.get(plan.encounterId)
+    if (staged) return staged
+    this.encounterCompositions ??= createEncounterCompositions()
+    const restored = applyStoredEncounterComposition(
+      this.encounterCompositions,
+      plan,
+      this.generatedBlueprint.seed,
+      this.faction,
+    )
+    if (restored) {
+      this.stagedEncounterPlans.set(plan.encounterId, restored)
+      return restored
+    }
+    return plan
+  }
+
+  /** The first materialisation fixes a hostile non-boss pack's roles for the rest of the run. */
+  private stageGeneratedEncounterPlan(
+    plan: GeneratedEncounterPlan,
+  ): GeneratedEncounterPlan {
+    const existing = this.runtimeEncounterPlan(plan)
+    if (existing !== plan) return existing
+    this.encounterCompositions ??= createEncounterCompositions()
+    this.stagedEncounterPlans ??= new Map()
+    const result = stageEncounterComposition(
+      this.encounterCompositions,
+      plan,
+      this.generatedBlueprint.seed,
+      this.faction,
+      this.threatTier,
+      this.protectedEncounterCompositionIds(),
+    )
+    if (result.evictedEncounterId) {
+      this.stagedEncounterPlans.delete(result.evictedEncounterId)
+    }
+    if (result.entry) {
+      this.stagedEncounterPlans.set(plan.encounterId, result.plan)
+    } else if (result.overflow && !this.encounterCompositionOverflowNoticed) {
+      this.encounterCompositionOverflowNoticed = true
+      this.callbacks.onNotice(
+        ENCOUNTER_COMPOSITIONS_CAP_WARNING,
+        'warning',
+      )
+    }
+    return result.plan
+  }
+
+  private protectedEncounterCompositionIds(): Set<string> {
+    const protectedIds = remnantEncounterIds(
+      this.encounterRemnants ?? createEncounterRemnants(),
+    )
+    for (const actor of this.actors ?? []) {
+      if (
+        actor.alive &&
+        actor.generatedEncounterId &&
+        actor.eventOwnerId === null &&
+        actor.hp < actor.maxHp
+      ) {
+        protectedIds.add(actor.generatedEncounterId)
+      }
+    }
+    return protectedIds
+  }
+
+  private runtimeEncounterPlansIn(
+    regionId: string,
+  ): GeneratedEncounterPlan[] {
+    return (this.generatedEncounterPlans?.get(regionId) ?? [])
+      .map((plan) => this.runtimeEncounterPlan(plan))
+  }
+
+  /**
    * W3-4 — the plan an actor's remnant is kept against: one of the generator's own packs in its
    * square. Not the player's finale, whose bodies `FinaleDirector` saves, nor a caravan beat's or
    * an event's actors, nor a soldier a commander called, which keep their own rules.
@@ -5083,9 +5448,10 @@ export class GameEngine {
     const encounterId = actor.generatedEncounterId
     if (!regionId || !encounterId || !actor.generatedSpawnId || actor.eventOwnerId !== null) return null
     if (encounterId === this.finale?.identity.encounterId) return null
-    return (this.generatedEncounterPlans?.get(regionId) ?? []).find(
+    const base = (this.generatedEncounterPlans?.get(regionId) ?? []).find(
       (plan) => plan.encounterId === encounterId,
     ) ?? null
+    return base ? this.runtimeEncounterPlan(base) : null
   }
 
   /**
@@ -5116,11 +5482,86 @@ export class GameEngine {
    * a warning, and so is a remnant this world could not have written; a square the chronicle
    * gave to another side since fields its new owners fresh, without a word.
    */
-  private restoreEncounterRemnants(value: unknown): void {
+  private restoreEncounterRemnants(
+    value: unknown,
+    compositionValue?: unknown,
+  ): void {
     const restored = normalizeEncounterRemnants(value)
-    const plans = new Map<string, GeneratedEncounterPlan>()
+    const compositionRestore = normalizeEncounterCompositions(
+      compositionValue,
+    )
+    this.encounterRemnants = restored.remnants
+    this.encounterCompositions = compositionRestore.compositions
+    this.stagedEncounterPlans = new Map()
+
+    const basePlans = new Map<string, GeneratedEncounterPlan>()
     for (const list of this.generatedEncounterPlans.values()) {
-      for (const plan of list) plans.set(plan.encounterId, plan)
+      for (const plan of list) basePlans.set(plan.encounterId, plan)
+    }
+    let compositionDropped = 0
+    for (const encounterId of [
+      ...this.encounterCompositions.entries.keys(),
+    ]) {
+      const plan = basePlans.get(encounterId)
+      const cleared =
+        plan !== undefined &&
+        (
+          this.generatedWorld.regions
+            .getSavedDelta(String(plan.regionId))
+            ?.clearedEncounterIds.includes(encounterId) ??
+          false
+        )
+      if (
+        !plan ||
+        plan.kind === 'boss' ||
+        !plan.hostileToPlayer ||
+        cleared
+      ) {
+        this.encounterCompositions.entries.delete(encounterId)
+        compositionDropped += 1
+        continue
+      }
+      const staged = applyStoredEncounterComposition(
+        this.encounterCompositions,
+        plan,
+        this.generatedBlueprint.seed,
+        this.faction,
+      )
+      if (staged) {
+        this.stagedEncounterPlans.set(plan.encounterId, staged)
+      } else {
+        compositionDropped += 1
+      }
+    }
+
+    const protectedIds = remnantEncounterIds(restored.remnants)
+    for (const encounterId of protectedIds) {
+      if (this.stagedEncounterPlans.has(encounterId)) continue
+      const plan = basePlans.get(encounterId)
+      const signature = savedRemnantSignature(
+        restored.remnants,
+        encounterId,
+      )
+      if (!plan || !signature) continue
+      const recovered = recoverEncounterCompositionFromRemnant(
+        this.encounterCompositions,
+        plan,
+        signature,
+        this.generatedBlueprint.seed,
+        this.faction,
+        protectedIds,
+      )
+      if (recovered?.entry) {
+        this.stagedEncounterPlans.set(encounterId, recovered.plan)
+      }
+    }
+
+    const plans = new Map<string, GeneratedEncounterPlan>()
+    for (const [encounterId, plan] of basePlans) {
+      plans.set(
+        encounterId,
+        this.stagedEncounterPlans.get(encounterId) ?? plan,
+      )
     }
     const reconciled = reconcileEncounterRemnants(restored.remnants, {
       plan: (encounterId) => plans.get(encounterId),
@@ -5132,9 +5573,14 @@ export class GameEngine {
       },
       finale: (encounterId) => encounterId === this.finale.identity.encounterId,
     })
-    this.encounterRemnants = restored.remnants
     if (restored.rejected || reconciled.dropped > 0) {
       this.callbacks.onNotice(ENCOUNTER_REMNANTS_SAVE_WARNING, 'warning')
+    }
+    if (compositionRestore.rejected || compositionDropped > 0) {
+      this.callbacks.onNotice(
+        ENCOUNTER_COMPOSITIONS_SAVE_WARNING,
+        'warning',
+      )
     }
   }
 
@@ -5186,9 +5632,10 @@ export class GameEngine {
         candidate.generatedEncounterId === encounterId,
     )
     if (hasLivingActor) return
-    const plan = (this.generatedEncounterPlans.get(regionId) ?? []).find(
+    const basePlan = (this.generatedEncounterPlans.get(regionId) ?? []).find(
       (candidate) => candidate.encounterId === encounterId,
     )
+    const plan = basePlan ? this.runtimeEncounterPlan(basePlan) : undefined
     const activationSpawns = this.generatedActivationSpawns.get(regionId)
     if (
       plan &&
@@ -5207,6 +5654,13 @@ export class GameEngine {
     })
     // W3-4 — beaten: nothing of it is left to remember.
     if (this.encounterRemnants) forgetRemnant(this.encounterRemnants, encounterId)
+    if (this.encounterCompositions) {
+      forgetEncounterComposition(
+        this.encounterCompositions,
+        encounterId,
+      )
+    }
+    this.stagedEncounterPlans?.delete(encounterId)
   }
 
   private syncGeneratedRegions(): void {
@@ -5439,12 +5893,13 @@ export class GameEngine {
     const orderedPlans = [...(this.generatedEncounterPlans.get(regionId) ?? [])].sort(
       (left, right) => Number(right.encounterId === finalEncounterId) - Number(left.encounterId === finalEncounterId),
     )
-    for (const plan of orderedPlans) {
-      if (delta.clearedEncounterIds.includes(plan.encounterId)) continue
-      if (regionId === startRegionId && plan.kind !== 'boss') continue
-      const isFinalEncounter = plan.encounterId === finalEncounterId
+    for (const basePlan of orderedPlans) {
+      if (delta.clearedEncounterIds.includes(basePlan.encounterId)) continue
+      if (regionId === startRegionId && basePlan.kind !== 'boss') continue
+      const isFinalEncounter = basePlan.encounterId === finalEncounterId
       if (isFinalEncounter && (!finalReady || this.finale.defeated)) continue
-      if (this.shouldDeferGeneratedEncounter(plan, activationSpawns)) continue
+      if (this.shouldDeferGeneratedEncounter(basePlan, activationSpawns)) continue
+      const plan = this.stageGeneratedEncounterPlan(basePlan)
       for (const spawn of plan.spawns) {
         if (activationSpawns.has(spawn.id)) continue
         if (isFinalEncounter && !finaleCanSpawn(this.finale, spawn.id)) {
@@ -5487,7 +5942,11 @@ export class GameEngine {
               spawn.objective && isFinalEncounter ? graph.finalNodeId : null,
             generatedUnique: spawn.unique,
             hostileToPlayer: plan.hostileToPlayer,
-            healthScale: 1 + Math.max(0, plan.difficulty - 1) * 0.12,
+            healthScale: cappedEncounterHealthScale(
+              this.enemyHealthMultiplier(spawn.faction),
+              plan.difficulty,
+              plan.hostileToPlayer,
+            ),
             ...(ownedBoss ? { finaleProfile: this.finale.identity.profile } : {}),
           },
         )
@@ -7005,7 +7464,7 @@ export class GameEngine {
   private standAsidePacks(): StagingPack[] {
     return gatherStagingPacks(
       this.simulatedGeneratedRegions ?? [],
-      (regionId) => this.generatedEncounterPlans?.get(regionId) ?? [],
+      (regionId) => this.runtimeEncounterPlansIn(regionId),
       (regionId, encounterId) =>
         this.actors
           .filter(
@@ -7072,9 +7531,10 @@ export class GameEngine {
    * of its members that had not been fielded yet: the pack goes, and comes back, whole.
    */
   private parkGeneratedPack(pack: StagingPack): void {
-    const plan = (this.generatedEncounterPlans.get(pack.regionId) ?? []).find(
+    const basePlan = (this.generatedEncounterPlans.get(pack.regionId) ?? []).find(
       (candidate) => candidate.encounterId === pack.key,
     )
+    const plan = basePlan ? this.runtimeEncounterPlan(basePlan) : null
     const activation = this.generatedActivationSpawns.get(pack.regionId)
     if (!plan || !activation || !this.parkedGeneratedSpawns) return
     let parked = this.parkedGeneratedSpawns.get(pack.regionId)
@@ -7115,7 +7575,7 @@ export class GameEngine {
     const activation = this.generatedActivationSpawns.get(regionId)
     if (!activation) return
     const viewer = this.stagingViewer()
-    for (const plan of this.generatedEncounterPlans.get(regionId) ?? []) {
+    for (const plan of this.runtimeEncounterPlansIn(regionId)) {
       const away = plan.spawns.filter((spawn) => parked.has(spawn.id))
       if (away.length === 0) continue
       const stations = away.map((spawn) => ({ x: spawn.worldX, z: spawn.worldZ }))
@@ -8527,6 +8987,7 @@ export class GameEngine {
         .map((id) => `${id}:${this.generatedWorld.collision.getRevision(id)}`).join('|')
     this.reconcileSquadFocus()
     const combatTargets = this.getCombatTargets()
+    const blockedArcherIds = new Set<string>()
     for (const actor of this.actors) {
       this.updateActorIndicators(actor)
       if (!actor.alive) {
@@ -8863,8 +9324,20 @@ export class GameEngine {
         const navigationTarget = squadNavigation
           ? squadNavigation.waypoint
           : this.getNavigationWaypoint(actor.mesh.position, targetPosition, colliderRadius)
+        const readyArcherInBand = this.shouldHoldArcherRange(
+          actor,
+          targetEventProp,
+          distance,
+        )
 
-        if (squadNavigation?.blocked) {
+        if (readyArcherInBand) {
+          const sight = this.tryStartArcherAction(
+            actor,
+            targetActor,
+            targetPosition,
+          )
+          if (sight === 'blocked') blockedArcherIds.add(actor.id)
+        } else if (squadNavigation?.blocked) {
           squadPathUnavailable = true
         } else if (navigationTarget) {
           const navigationOffset = new THREE.Vector3(
@@ -8892,14 +9365,10 @@ export class GameEngine {
             moving = true
           }
           if (distance <= ARCHER_MAX_RANGE + 0.75 && actor.attackCooldown <= 0) {
-            this.startActorAction(
+            this.tryStartArcherAction(
               actor,
-              'arrow',
-              targetActor
-                ? { kind: 'actor', id: targetActor.id }
-                : { kind: 'player' },
+              targetActor,
               targetPosition,
-              ARCHER_MAX_RANGE,
             )
           }
         } else if (actor.retreatTimer > 0) {
@@ -9106,6 +9575,7 @@ export class GameEngine {
       this.animateActorCharacter(actor, delta, lookYaw)
       this.updateChampionAura(actor)
     }
+    this.advanceBlockedArcherHolds(blockedArcherIds, delta)
     // A beast that ran clear of the field is gone, not standing at the map edge running
     // on the spot: this is what makes breaking a pack a way to actually end a raid.
     for (const actorId of this.fledBeastIds) this.removeActorById(actorId)
@@ -9649,6 +10119,43 @@ export class GameEngine {
     return direction
   }
 
+  private tryStartArcherAction(
+    actor: Actor,
+    targetActor: Actor | null,
+    targetPosition: THREE.Vector3,
+  ): 'clear' | 'blocked' | 'deferred' {
+    const sight = this.combatLineOfSight?.segment(
+      actor.mesh.position,
+      targetPosition,
+      'archerAdmission',
+    ) ?? { status: 'clear' as const }
+    if (sight.status !== 'clear') return sight.status
+    this.startActorAction(
+      actor,
+      'arrow',
+      targetActor
+        ? { kind: 'actor', id: targetActor.id }
+        : { kind: 'player' },
+      targetPosition,
+      ARCHER_MAX_RANGE,
+    )
+    return 'clear'
+  }
+
+  private shouldHoldArcherRange(
+    actor: Actor,
+    targetEventProp: EventPropTarget | null,
+    distance: number,
+  ): boolean {
+    return (
+      actor.role === 'archer' &&
+      !targetEventProp &&
+      actor.attackCooldown <= 0 &&
+      distance >= ARCHER_MIN_RANGE &&
+      distance <= ARCHER_MAX_RANGE
+    )
+  }
+
   private startActorAction(
     actor: Actor,
     kind: ActorActionKind,
@@ -9775,7 +10282,8 @@ export class GameEngine {
     action: ActorAction,
     sampledTargetPosition: THREE.Vector3 | null = null,
   ): void {
-    if (finaleOwnsActor(this.finale.identity, actor)) {
+    const finaleActor = finaleOwnsActor(this.finale.identity, actor)
+    if (finaleActor) {
       const target = this.resolveActorActionTarget(actor, action)
       if (!this.finaleWithinArena() || !target || !this.finaleLineClear(actor.mesh.position, target)) {
         this.playActorActionSound(actor, action, 'whiff')
@@ -9784,8 +10292,22 @@ export class GameEngine {
     }
     if (action.kind === 'arrow') {
       const livePosition = this.resolveActorActionTarget(actor, action)
-      if (!livePosition) this.playActorActionSound(actor, action, 'whiff')
-      this.fireActorArrow(actor, livePosition ?? action.targetPosition)
+      if (!livePosition) {
+        this.playActorActionSound(actor, action, 'whiff')
+        return
+      }
+      if (!finaleActor && this.combatLineOfSight) {
+        const sight = this.combatLineOfSight.segment(
+          actor.mesh.position,
+          livePosition,
+          'npcArrow',
+        )
+        if (sight.status !== 'clear') {
+          this.playActorActionSound(actor, action, 'whiff')
+          return
+        }
+      }
+      this.fireActorArrow(actor, livePosition)
       return
     }
 
@@ -9817,6 +10339,25 @@ export class GameEngine {
     if (!connected) {
       this.playActorActionSound(actor, action, 'whiff')
       return
+    }
+    if (
+      !finaleActor &&
+      livePosition &&
+      (action.kind === 'meleePlayer' || action.kind === 'meleeActor') &&
+      this.combatLineOfSight
+    ) {
+      const sight = this.combatLineOfSight.melee(
+        actor.mesh.position,
+        livePosition,
+        targetRadius,
+        'npcMelee',
+      )
+      const rejected = sight.status !== 'clear'
+      this.recordOrdinaryMeleeLos('npc', rejected)
+      if (rejected) {
+        this.playActorActionSound(actor, action, 'whiff')
+        return
+      }
     }
     if (action.kind === 'meleePlayer') {
       this.actorAttackPlayer(actor)
@@ -11122,6 +11663,24 @@ export class GameEngine {
     if (projectile.owner === 'player') {
       const cover = this.bowCoverHit(start, end)
       if (cover !== null) nearest = { fraction: cover, actor: null, player: false }
+    }
+    if (
+      projectile.owner === 'actor' &&
+      !projectile.finale &&
+      this.combatLineOfSight
+    ) {
+      const cover = this.combatLineOfSight.segment(
+        start,
+        end,
+        'npcArrow',
+      )
+      if (cover.status === 'blocked') {
+        nearest = {
+          fraction: cover.fraction,
+          actor: null,
+          player: false,
+        }
+      }
     }
     const steps = Math.max(1, Math.ceil(start.distanceTo(end) / 0.4))
     for (let index = 0; index <= steps; index += 1) {
@@ -12882,12 +13441,24 @@ export class GameEngine {
     )
     if (slots.length === 0) return
     const overlay = this.createChronicleBlueprintOverlay(regionId, control)
-    this.generatedEncounterPlans.set(
-      regionId,
-      slots.map((slot) =>
-        createGeneratedEncounterPlan(overlay, slot, this.faction),
-      ),
+    const plans = slots.map((slot) =>
+      createGeneratedEncounterPlan(overlay, slot, this.faction),
     )
+    this.generatedEncounterPlans.set(regionId, plans)
+    this.encounterCompositions ??= createEncounterCompositions()
+    this.stagedEncounterPlans ??= new Map()
+    for (const plan of plans) {
+      this.stagedEncounterPlans.delete(plan.encounterId)
+      const restored = applyStoredEncounterComposition(
+        this.encounterCompositions,
+        plan,
+        this.generatedBlueprint.seed,
+        this.faction,
+      )
+      if (restored) {
+        this.stagedEncounterPlans.set(plan.encounterId, restored)
+      }
+    }
   }
 
   private createChronicleBlueprintOverlay(

@@ -108,6 +108,12 @@ Ordinary enemy melee locks to the shape it draws: ticks for the final 33.3% of t
 wind-up, and commander chevrons and heavy wedges for the final 35%. Scouts, minions
 and beasts use the same pooled tick as soldiers; direct and nearby threats take the
 eight slots first. Reduced motion keeps the full tell visible and its opacity clock.
+At contact, ordinary NPC and player melee also needs a way round solid registered
+colliders. It tests the target centre and both body tangents, so a visible shoulder
+round a corner still counts while a full wall does not. Ordinary NPC archers hold
+their shot without a clear line, and their arrows stop on the first solid collider.
+Buildings, walls and solid props count; foliage, water and soft/non-blocking
+colliders do not. Finale signatures retain their authored cover rules.
 The guard braces the shield with the offhand, including while moving or attacking.
 The elf's held bow and shot recovery use the shared manual-aim presentation in both
 the enhanced and legacy renderers. Releasing aim restores the melee equipment.
@@ -365,7 +371,9 @@ to another side fields its new owners' people, fresh. A pack of your own side th
 for a contract comes home without the members it lost. The finale, caravan beats, events, the
 road cart's escort and the soldiers a commander calls keep their own rules. A save from before
 this fields every pack it met whole, as it did then; a damaged record is dropped with a warning,
-and those packs are fielded whole.
+and those packs are fielded whole. If only the newer formation record is damaged, a wounded
+pack's saved role signature rebuilds its exact formation; an untouched pack with no remnant
+may be staged again under the current tier.
 
 The world streams in around the square you stand in, and it no longer jumps back and forth
 with you. Walk on into the next square and it recentres at once, as before; turn back into
@@ -385,9 +393,18 @@ kept or failed forward, are a step each, and so is every second caravan the run 
 walked, lost or escaped; each step raises the tier by one, up to 4;
 only the clock reaches 5. The camp, the arm you chose past and the finale are not steps. A
 higher tier means more frequent events, bigger and faster threat waves once those start at
-four minutes, and the doctrine drafts below. Enemy health and damage follow the clock's
-tier alone, so a tier you earned brings attention, not tougher enemies, and its notice says
-so: «Про пользователя прослышали…». Every three-minute mark still makes enemies tougher
+four minutes, the doctrine drafts below, and stronger mixes in hostile generated packs.
+The first time a pack stages, its tier fixes its existing-role formation for that run:
+archer screens and scouts first, then faction heavies, with a guard commander only at
+clock tier 5. Actor count and the 25-actor budget do not change. A wounded pack keeps
+that formation with its W3-4 remnant across streaming and continue.
+
+Enemy health and damage still follow the clock's tier alone, so a tier earned from
+progress brings attention and composition rather than another stat multiplier. Generated
+encounter difficulty can still add health, but its product with clock scaling is capped
+at 1.65 times base HP instead of reaching 2.19. Damage remains clock-only, at no more
+than 1.36 times its base before the existing commander and rage bonuses. The progress
+notice still says «Про пользователя прослышали…». Every three-minute mark still makes enemies tougher
 and says that too, even when the tier in the corner is already higher: «Время берёт своё…».
 
 Doctrine drafts open at tiers 2, 3 and 4, so a winning run meets two of them on the way to

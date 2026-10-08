@@ -6,7 +6,8 @@ window and **supersedes the baseline published with #106**, which was measured i
 contract abandonments, and every figure derived from them, came from the harness rather than the game. On 2026-10-08
 W2-2's caravan spine joined `HARNESS_SHIPPED_ARMS`, and the [baseline](#baseline) was re-published with it. W3-5's
 errand press joined the same day, and the baseline was re-published again; so it was once more when W3-4's
-remnants and streaming hold joined.
+remnants and streaming hold joined. W3-3's HP cap and first-staging composition now join W3-1's managed squad in
+the shipped arms, and the baseline is re-published below.
 
 `tests/runHarness.ts` drives whole campaigns headlessly through the real generator, terrain, collision, navigation,
 chronicle, campaign director, combat resolver and actor AI. The gameplay review of 2026-10-06 used it for 330 runs and
@@ -28,6 +29,8 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `eventDirector` | `shipped` | `shipped` | `silent`: no random events, everything else kept |
 | `playerKit` | `harness` | `shipped`: 8.2 m/s, faction damage, the engine's spawn | `harness` |
 | `encounterModel` | `harness` | `shipped`: `createGeneratedEncounterPlans` and the finale | `harness` |
+| `encounterHealth` (W3-3) | `legacy`: clock × difficulty | `capped`: combined cap at 1.65 | `legacy` |
+| `encounterComposition` (W3-3) | `legacy`: generated roles | `tiered`: first-staging mixes | `legacy` |
 | `regionWindow` | `square`; `engine` with shipped encounters or fought events | `engine`: the plus | `square` |
 | `commanders` | `inert`: a body and a swing | `shipped`: W1-6's call for men | `legacy`: the call before W1-6 |
 | `staging` | `none`: nobody steps back | `friendly`: W1-6's own packs make room | `none` |
@@ -67,6 +70,10 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
   12 s grace. Seed 95029 shows the stand-down in a whole run.
 - **The finale** is driven by `FinaleDirector.advanceFinale` and `resolveFinaleContactTargets`: tells, footprints,
   charges and volleys, not an ordinary swing.
+- **W3-3 generated encounters.** `encounterHealth: 'capped'` shares the engine's 1.65 combined hostile HP ceiling.
+  `encounterComposition: 'tiered'` shares its isolated staging decision: actor count and stations stay fixed, while
+  existing roles form faction-specific screens and heavy lines from the pacing tier. A remnant keeps that role
+  signature. The controls restore the uncapped product or the generator's original roles independently.
 - **Commanders' call for men (W1-6).** `updateCommander` calls a soldier every 25 s, four per commander each time he
   is fielded. `legacy` is the rule before W1-6: every commander, all the time, each call borrowing room the budget
   lends. `shipped` is the rule now: a commander who is not hostile to the player calls only while his own people are
@@ -163,7 +170,9 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   leaving alive and falling, for the invariant test. The streaming cost is counted too: the times the window moved
   its centre (`centreSwitches`), the squares that entered the simulated plus and the visible 3x3 after the first frame
   (`simulatedActivations`, `visibleActivations`; `sweepBalance` reports them per minute of run), and the hostile
-  pursuers that left the field because their square streamed out (`pursuersStreamedOut`).
+  pursuers that left the field because their square streamed out (`pursuersStreamedOut`). W3-3 adds the largest
+  hostile health multiplier, packs first staged by pacing tier and role signature, first-exchange-to-clear time by
+  the same tier/mix key, and victories grouped by the highest tier reached.
 - `sweepBalance` aggregates them per faction and policy, with the run-length distribution.
 - **The errand's site (W3-5), per run only:** when the player first stood within 6 m of it while the errand was the
   active node, when the errand completed, and for how long before that something hostile stood within 12 m
@@ -180,10 +189,90 @@ The committed file runs in about 20 s: its sweep takes three seeds per cell and 
 
 ## Baseline
 
-`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-1's branch over
-`main` at 6bb640e, in the engine's streaming window. The matched control changes only
-`squadResource: 'managed'` to `squadResource: 'legacy'`. Both arms keep W3-2's shipped combat economy and heavy
-melee defence, W3-4's remnants and streaming hold, and every other shipped arm.
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0...39: 360 runs on W3-3 over
+`main` at `8cd281f`, in the engine's streaming window. The matched control changes only
+`encounterHealth: 'capped'` to `legacy` and `encounterComposition: 'tiered'` to `legacy`.
+Cap-only and composition-only arms attribute the result; every arm keeps W3-1's managed squad,
+W3-2's shipped combat economy, W3-4's remnants/streaming hold and all other shipped rules.
+
+| Policy · faction | Shipped win / defeat / timeout | Control | Won in p10-p50-p90 | Damage | Kills |
+| --- | --- | --- | --- | ---: | ---: |
+| beeline · elf | 14 / 26 / 0 | 16 / 24 / 0 | 88-130-164 s | 192 | 8.0 |
+| beeline · guard | 17 / 23 / 0 | 16 / 24 / 0 | 103-132-191 s | 163 | 10.2 |
+| beeline · villain | 19 / 21 / 0 | 19 / 21 / 0 | 85-110-165 s | 154 | 9.0 |
+| cautious · elf | 13 / 11 / 16 | 16 / 11 / 13 | 88-130-164 s | 173 | 7.5 |
+| cautious · guard | 14 / 13 / 13 | 13 / 14 / 13 | 103-123-229 s | 152 | 10.0 |
+| cautious · villain | 13 / 14 / 13 | 11 / 16 / 13 | 85-104-157 s | 143 | 8.7 |
+| duelist · elf | 32 / 8 / 0 | 34 / 6 / 0 | 103-139-209 s | 185 | 18.8 |
+| duelist · guard | 36 / 4 / 0 | 32 / 8 / 0 | 104-144-201 s | 135 | 20.1 |
+| duelist · villain | 34 / 6 / 0 | 27 / 13 / 0 | 102-130-174 s | 150 | 16.9 |
+
+| Policy · faction | Squad at finale | Drafts | Tier | Contracts s/k/a | Road | Late rumours | Carts |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| beeline · elf | 2.8 (37/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.0 | 6% | 2.05 |
+| beeline · guard | 3.6 (40/40) | 3 / 3 | 4 / 4 | 40 / 37 / 0 | 11.6 | 2% | 2.10 |
+| beeline · villain | 3.2 (39/39) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.7 | 4% | 2.10 |
+| cautious · elf | 2.8 (34/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.7 | 7% | 2.03 |
+| cautious · guard | 3.6 (39/40) | 3 / 3 | 4 / 4 | 40 / 37 / 0 | 11.0 | 2% | 2.10 |
+| cautious · villain | 3.2 (37/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.1 | 8% | 2.05 |
+| duelist · elf | 3.3 (37/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 9.8 | 15% | 2.00 |
+| duelist · guard | 3.7 (39/39) | 3 / 3 | 4 / 4 | 40 / 33 / 0 | 10.5 | 3% | 2.08 |
+| duelist · villain | 3.3 (38/38) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.9 | 8% | 2.13 |
+
+- **Wins.** Shipped wins 192/360 against 184/360: beeline 50 against 51, cautious 40 against 40 and duelist
+  102 against 93. Duelist clears the 96/120 floor and aims past 100. No policy rises by more than 9 or falls by
+  more than 1. Cap-only is 51 / 40 / 93, identical to control; composition-only is 50 / 40 / 102, the shipped
+  totals. The cap changes one cautious-guard defeat/timeout classification but no victory.
+- **Attribution.** Duelist cells move elf 34->32, guard 32->36 and villain 27->34. The villain duelist's six
+  defeats are encounters 2, finale 3 and located events 1; it had 13 defeats under control.
+- **HP.** The theoretical clock/difficulty product is capped from 2.1904 to 1.65. The panel reaches the cap in
+  long cautious cells, while most two-to-three-minute runs stage bodies at 1.36-1.52; this is why the cap arm
+  moves no win by itself.
+- **Safety.** All 360 runs start their contract, none abandon one, and every caravan beat reports zero staging
+  stall/fail-forward. Generated bodies on the road remain 9.8-11.7 by cell; the largest mean actor-budget
+  refusal is 0.34 seconds per guard run. Actor count and reservations are unchanged.
+- **Deaths.** Over 120 runs per side, elves die to finale 23, located fights 9, encounters 6, bleeding 3 and
+  one each to random events, a threat wave and a caravan. Guards die to finale 22, bleeding 8, located fights 6
+  and encounters 4. Villains die to encounters 16, finale 15, located fights 4, bleeding 4 and caravan beats 2.
+- **Highest tier.** Every victory reaches pacing tier 4; the report stores wins by highest tier rather than
+  inferring it from the median.
+
+The harness records every exact tier/role signature. Representative first-exchange-to-clear samples, chosen by
+frequency rather than by result, are:
+
+| Tier | Owner · mix | Fights | Mean clear |
+| ---: | --- | ---: | ---: |
+| 1 | villain · brute + archer | 25 | 6.8 s |
+| 1 | guard · brute + archer | 17 | 17.4 s |
+| 1 | elf · champion + archer | 10 | 9.0 s |
+| 2 | villain · minion + archer | 22 | 13.6 s |
+| 2 | villain · brute + archer | 19 | 7.7 s |
+| 2 | guard · brute + archer | 16 | 5.8 s |
+| 3 | guard · soldier + archer | 16 | 4.0 s |
+| 3 | guard · archer + soldier | 11 | 10.0 s |
+| 3 | villain · brute + archer | 11 | 6.4 s |
+| 4 | villain · brute + brute | 7 | 6.1 s |
+| 4 | guard · brute + brute | 4 | 5.5 s |
+| 4 | guard · archer + brute | 3 | 3.5 s |
+
+These durations include any time a cautious script leaves after the first exchange and comes back; they are not
+isolated arena DPS. The full map, including sparse four-body mixes, is in each cell's
+`timeToKillByTierAndMix` block.
+
+The caravans by side are regenerated from the candidate cells. Timings are beeline / cautious / duelist:
+
+| Side | Verbs over 120 runs | Camp p50 | Gate p50 | Press recruits; guards thinned |
+| --- | --- | --- | --- | --- |
+| Elves | take 106, give 135 | 25 / 25 / 25 s | 88 / 89 / 99 s | - |
+| Palace guard | confiscate 103, deliver 67, release 79 | 18 / 18 / 18 s | 88 / 88 / 101 s | - |
+| Villain | plunder 93, press 52, burn 105 | 17 / 17 / 19 s | 83 / 85 / 91 s | 52; 70 |
+
+### Superseded: W3-1 baseline before W3-3
+
+`{ ...HARNESS_SHIPPED_ARMS, encounterHealth: 'legacy', encounterComposition: 'legacy' }`, 30 Hz, 600 s limit,
+seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-1's branch over `main` at 6bb640e, in the engine's streaming
+window. The matched control changes only `squadResource: 'managed'` to `squadResource: 'legacy'`. Both arms keep
+W3-2's shipped combat economy and heavy melee defence, W3-4's remnants and streaming hold, and every earlier arm.
 
 | Policy · faction | Managed win / defeat / timeout | Legacy | Won in p10-p50-p90 | Damage | Kills |
 | --- | --- | --- | --- | ---: | ---: |
@@ -1152,8 +1241,10 @@ The hold's distance on the first seed set, both arms' other halves as main (`enc
 ## What it still does not model
 
 The harness header lists these with the bias each one introduces. In short: no props, buildings, trees or water as
-colliders. No player bow, shield, rush, evasion, perfect guard or knockback, so only the blow itself knocks a looter
-off a cart. No flanking, separation, commanders' orders and rallies, or boar charges. The squad only follows. The
+colliders. It therefore cannot measure W3-3 line of sight, cover rejection or blocked archer holds; those use engine
+tests and a collider-dense generated settlement sample. No player bow, shield, rush, evasion, perfect guard or
+knockback, so only the blow itself knocks a looter off a cart. No flanking, separation, commanders' orders and
+rallies, or boar charges. The squad only follows. The
 sustain policy is a script that never buys an upgrade. Caravan beats run on a straight lane with no cart collider,
 and the scripted player picks the camp's offer by policy on the first frame rather than by reading the cards. Civilians,
 ambient prowlers, campfires, achievements and the profile are not modelled. The pinned arms keep a 6.4 m/s walk, a

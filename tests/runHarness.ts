@@ -307,6 +307,14 @@ import {
   type PlayerMeleeState,
 } from '../src/game/world/CombatResolver.ts'
 import {
+  applyStoredEncounterComposition,
+  cappedEncounterHealthScale,
+  combinedEnemyHealthMultiplier,
+  createEncounterCompositions,
+  forgetEncounterComposition,
+  stageEncounterComposition,
+} from '../src/game/world/EncounterComposition.ts'
+import {
   aiDistance,
   beastPackShare,
   evaluateMorale,
@@ -908,6 +916,12 @@ export type PlayerKit = 'harness' | 'shipped'
  * last node opens and has to die for the run to end.
  */
 export type EncounterModel = 'harness' | 'shipped'
+
+/** W3-3 — generated-pack HP before and after the 1.65 combined multiplier cap. */
+export type EncounterHealthModel = 'legacy' | 'capped'
+
+/** W3-3 — base generated roles, or pacing-tier mixes fixed when the pack first stages. */
+export type EncounterCompositionModel = 'legacy' | 'tiered'
 
 /**
  * W2-1 — what sets the threat tier.
@@ -1531,6 +1545,15 @@ export interface EncounterMetrics {
   remnantSurvivorsRestored: number
   /** W3-4 — members not fielded again because they fell on an earlier visit. */
   remnantFallenSkipped: number
+  /** W3-3 — packs first staged under each pacing-tier role signature. */
+  stagedMixes: Record<string, number>
+  /** W3-3 — first exchange to the pack's clear, grouped by the same tier/mix signature. */
+  timeToKillByTierAndMix: Record<
+    string,
+    { fights: number; totalSeconds: number; meanSeconds: number }
+  >
+  /** Largest base-health multiplier put on a non-finale generated body. */
+  maximumHealthMultiplier: number
   /**
    * W3-4 — bodies fielded within `HARNESS_REFIELD_CHURN_SECONDS` of the same member leaving the
    * field alive with its square: the churn of a player crossing back and forth.
@@ -1637,6 +1660,10 @@ export interface RunReport {
   eventDirector: EventDirector
   playerKit: PlayerKit
   encounterModel: EncounterModel
+  /** W3-3 — legacy compounded HP, or the 1.65 cap. */
+  encounterHealth: EncounterHealthModel
+  /** W3-3 — generator roles, or pacing-tier staging mixes. */
+  encounterComposition: EncounterCompositionModel
   /** W2-1 — which rule set the threat tier. */
   escalation: Escalation
   /** The window the run simulated in: `engine` under the shipped encounters or events. */
@@ -1810,6 +1837,10 @@ export interface RunOptions {
   playerKit?: PlayerKit
   /** W1-5 — defaults to `harness`, this file's original encounter stand-in. */
   encounterModel?: EncounterModel
+  /** W3-3 — defaults to `legacy`, the uncapped generated-pack HP product. */
+  encounterHealth?: EncounterHealthModel
+  /** W3-3 — defaults to `legacy`, the generator's roles before tier staging. */
+  encounterComposition?: EncounterCompositionModel
   /** W2-1 — defaults to `time`, the clock-only tier every pinned number describes. */
   escalation?: Escalation
   /**
@@ -1925,6 +1956,10 @@ export interface RunOptions {
  *
  * `squadResource: 'managed'` is W3-1: bounded companion care, faction replacements and
  * half personal gold when the squad settles a fight without a player contribution.
+ *
+ * W3-3 caps the combined clock/difficulty multiplier at 1.65 and fixes hostile non-boss
+ * roles when their pack first stages from the pacing tier. The independent legacy arms
+ * retain the old product and generated roles for matched attribution.
  */
 export const HARNESS_SHIPPED_ARMS = {
   meleeModel: 'honest',
@@ -1943,6 +1978,8 @@ export const HARNESS_SHIPPED_ARMS = {
   eventDirector: 'shipped',
   playerKit: 'shipped',
   encounterModel: 'shipped',
+  encounterHealth: 'capped',
+  encounterComposition: 'tiered',
   commanders: 'shipped',
   staging: 'friendly',
   escalation: 'progress',
@@ -2200,6 +2237,10 @@ export function runHarness(options: RunOptions): RunReport {
   const eventDirector = options.eventDirector ?? 'shipped'
   const playerKit = options.playerKit ?? 'harness'
   const encounterModel = options.encounterModel ?? 'harness'
+  const encounterHealth: EncounterHealthModel =
+    options.encounterHealth ?? 'legacy'
+  const encounterComposition: EncounterCompositionModel =
+    options.encounterComposition ?? 'legacy'
   const escalation = options.escalation ?? 'time'
   const squadOn = squadPolicy !== 'off'
   const sustainOn = sustainPolicy !== 'off'
@@ -2207,6 +2248,9 @@ export function runHarness(options: RunOptions): RunReport {
   const eventsFought = eventModel === 'fought'
   const shippedKit = playerKit === 'shipped'
   const shippedEncounters = encounterModel === 'shipped'
+  const cappedEncounterHealth = encounterHealth === 'capped'
+  const tieredEncounterComposition =
+    encounterComposition === 'tiered' && shippedEncounters
   // W1-6 — the engine's window whenever its encounters or its fights are on.
   const regionWindow: RegionWindow =
     options.regionWindow ?? (shippedEncounters || eventsFought ? 'engine' : 'square')
@@ -2663,6 +2707,9 @@ export function runHarness(options: RunOptions): RunReport {
     packsCalledHome: 0,
     remnantSurvivorsRestored: 0,
     remnantFallenSkipped: 0,
+    stagedMixes: {},
+    timeToKillByTierAndMix: {},
+    maximumHealthMultiplier: 1,
     refieldedWithin30s: 0,
     centreSwitches: 0,
     simulatedActivations: 0,
@@ -2670,6 +2717,20 @@ export function runHarness(options: RunOptions): RunReport {
     pursuersStreamedOut: 0,
   }
   const fieldedEncounterIds = new Set<string>()
+  const encounterMixKeys = new Map<string, string>()
+  const encounterEngagedAt = new Map<string, number>()
+  const noteEncounterEngagement = (actor: HarnessActor | null): void => {
+    if (
+      !actor ||
+      actor.system !== 'encounter' ||
+      actor.encounterId === ''
+    ) {
+      return
+    }
+    if (!encounterEngagedAt.has(actor.encounterId)) {
+      encounterEngagedAt.set(actor.encounterId, elapsed)
+    }
+  }
   /** Live encounter bodies times seconds, divided out into `meanOnField` at the end. */
   let encounterBodySeconds = 0
   /** The budget turned an encounter body away on this frame. */
@@ -4589,6 +4650,55 @@ export function runHarness(options: RunOptions): RunReport {
   }
   /** W3-4 — the engine's own ledger of what is left of every pack met and not beaten. */
   const remnants = createEncounterRemnants()
+  /** W3-3 — decisions already staged in this run; absent under the legacy arm. */
+  const encounterCompositions = createEncounterCompositions()
+  const encounterMixKey = (
+    plan: GeneratedEncounterPlan,
+    tier: number,
+  ): string => {
+    const mix = [...plan.spawns]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((spawn) => spawn.role)
+      .join('+')
+    return `tier-${String(tier)}|${plan.hostileFaction}|${mix}`
+  }
+  const runtimeEncounterPlansFor = (
+    regionId: string,
+  ): GeneratedEncounterPlan[] => encounterPlansFor(regionId).map((plan) => {
+    if (!tieredEncounterComposition) return plan
+    return applyStoredEncounterComposition(
+      encounterCompositions,
+      plan,
+      blueprint.seed,
+      options.faction,
+    ) ?? plan
+  })
+  const stageHarnessEncounterPlan = (
+    plan: GeneratedEncounterPlan,
+  ): GeneratedEncounterPlan => {
+    const staged = tieredEncounterComposition
+      ? stageEncounterComposition(
+          encounterCompositions,
+          plan,
+          blueprint.seed,
+          options.faction,
+          threatTier,
+          new Set(remnants.entries.keys()),
+        ).plan
+      : plan
+    if (plan.kind !== 'boss' && plan.hostileToPlayer) {
+      const entry = encounterCompositions.entries.get(plan.encounterId)
+      const key = encounterMixKey(
+        staged,
+        entry?.stagedTier ?? threatTier,
+      )
+      if (encounterMixKeys.get(plan.encounterId) !== key) {
+        encounterMixKeys.set(plan.encounterId, key)
+        bump(encounterMetrics.stagedMixes, key)
+      }
+    }
+    return staged
+  }
   /** W3-4 — when each member last left the field alive with its square: the churn count. */
   const leftFieldAt = new Map<string, number>()
   const encounterRegionIds = new Map(
@@ -4601,7 +4711,8 @@ export function runHarness(options: RunOptions): RunReport {
     if (actor.encounterId === finaleIdentity.encounterId || !actor.id.startsWith('generated:')) return null
     const regionId = encounterRegionIds.get(actor.encounterId)
     if (regionId === undefined) return null
-    return encounterPlansFor(regionId).find((plan) => plan.encounterId === actor.encounterId) ?? null
+    return runtimeEncounterPlansFor(regionId)
+      .find((plan) => plan.encounterId === actor.encounterId) ?? null
   }
   // `captureEncounterRemnant`: whoever leaves the field alive leaves its wounds with its pack.
   beforeRemoval = (actor) => {
@@ -4627,13 +4738,14 @@ export function runHarness(options: RunOptions): RunReport {
         Number(right.encounterId === finaleIdentity.encounterId) -
         Number(left.encounterId === finaleIdentity.encounterId),
     )
-    for (const plan of plans) {
+    for (const basePlan of plans) {
+      if (clearedEncounterIds.has(basePlan.encounterId)) continue
+      if (regionId === startRegionId && basePlan.kind !== 'boss') continue
+      const isFinal = basePlan.encounterId === finaleIdentity.encounterId
+      if (isFinal && (!finalReady || finaleDefeated)) continue
+      const plan = stageHarnessEncounterPlan(basePlan)
       encounterSpawnIds.set(plan.encounterId, plan.spawns.map((entry) => entry.id))
       for (const entry of plan.spawns) if (entry.unique) uniqueSpawnIds.add(entry.id)
-      if (clearedEncounterIds.has(plan.encounterId)) continue
-      if (regionId === startRegionId && plan.kind !== 'boss') continue
-      const isFinal = plan.encounterId === finaleIdentity.encounterId
-      if (isFinal && (!finalReady || finaleDefeated)) continue
       for (const entry of plan.spawns) {
         if (activated.has(entry.id)) continue
         if (actors.some((actor) => actor.id === `generated:${entry.id}`)) {
@@ -4656,6 +4768,27 @@ export function runHarness(options: RunOptions): RunReport {
         }
         const boss = isFinal && entry.id === finaleIdentity.bossId
         const profile = FINALE_PROFILES[options.faction]
+        const clockHealthMultiplier = enemyHealthMultiplier(
+          scalingTier(),
+          areAllegiancesHostile(
+            options.faction,
+            entry.faction,
+          ),
+        )
+        const healthScale = cappedEncounterHealth
+          ? cappedEncounterHealthScale(
+              clockHealthMultiplier,
+              plan.difficulty,
+              plan.hostileToPlayer,
+            )
+          : 1 + Math.max(0, plan.difficulty - 1) * 0.12
+        const healthMultiplier = cappedEncounterHealth
+          ? combinedEnemyHealthMultiplier(
+              clockHealthMultiplier,
+              plan.difficulty,
+              plan.hostileToPlayer,
+            )
+          : clockHealthMultiplier * healthScale
         const actor = spawnEngineActor({
           allegiance: entry.faction,
           role: entry.role,
@@ -4664,7 +4797,7 @@ export function runHarness(options: RunOptions): RunReport {
           system: isFinal ? 'finale' : 'encounter',
           budget: 'campaign',
           hostileToPlayer: plan.hostileToPlayer,
-          healthScale: 1 + Math.max(0, plan.difficulty - 1) * 0.12,
+          healthScale,
           encounterId: plan.encounterId,
           objectiveId: entry.objective && isFinal ? graph.finalNodeId : null,
           ...(boss
@@ -4684,6 +4817,12 @@ export function runHarness(options: RunOptions): RunReport {
         actor.playerAggro = plan.hostileToPlayer
         activated.add(entry.id)
         if (!isFinal) {
+          if (plan.hostileToPlayer) {
+            encounterMetrics.maximumHealthMultiplier = Math.max(
+              encounterMetrics.maximumHealthMultiplier,
+              healthMultiplier,
+            )
+          }
           // W3-4 — a survivor comes back as the same body, with the health it left with.
           const wound = remnantsOn ? takeRemnantWound(remnants, plan, entry.id) : null
           if (wound) {
@@ -4768,8 +4907,30 @@ export function runHarness(options: RunOptions): RunReport {
     const away = [...parkedSpawns.values()].some((parked) => spawnIds.some((id) => parked.has(id)))
     if (!living && !away && activated && spawnIds.every((id) => activated.has(id))) {
       clearedEncounterIds.add(actor.encounterId)
+      if (!isFinal) {
+        const key = encounterMixKeys.get(actor.encounterId)
+        const engagedAt = encounterEngagedAt.get(actor.encounterId)
+        if (key && engagedAt !== undefined) {
+          const duration = Math.max(0, elapsed - engagedAt)
+          const previous = encounterMetrics.timeToKillByTierAndMix[key] ?? {
+            fights: 0,
+            totalSeconds: 0,
+            meanSeconds: 0,
+          }
+          previous.fights += 1
+          previous.totalSeconds += duration
+          previous.meanSeconds =
+            previous.totalSeconds / previous.fights
+          encounterMetrics.timeToKillByTierAndMix[key] = previous
+        }
+      }
       // W3-4 — beaten: nothing of it is left to remember.
       forgetRemnant(remnants, actor.encounterId)
+      forgetEncounterComposition(
+        encounterCompositions,
+        actor.encounterId,
+      )
+      encounterEngagedAt.delete(actor.encounterId)
     }
   }
 
@@ -4809,7 +4970,7 @@ export function runHarness(options: RunOptions): RunReport {
   })
   /** `standAsidePacks`: the player's own packs in the simulated squares. */
   const standAsidePacks = (): StagingPack[] =>
-    gatherStagingPacks(simulatedRegionIds, encounterPlansFor, (_regionId, encounterId) =>
+    gatherStagingPacks(simulatedRegionIds, runtimeEncounterPlansFor, (_regionId, encounterId) =>
       actors
         .filter(
           (actor) =>
@@ -4826,7 +4987,8 @@ export function runHarness(options: RunOptions): RunReport {
   }
   /** `parkGeneratedPack`: the living step back, the unfielded with them, the fallen stay. */
   const parkPack = (pack: StagingPack): void => {
-    const plan = encounterPlansFor(pack.regionId).find((candidate) => candidate.encounterId === pack.key)
+    const plan = runtimeEncounterPlansFor(pack.regionId)
+      .find((candidate) => candidate.encounterId === pack.key)
     const activated = encounterActivated.get(pack.regionId)
     if (!plan || !activated) return
     let parked = parkedSpawns.get(pack.regionId)
@@ -4869,7 +5031,7 @@ export function runHarness(options: RunOptions): RunReport {
     const activated = encounterActivated.get(regionId)
     if (!activated) return
     const viewer = harnessStagingViewer(player)
-    for (const plan of encounterPlansFor(regionId)) {
+    for (const plan of runtimeEncounterPlansFor(regionId)) {
       const away = plan.spawns.filter((entry) => parked.has(entry.id))
       if (away.length === 0) continue
       const stations = away.map((entry) => ({ x: entry.worldX, z: entry.worldZ }))
@@ -5430,6 +5592,7 @@ export function runHarness(options: RunOptions): RunReport {
   const strikePlayer = (actor: HarnessActor, baseDamage: number, canInjure: boolean): void => {
     // W1-1 — a blow at the player, landed or not, keeps them in the middle of its event.
     notePlayerExchange(actor.id)
+    noteEncounterEngagement(actor)
     const hit = resolvePlayerDamage({
       baseDamage,
       health: player.health,
@@ -5455,6 +5618,8 @@ export function runHarness(options: RunOptions): RunReport {
     attackKind: 'allyMelee' | 'actorArrow',
   ): void => {
     if (!target.alive || finaleInactive(target)) return
+    noteEncounterEngagement(attacker)
+    noteEncounterEngagement(target)
     const hit = resolveActorDamage({ target, baseDamage, attackKind, facingDotToSource: null })
     target.hp = Math.max(0, target.hp - hit.dealt)
     if (attacker && squadOn && isCompanion(attacker)) companionMetrics.damageDealt += hit.dealt
@@ -7143,6 +7308,7 @@ export function runHarness(options: RunOptions): RunReport {
             attackKind: 'melee',
             facingDotToSource: null,
           })
+          noteEncounterEngagement(victim)
           if (victim.firstHitAt === null) victim.firstHitAt = elapsed
           victim.hp = Math.max(0, victim.hp - outcomeHit.dealt)
           record(damageDealt, victim.role, victim.allegiance, outcomeHit.dealt)
@@ -7224,6 +7390,7 @@ export function runHarness(options: RunOptions): RunReport {
             attackKind: spec.attackKind,
             facingDotToSource: null,
           })
+          noteEncounterEngagement(victim)
           if (victim.firstHitAt === null) victim.firstHitAt = elapsed
           victim.hp = Math.max(0, victim.hp - outcomeHit.dealt)
           record(damageDealt, victim.role, victim.allegiance, outcomeHit.dealt)
@@ -7582,6 +7749,8 @@ export function runHarness(options: RunOptions): RunReport {
     eventDirector,
     playerKit,
     encounterModel,
+    encounterHealth,
+    encounterComposition,
     escalation,
     regionWindow,
     commanders: commanderModel,
@@ -8323,6 +8492,8 @@ export interface BalanceCell {
   meanCompanionKills: number
   draftsReached: { median: number; max: number }
   maxThreatTier: { median: number; max: number }
+  /** Victories grouped by the highest pacing tier their run reached. */
+  winsByHighestTier: Record<string, number>
   /** Totals over the cell's runs. */
   caravans: {
     robbed: number
@@ -8368,6 +8539,12 @@ export interface BalanceCell {
     meanRemnantSurvivorsRestored: number
     /** W3-4 — members not fielded again because they had fallen, per run. */
     meanRemnantFallenSkipped: number
+    stagedMixes: Record<string, number>
+    timeToKillByTierAndMix: Record<
+      string,
+      { fights: number; totalSeconds: number; meanSeconds: number }
+    >
+    maximumHealthMultiplier: number
     /** W3-4 — bodies fielded within 30 s of leaving with their square, per run: the churn. */
     meanRefieldedWithin30s: number
     /** W3-4 — the window's centre moves per minute of run, averaged over the runs. */
@@ -8496,6 +8673,7 @@ function summarizeCell(
   const finale: number[] = []
   const drafts: number[] = []
   const tiers: number[] = []
+  const winsByHighestTier: Record<string, number> = {}
   const caravans = {
     robbed: 0,
     escorted: 0,
@@ -8528,6 +8706,12 @@ function summarizeCell(
     meanPacksSteppedBack: 0,
     meanRemnantSurvivorsRestored: 0,
     meanRemnantFallenSkipped: 0,
+    stagedMixes: {} as Record<string, number>,
+    timeToKillByTierAndMix: {} as Record<
+      string,
+      { fights: number; totalSeconds: number; meanSeconds: number }
+    >,
+    maximumHealthMultiplier: 1,
     meanRefieldedWithin30s: 0,
     meanCentreSwitchesPerMinute: 0,
     meanSimulatedActivationsPerMinute: 0,
@@ -8579,6 +8763,11 @@ function summarizeCell(
     companionKills += balance.companions.kills
     drafts.push(balance.draftsReached)
     tiers.push(balance.maxThreatTier)
+    if (report.outcome === 'victory') {
+      const tier = String(balance.maxThreatTier)
+      winsByHighestTier[tier] =
+        (winsByHighestTier[tier] ?? 0) + 1
+    }
     caravans.robbed += balance.caravans.robbed
     caravans.escorted += balance.caravans.escorted
     caravans.lost += balance.caravans.lost
@@ -8610,6 +8799,28 @@ function summarizeCell(
     encounters.meanPacksSteppedBack += balance.encounters.packsSteppedBack / runs
     encounters.meanRemnantSurvivorsRestored += balance.encounters.remnantSurvivorsRestored / runs
     encounters.meanRemnantFallenSkipped += balance.encounters.remnantFallenSkipped / runs
+    addInto(
+      encounters.stagedMixes,
+      balance.encounters.stagedMixes,
+    )
+    for (const [key, metric] of Object.entries(
+      balance.encounters.timeToKillByTierAndMix,
+    )) {
+      const combined = encounters.timeToKillByTierAndMix[key] ?? {
+        fights: 0,
+        totalSeconds: 0,
+        meanSeconds: 0,
+      }
+      combined.fights += metric.fights
+      combined.totalSeconds += metric.totalSeconds
+      combined.meanSeconds =
+        combined.totalSeconds / combined.fights
+      encounters.timeToKillByTierAndMix[key] = combined
+    }
+    encounters.maximumHealthMultiplier = Math.max(
+      encounters.maximumHealthMultiplier,
+      balance.encounters.maximumHealthMultiplier,
+    )
     encounters.meanRefieldedWithin30s += balance.encounters.refieldedWithin30s / runs
     const minutes = Math.max(1 / 60, report.elapsed / 60)
     encounters.meanCentreSwitchesPerMinute += balance.encounters.centreSwitches / minutes / runs
@@ -8739,6 +8950,7 @@ function summarizeCell(
     meanCompanionKills: companionKills / runs,
     draftsReached: { median: median(drafts), max: Math.max(0, ...drafts) },
     maxThreatTier: { median: median(tiers), max: Math.max(0, ...tiers) },
+    winsByHighestTier,
     caravans,
     contracts,
     events,

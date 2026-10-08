@@ -285,6 +285,9 @@ type CaravanBeats = 'shipped' | 'off'
  * arms, the stand-in's stalls move: W2-1's 79191 without the spine finishes its errand at
  * 67 s, 197976 with it at 238 s, and 110867 now stands at the same healer from 126 s. The cut
  * grew from 300 s to 360 s so that its stall, too, runs past 200 s.
+ *
+ * W3-3's staged role mixes clear the spine-off 142543 archer. Re-picked by the same rule,
+ * the first later stride seed whose clear-arm guard stays held past 200 s: 1346231 (n = 170).
  */
 const STALLS: ReadonlyArray<readonly [number, InputPolicy, CaravanBeats]> = [
   [110867, 'beeline', 'shipped'],
@@ -293,7 +296,7 @@ const STALLS: ReadonlyArray<readonly [number, InputPolicy, CaravanBeats]> = [
   [142543, 'cautious', 'shipped'],
   [285085, 'beeline', 'shipped'],
   [285085, 'cautious', 'shipped'],
-  [142543, 'beeline', 'off'],
+  [1346231, 'beeline', 'off'],
 ]
 
 test('the harness presses its errand done the way the engine does, and its old stand-in still stalls', () => {
