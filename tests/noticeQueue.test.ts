@@ -484,3 +484,27 @@ test('W3-6b: the column lane covers phones, touch screens and windows up to 1000
   assert.deepEqual(noticeLimitsFor(true), NARROW_NOTICE_LIMITS)
   assert.equal(noticeLaneFor('full', true), 'column')
 })
+
+test('W3-6b: a find may be dropped only because all it gives is already on the HUD', () => {
+  // The kinds a find can be. A new one that grants something the HUD does not show (an item,
+  // a prosthetic, a doctrine, a quest token) must go out as `origin: 'outcome'` instead.
+  const types = readFileSync(new URL('../src/game/types.ts', import.meta.url), 'utf8')
+  assert.match(types, /export type LootRewardKind = 'coins' \| 'medicine' \| 'whetstone'\n/)
+  // What a find changes: coins pay gold, medicine heals (or pays gold at full health), a
+  // whetstone sharpens the blade (its surplus pays gold). Gold, health and damage, nothing else.
+  const engine = readFileSync(new URL('../src/game/GameEngine.ts', import.meta.url), 'utf8')
+  const apply = engine.slice(engine.indexOf('private applyLootReward('), engine.indexOf('private spawnLootCollectionBurst('))
+  const changed = (source: string) => [...new Set([...source.matchAll(/this\.(\w+) (?:\+=|=)/g)].map((match) => match[1]))].sort()
+  assert.deepEqual(changed(apply), ['damage', 'gold', 'health'])
+  // Control: a find that also granted something else would show up here.
+  assert.deepEqual(changed(`${apply}\n    this.prostheticCount += 1`), ['damage', 'gold', 'health', 'prostheticCount'])
+  // All three are on the HUD in every layout: health in its bar, gold and damage first in the
+  // stat strip, which the narrow layout trims only from its third item on.
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const stripAt = app.indexOf('<div className="stat-strip">')
+  assert.match(app.slice(stripAt, app.indexOf('</div>', stripAt)),
+    /<span>\s*<Coins aria-hidden="true" \/> \{view\.gold\}\s*<\/span>\s*<span>\s*<Sword aria-hidden="true" \/> \{view\.damage\}/)
+  const css = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
+  const hidden = [...css.matchAll(/\.stat-strip span:nth-child\((\d+)\)/g)].map((match) => Number(match[1]))
+  assert.ok(hidden.length > 0 && hidden.every((index) => index >= 3), `the strip hides ${hidden.join(', ')}`)
+})
