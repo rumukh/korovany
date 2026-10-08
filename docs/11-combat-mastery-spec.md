@@ -388,11 +388,18 @@ largest walk is the elf's forest pace, 8.2 × 1.14 = 9.348 units/s; base sprint 
 | Brute wedge | 1.89 | 1.83 | 2.65 | 2.74 |
 | Champion wedge | 2.04 | 1.57 | 2.27 | 2.35 |
 
+The two tight boundaries each have about 0.001 units of clearance: a soldier tick
+against the elf's maximum forest walk (0.809 vs 0.810), and a scout tick against base
+sprint (0.811 vs 0.810). The multi-rate engine tests deliberately pin both margins so
+a later speed or collider change must retune them rather than silently reversing them.
+
 Engine schedules at 30, 60 and 144 Hz confirm walking remains inside every tell while
 sprint and evade clear it; the live-tracking control hits. Circling close to a brute can
 still beat its widening wedge, which is deliberate angular skill play. An actor-vs-actor
 engine sample across five attacker roles and three frame rates records 0 shape misses in
-15 contacts that the prior range rule admitted.
+15 contacts that the prior range rule admitted. The walk constraint covers any mover no
+faster than the player's walk; NPCs are slower and narrower, so a shape miss requires a
+mover faster than that bound.
 
 Scouts, minions, wolves, boars, bears and trolls now receive that pooled tick. Direct
 attacks on the player rank first, then nearest attackers, role severity and stable actor
