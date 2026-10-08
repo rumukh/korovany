@@ -782,8 +782,8 @@ the spine), as on 191cda5.
 `tests/errandPress.test.ts` holds the stalled runs. Under `press`, each errand completes on the frame its site is
 reached, with a hostile within 12 m, and the beeline runs end long before the limit. Under `clear`, none of them
 completes in 300 s. `tests/runHarnessEscalation.test.ts` keeps `errand: 'clear'` for its fight that never ends. W1-2's
-whole-run test in `tests/runHarnessBalance.test.ts` re-picked the guard's seed by its own rule: on seed 1 the guard
-now leaves its errand before any raider starts a load, and 126705 is the first seed where one does.
+whole-run test in `tests/runHarnessBalance.test.ts` was checked against its own rule and keeps its seeds: under the
+press the elf on 118786 and the guard on 1 are still the first seeds in the stride on which a raider starts a load.
 
 ## What it still does not model
 

@@ -314,7 +314,7 @@ test('W1-1 in whole runs: a random event up at arrival stands down, and the cont
 })
 
 test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never to the squad', () => {
-  // Under `engage`, the elf on seed 118786 and the guard on seed 126705 each reach a chronicle
+  // Under `engage`, the elf on seed 118786 and the guard on seed 1 each reach a chronicle
   // ambush whose raiders load their cart. In the baseline's `ignore` arm no NPC ever starts a
   // load, so these are the runs that show the channel working end to end. The pre-W1-2
   // touch rule would lose a cart without a load (`lost > loads`), and the old squad rule
@@ -335,14 +335,11 @@ test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never 
   // load on 7920 or 79191 any more. The first such seeds are 118786 for the elf (n = 15, 3
   // loads, 1 cart lost) and 1 for the guard (n = 0, 1 load, 1 lost).
   //
-  // W3-5 re-picked the guard's by the same rule. The shipped arms now press the errand as
-  // soon as its prompt is up instead of waiting for its site to clear, so on seed 1 the guard
-  // leaves its errand sooner and no raider starts a load. Its first such seed is now 126705
-  // (n = 16, 1 load, 1 lost). The elf keeps 118786, which loads and loses the same under
-  // either errand arm.
+  // W3-5's errand press was checked against the same rule and moves neither: both seeds still
+  // start a load under it, with the same loads and losses.
   const reports = ([
     [118786, 'elf'],
-    [126705, 'guard'],
+    [1, 'guard'],
   ] as const).map(([seed, faction]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,
