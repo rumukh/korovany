@@ -353,10 +353,11 @@ and two met carts to a W2-1 progress step. Staging follows the engine's seam: W1
 `staging: 'friendly'`, a campaign reservation, a retry every 2 s and a cart let through after 30 s. The arms are
 `beatPolicy` (`engage`, `walk`, `ignore`), `openingPolicy`, `verbPolicy`, `beatGate`, `beatsPerProgressStep` and
 `roadCart: 'farm'`. With the spine off every report is main's byte for byte: 72 of 72 runs compared under the shipped
-and the pinned arms, on main at 7c893a3.
+and the pinned arms, on main at 7c893a3 and again at 043f4bb.
 
 `HARNESS_SPINE_ARMS` against `HARNESS_SHIPPED_ARMS`, 30 Hz, 1 200 s, seeds `1 + 7919 n`: beeline 40, cautious 30 and
-duelist 20 per side, 270 runs a row, on main at 7c893a3. Won in p50 is the middle of the three sides' medians.
+duelist 20 per side, 270 runs a row, on main at 7c893a3. The spine off, spine, `ignore` and `walk` rows repeat byte for
+byte at 043f4bb. Won in p50 is the middle of the three sides' medians.
 
 | Arm | Wins (beeline / cautious / duelist) | Won in p50 | Carts met per run | Finale tier |
 | --- | --- | --- | ---: | --- |
