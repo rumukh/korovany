@@ -182,11 +182,17 @@ test('the finale is paced by the earned tier and scaled by the clock', () => {
   )
 })
 
-test('enemy stats ignore progress: with no card taken and the director silent, a run is the clock run', () => {
+test('enemy stats ignore progress when W3-3 composition is held at its legacy control', () => {
   // Under 230 s nothing paced by the tier is left: no random events (silent director), no
-  // card (`none`) and no threat wave (they start at 240 s). Enemy stats are the one thing an
-  // earned tier could still have touched, and they must not have.
-  const extra: Partial<RunOptions> = { doctrinePolicy: 'none', eventDirector: 'silent' }
+  // card (`none`) and no threat wave (they start at 240 s). W3-3 deliberately spends the
+  // pacing tier on composition, so its legacy role arm is held still here. Enemy stats are
+  // then the one thing an earned tier could still have touched, and they must not have.
+  const extra: Partial<RunOptions> = {
+    doctrinePolicy: 'none',
+    eventDirector: 'silent',
+    encounterComposition: 'legacy',
+    encounterHealth: 'legacy',
+  }
   const fingerprint = (report: RunReport) => ({
     outcome: report.outcome,
     elapsed: report.elapsed.toFixed(4),

@@ -21,7 +21,9 @@ import {
   noteRemnantDeparture,
   noteRemnantFall,
   reconcileEncounterRemnants,
+  remnantEncounterIds,
   remnantSignature,
+  savedRemnantSignature,
   serializeEncounterRemnants,
   takeRemnantWound,
   type RemnantPlan,
@@ -51,6 +53,8 @@ test('a fallen member stays fallen, a hurt one leaves its wound, a whole one lea
     fallen: [first],
     wounds: { [second]: { health: 17.5, maxHealth: 45 } },
   })
+  assert.equal(savedRemnantSignature(remnants, plan.encounterId), remnantSignature(plan))
+  assert.deepEqual([...remnantEncounterIds(remnants)], [plan.encounterId])
   // The wound is handed to the body fielded for it, once: the body carries it from then on.
   assert.deepEqual(takeRemnantWound(remnants, plan, second), { health: 17.5, maxHealth: 45 })
   assert.equal(takeRemnantWound(remnants, plan, second), null)

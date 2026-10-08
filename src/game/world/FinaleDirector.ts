@@ -5,6 +5,7 @@ import {
 import type { SerializableState } from '../run/runTypes.ts'
 import type { Collider } from '../systems/CollisionWorld.ts'
 import type { Faction, FinaleProfileId, FinaleStage } from '../types.ts'
+import { firstColliderCoverHit } from './CombatLineOfSight.ts'
 import type { WorldBlueprint } from './worldTypes.ts'
 
 export const FINALE_VERSION = 2
@@ -589,51 +590,16 @@ export function resolveFinaleContactTargets(
 export function firstFinaleCoverHit(
   start: FinalePoint, end: FinalePoint, colliders: readonly Collider[], radius = 0,
 ): number | null {
-  let first: number | null = null
-  for (const collider of colliders) {
-    if (collider.enabled === false || collider.blocksMovement === false || collider.tags?.includes('water')) continue
-    let hit: number | null = null
-    const dx = end.x - start.x
-    const dz = end.z - start.z
-    if (collider.shape === 'circle') {
-      const ox = start.x - collider.x
-      const oz = start.z - collider.z
-      const r = collider.radius + radius
-      const a = dx * dx + dz * dz
-      const c = ox * ox + oz * oz - r * r
-      const b = ox * dx + oz * dz
-      const discriminant = b * b - a * c
-      if (c <= 0) hit = 0
-      else if (a > 0 && discriminant >= 0) {
-        const t = (-b - Math.sqrt(discriminant)) / a
-        if (t >= 0 && t <= 1) hit = t
-      }
-    } else {
-      const cos = Math.cos(collider.rotation ?? 0)
-      const sin = Math.sin(collider.rotation ?? 0)
-      const ox = start.x - collider.x
-      const oz = start.z - collider.z
-      const axes = [
-        [ox * cos + oz * sin, dx * cos + dz * sin, collider.halfWidth + radius],
-        [-ox * sin + oz * cos, -dx * sin + dz * cos, collider.halfDepth + radius],
-      ]
-      let near = 0
-      let far = 1
-      for (const [origin, direction, half] of axes) {
-        if (Math.abs(direction) < 1e-9) {
-          if (Math.abs(origin) > half) { far = -1; break }
-        } else {
-          const left = (-half - origin) / direction
-          const right = (half - origin) / direction
-          near = Math.max(near, Math.min(left, right))
-          far = Math.min(far, Math.max(left, right))
-        }
-      }
-      if (near <= far) hit = near
-    }
-    if (hit !== null && (first === null || hit < first)) first = hit
-  }
-  return first
+  return firstColliderCoverHit(
+    start,
+    end,
+    colliders,
+    radius,
+    (collider) =>
+      collider.enabled !== false &&
+      collider.blocksMovement !== false &&
+      !collider.tags?.includes('water'),
+  )
 }
 
 export function serializeFinaleState(state: FinaleState): SerializableState {

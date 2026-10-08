@@ -44,8 +44,8 @@ export const MAX_ENCOUNTER_REMNANTS = 64
 export const MAX_REMNANT_MEMBERS = 8
 /**
  * The largest health a saved survivor may carry. The largest body a plan fields is a champion:
- * 260 base health, at most ×2.19 for the clock's tier and ×1.48 for the plan's difficulty, about
- * 843. Ten thousand is far past that and still rejects a corrupted number.
+ * 260 base health, capped at x1.65 across the clock's tier and the plan's difficulty, 429.
+ * Ten thousand is far past that and still rejects a corrupted number.
  */
 export const MAX_REMNANT_HEALTH = 10_000
 const MAX_REMNANT_ID_LENGTH = 256
@@ -219,6 +219,21 @@ export function describeRemnant(
         .map(([spawnId, wound]) => [spawnId, { ...wound }]),
     ),
   }
+}
+
+/** The role-bearing signature saved for one wounded or partly dead pack. */
+export function savedRemnantSignature(
+  remnants: EncounterRemnants,
+  encounterId: string,
+): string | null {
+  return remnants.entries.get(encounterId)?.signature ?? null
+}
+
+/** Encounter ids whose composition cannot be evicted while this remnant exists. */
+export function remnantEncounterIds(
+  remnants: EncounterRemnants,
+): Set<string> {
+  return new Set(remnants.entries.keys())
 }
 
 /**

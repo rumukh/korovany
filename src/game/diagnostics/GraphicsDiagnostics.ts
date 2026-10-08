@@ -41,6 +41,7 @@ export interface GraphicsFixtureStage {
   companions?: Array<{ id: string; position: GraphicsPoint }>
   camera?: { yaw: number; pitch: number }
   crowd?: boolean
+  combatCover?: boolean
   foundation?: boolean
   antialiasing?: 'none' | 'fxaa'
   portrait?: GraphicsCharacterPortraitRequest | null
@@ -93,6 +94,9 @@ export function validateGraphicsStage(request: GraphicsFixtureStage): void {
     }
   }
   if (request.crowd !== undefined && typeof request.crowd !== 'boolean') throw new Error('Invalid crowd prerequisite')
+  if (request.combatCover !== undefined && typeof request.combatCover !== 'boolean') {
+    throw new Error('Invalid combat-cover prerequisite')
+  }
   if (request.foundation !== undefined && typeof request.foundation !== 'boolean') throw new Error('Invalid foundation prerequisite')
   if (request.antialiasing !== undefined && !['none', 'fxaa'].includes(request.antialiasing)) throw new Error('Invalid AA comparison prerequisite')
   if (request.portrait !== undefined) {

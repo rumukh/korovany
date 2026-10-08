@@ -2490,6 +2490,10 @@ export const FINALE_RESTORE_WARNING =
 /** W3-4 — a saved remnant block that could not be trusted: every pack is fielded whole again. */
 export const ENCOUNTER_REMNANTS_SAVE_WARNING =
   'Запись о недобитых отрядах повреждена: в своих квадратах они встанут в полном составе. Поход продолжается.'
+export const ENCOUNTER_COMPOSITIONS_SAVE_WARNING =
+  'Запись строя противников повреждена. Недобитые сохранили своих бойцов; прочие отряды построятся заново.'
+export const ENCOUNTER_COMPOSITIONS_CAP_WARNING =
+  'Строи противников переполнили запись. Недобитых не тронули; новый отряд вышел прежним строем.'
 
 export type HintId =
   | 'health'
