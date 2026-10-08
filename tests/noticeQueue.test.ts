@@ -475,7 +475,8 @@ test('W3-6b: a setting changed in a menu raises no notice; the HUD\'s own button
     assert.doesNotMatch(handler(name), /addNotice\(/, `${name} bypasses the rule`)
   }
   // Control: a purchase is not a setting; its line waits for the shop to close and then shows.
-  assert.match(handler('buyItem'), /addNotice\(result\.message/)
+  assert.match(handler('buyItem'), /addNotice\(\s*result\.message/)
+  assert.match(handler('buyItem'), /result\.ok \? 'outcome' : undefined/)
   assert.doesNotMatch(handler('buyItem'), /announceSetting/)
 })
 
