@@ -13,11 +13,11 @@ import { CARAVAN_BEAT_STAGING_GIVE_UP_SECONDS } from '../src/game/world/CaravanB
 import { planCaravanSpine } from '../src/game/world/CaravanSpine.ts'
 import { createChronicleRegions, createChronicleState } from '../src/game/world/Chronicle.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
-import { HARNESS_SHIPPED_ARMS, HARNESS_SPINE_ARMS, runHarness } from './runHarness.ts'
+import { HARNESS_SHIPPED_ARMS, runHarness } from './runHarness.ts'
 import { createBeatHarness, type BeatBody, type BeatPort } from './runHarnessBeats.ts'
 
 const spineRun = (overrides: Record<string, unknown> = {}) => runHarness({
-  ...HARNESS_SPINE_ARMS,
+  ...HARNESS_SHIPPED_ARMS,
   seed: 1,
   faction: 'villain',
   policy: 'beeline',
@@ -39,9 +39,15 @@ test('off is inert: no caravans, the camp and the finale as every pinned run has
   assert.equal(off.holdsRandomEvents(120), false)
   assert.equal(off.goal(true), null)
   assert.equal(off.metrics(0), null)
-  const report = runHarness({ ...HARNESS_SHIPPED_ARMS, seed: 1, faction: 'villain', policy: 'beeline', hz: 30, timeLimit: 120 })
+  // The shipped arms carry the spine since it was folded in; `off` is the run before it,
+  // and the default an arm left out has.
+  assert.equal(HARNESS_SHIPPED_ARMS.caravanBeats, 'shipped')
+  const options = { seed: 1, faction: 'villain', policy: 'beeline', hz: 30, timeLimit: 120 } as const
+  const report = runHarness({ ...HARNESS_SHIPPED_ARMS, ...options, caravanBeats: 'off' })
   assert.equal(report.caravanBeats, 'off')
   assert.equal(report.balance.beats, null)
+  const { caravanBeats: _spine, ...withoutSpine } = HARNESS_SHIPPED_ARMS
+  assert.deepEqual(runHarness({ ...withoutSpine, ...options }), report, 'off is the default')
 })
 
 test('a spine run decides the camp at a cart, opens the finale after two, and pays from the shipped table', () => {

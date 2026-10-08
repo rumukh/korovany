@@ -3,7 +3,8 @@
 **Status:** W1-5, 2026-10-07. Tests-only: no game behaviour changed. The streaming window was corrected the same
 day in #108, after W1-6 found the shipped arms simulating the whole 3x3. Every number below is from the corrected
 window and **supersedes the baseline published with #106**, which was measured in the 3x3. Its 239 `crowded`
-contract abandonments, and every figure derived from them, came from the harness rather than the game.
+contract abandonments, and every figure derived from them, came from the harness rather than the game. On 2026-10-08
+W2-2's caravan spine joined `HARNESS_SHIPPED_ARMS`, and the [baseline](#baseline) was re-published with it.
 
 `tests/runHarness.ts` drives whole campaigns headlessly through the real generator, terrain, collision, navigation,
 chronicle, campaign director, combat resolver and actor AI. The gameplay review of 2026-10-06 used it for 330 runs and
@@ -29,7 +30,7 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `commanders` | `inert`: a body and a swing | `shipped`: W1-6's call for men | `legacy`: the call before W1-6 |
 | `staging` | `none`: nobody steps back | `friendly`: W1-6's own packs make room | `none` |
 | `escalation` (W2-1) | `time` | `progress`: pacing follows progress, enemy stats the clock | `time`; `progressAll` |
-| `caravanBeats` (W2-2) | `off` | `shipped`, in `HARNESS_SPINE_ARMS`: the spine | `beatPolicy`: `walk`, `ignore` |
+| `caravanBeats` (W2-2) | `off`: before the spine | `shipped`: the caravan spine | `beatPolicy`: `walk`, `ignore` |
 | `rumourSteering` (W2-3) | `cart`: an escort's cart's square | `meeting`: where its cart is met | `cart` |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
@@ -150,7 +151,79 @@ The committed file runs in about 20 s: its sweep takes three seeds per cell and 
 
 ## Baseline
 
-`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on `main` at 29adca3, in the
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on `main` at 191cda5, in the
+engine's streaming window. **This baseline supersedes the one measured on 29adca3**, kept below for the record. The
+shipped arms have since taken in W2-1's progress tier, W2-2's verbs and defended carts, W2-3's reachable rumours and
+meeting compass, and, folded in after #115, W2-2's caravan spine (`caravanBeats: 'shipped'`): what a new run plays.
+"Spine off" is the same 360 runs with `caravanBeats: 'off'`.
+
+| Policy · faction | Win / defeat / timeout | Spine off | Won in p10–p50–p90 | Damage taken | Kills |
+| --- | --- | --- | --- | ---: | ---: |
+| beeline · elf | 11 / 29 / 0 | 11 / 29 / 0 | 89–117–156 s | 253 | 8.6 |
+| beeline · guard | 18 / 19 / 3 | 17 / 21 / 2 | 101–130–219 s | 342 | 11.3 |
+| beeline · villain | 20 / 20 / 0 | 20 / 20 / 0 | 87–110–164 s | 157 | 8.9 |
+| cautious · elf | 11 / 8 / 21 | 10 / 11 / 19 | 89–117–156 s | 234 | 8.0 |
+| cautious · guard | 17 / 11 / 12 | 13 / 17 / 10 | 102–136–219 s | 337 | 11.3 |
+| cautious · villain | 13 / 11 / 16 | 17 / 12 / 11 | 87–106–164 s | 141 | 8.3 |
+| duelist · elf | 34 / 6 / 0 | 36 / 4 / 0 | 102–145–188 s | 178 | 18.3 |
+| duelist · guard | 33 / 7 / 0 | 36 / 4 / 0 | 111–142–187 s | 144 | 20.0 |
+| duelist · villain | 26 / 14 / 0 | 37 / 3 / 0 | 101–130–172 s | 149 | 17.2 |
+
+| Policy · faction | Squad at finale | Drafts p50/max | Tier p50/max | Contracts s/k/a | Road | Late rumours | Carts |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| beeline · elf | 2.4 (33/38) | 3 / 3 | 4 / 4 | 39 / 39 / 0 | 11.0 | 7 % | 2.02 |
+| beeline · guard | 2.3 (32/36) | 3 / 3 | 4 / 4 | 40 / 35 / 0 | 11.4 | 17 % | 2.08 |
+| beeline · villain | 3.1 (39/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.7 | 7 % | 2.08 |
+| cautious · elf | 2.4 (32/38) | 3 / 3 | 4 / 4 | 38 / 38 / 0 | 11.0 | 10 % | 1.98 |
+| cautious · guard | 2.2 (32/37) | 3 / 3 | 4 / 4 | 40 / 35 / 0 | 11.0 | 18 % | 2.08 |
+| cautious · villain | 3.2 (38/39) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.8 | 10 % | 2.08 |
+| duelist · elf | 3.4 (36/36) | 3 / 3 | 4 / 4 | 39 / 39 / 0 | 9.9 | 13 % | 1.93 |
+| duelist · guard | 2.6 (38/40) | 3 / 3 | 4 / 4 | 40 / 35 / 0 | 10.6 | 7 % | 2.10 |
+| duelist · villain | 3.3 (38/38) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.9 | 5 % | 2.13 |
+
+Squad at finale is the mean number of companions standing when the finale opened, recruits included, and in brackets
+the finales at least one of them reached. Tier is the highest threat tier the campaign reached; every finale fielded
+was fought at pacing tier 4 (3 with the spine off). Contracts are started, kept and abandoned. Road is the mean number
+of the generator's encounter bodies on the field over the run. Carts are the spine's caravans a run met: resolved,
+lost or escaped.
+
+Over all 360 runs, against the spine off:
+
+- **Wins.** 183 against 197: beeline 49 against 48, cautious 41 against 40, duelist 93 against 109. The duelist's loss
+  is mostly the villain's, 26 of 40 against 37. It dies on the way far more often: 5 deaths to encounters against
+  none, 3 to located fights against 2, and one each to a caravan's escort and to bleeding, while press-ganging and
+  burning cut its finale damage from 34 to 23 a run. Wave 3's combat economy is to tune that with this instrument.
+- **Run length.** 262 runs end inside three minutes (300 with the spine off), and the median win of a cell grows from
+  78–108 s to 106–145 s. The 52 that reach ten minutes are 49 cautious stalls and three beeline guards (40 and 2).
+- **Deaths.** 125 defeats: the finale 51, the road's encounters 37, located fights 14, bleeding 14, random events 6,
+  threat waves 2 and a caravan's escort 1. Encounters deal the most damage (27 190), then the finale (20 530), the
+  caravans' escorts (10 356) and located fights (10 205); contract fights deal 4 472.
+- **Caravans.** Every side met about two of the spine's caravans a run: 738 in all, of which 4 were lost and 2
+  escaped, robbed at 1.63 a run and walked in or sent on at 0.40. The camp closed at a median 17–25 s and the gate
+  opened at 82–105 s, and no cart had to wait for room. With the road cart and the chronicle's ambushes, the players
+  robbed 666 carts and escorted 185, against 76 and 22 with the spine off. NPCs took 22 carts, each after a full
+  load, and the squad none.
+- **Contracts.** 356 of the 360 runs reached their contract and started it: 341 kept, 15 failed, none abandoned. 113
+  random events stood down for a contract or a caravan (51 with the spine off), and 49 located fights were handed
+  back to make room.
+- **Encounters.** The generator fielded 19.9 encounters per run, 10.9 of their bodies on the road at once on average,
+  and the budget refused one for 0.1 s a run. A `beeline` or `duelist` run spawns about 87 encounter bodies, a
+  `cautious` one 664 (1 226 with the spine off).
+- **Events.** 507 random events, 3 436 located fights and 351 threat waves, which dealt 2 181 damage. 1 488 of it fell
+  in the two runs of one guard, seed 285 085, which stall at an unfinished «interact» objective in region-1-4 (an
+  investigation logged for wave 3); the rest is 693, against 663 with the spine off.
+- **Rumours.** 67 of 617 offers (11 %) were beyond reach by this road-only estimate (67 of 451 with the spine off).
+- **Economy.** About 433 gold earned and 22 spent per run (337 and 9). About 145 health healed per run (92): healers
+  20 935, rations 20 561, medicine 6 117, loot 4 371, events 220.
+- **Squad.** A companion reached 318 of 342 finales (343 of 351).
+
+### Superseded: the baseline on 29adca3
+
+Measured before W2-1's progress tier, W2-2 and W2-3 joined the shipped arms, with the clock-only tier the drafts and
+tier columns show. It is kept as the record that the W1-5 and W1-6 sections compared against; every current number is
+the table above.
+
+HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on `main` at 29adca3, in the
 engine's streaming window. W1-6 added `commanders: 'shipped'` to the shipped arms. The same 360 runs with it are this
 baseline cell for cell: no friendly garrison fought beside a scripted player long enough to call a soldier. W1-6 also
 added `staging: 'friendly'`, which changes no cell of it: on the nearest arm no contract was ever short of room, so no
@@ -355,9 +428,11 @@ and two met carts to a W2-1 progress step. Staging follows the engine's seam: W1
 `roadCart: 'farm'`. With the spine off every report is main's byte for byte: 72 of 72 runs compared under the shipped
 and the pinned arms, on main at 7c893a3 and again at 043f4bb.
 
-`HARNESS_SPINE_ARMS` against `HARNESS_SHIPPED_ARMS`, 30 Hz, 1 200 s, seeds `1 + 7919 n`: beeline 40, cautious 30 and
-duelist 20 per side, 270 runs a row, on main at 7c893a3. The spine off, spine, `ignore` and `walk` rows repeat byte for
-byte at 043f4bb. Won in p50 is the middle of the three sides' medians.
+The shipped arms with the spine against the same arms with `caravanBeats: 'off'`, 30 Hz, 1 200 s, seeds
+`1 + 7919 n`: beeline 40, cautious 30 and duelist 20 per side, 270 runs a row, on main at 7c893a3. The arms were
+`HARNESS_SPINE_ARMS` and `HARNESS_SHIPPED_ARMS` then; the spine has since been folded into `HARNESS_SHIPPED_ARMS`, and
+the [baseline](#baseline) re-published with it. The spine off, spine, `ignore` and `walk` rows repeat byte for byte at
+043f4bb. Won in p50 is the middle of the three sides' medians.
 
 | Arm | Wins (beeline / cautious / duelist) | Won in p50 | Carts met per run | Finale tier |
 | --- | --- | --- | ---: | --- |
@@ -485,8 +560,8 @@ stands in as no walk at all changed no run in either panel.
 The harness header lists these with the bias each one introduces. In short: no props, buildings, trees or water as
 colliders. No player bow, shield, rush, evasion, perfect guard or knockback, so only the blow itself knocks a looter
 off a cart. No flanking, separation, commanders' orders and rallies, or boar charges. The squad only follows. The
-sustain policy is a script that never buys an upgrade. Caravan beats are modelled only in `HARNESS_SPINE_ARMS`,
-on a straight lane with no cart collider and a player who takes the camp's offer on the first frame. Civilians,
+sustain policy is a script that never buys an upgrade. Caravan beats run on a straight lane with no cart collider,
+and the scripted player picks the camp's offer by policy on the first frame rather than by reading the cards. Civilians,
 ambient prowlers, campfires, achievements and the profile are not modelled. The pinned arms keep a 6.4 m/s walk, a
 22 m sense range, a contract grace from before W1-1, a simulated 3x3, an inert commander and nobody making room, none
 of them the engine's. The staging arm's camera never looks round, so what it counts as out of sight is what a player

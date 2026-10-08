@@ -19,55 +19,53 @@
  * ## The documented baseline
  *
  * `HARNESS_SHIPPED_ARMS`, 30 Hz, a 600 s limit, seeds `1 + 7919 n` for n = 0…39, every
- * faction under every policy — 360 runs on `main` at 29adca3, in the engine's streaming
- * window — reproduced by
+ * faction under every policy — 360 runs on `main` at 191cda5, in the engine's streaming
+ * window, with W2-2's caravan spine among the shipped arms — reproduced by
  * `KOROVANY_BALANCE_SEEDS=40 node --experimental-strip-types --test tests/runHarnessBalance.test.ts`
  * (that command uses the committed test's 480 s limit; the table used 600 s through
  * `sweepBalance` directly). Victories are win / defeat / timeout; length is the victories'
- * p10–p50–p90 in seconds.
+ * p10–p50–p90 in seconds. Re-published on 2026-10-08 when the spine joined the shipped arms;
+ * it supersedes the 29adca3 table, which `docs/run-harness.md` keeps for the record.
  *
  * ```text
  * policy · faction    win/def/timeout   won in p10–p50–p90   damage   companions at finale
- * beeline · elf       14 / 26 /  0      63– 88–149 s         139      3.1 (35/37 with ≥ 1)
- * beeline · guard     14 / 24 /  2      76– 87–107 s         318      2.8 (36/37)
- * beeline · villain   23 / 17 /  0      68– 89–108 s         120      2.9 (40/40)
- * cautious · elf      12 / 14 / 14      63– 87–111 s         128      3.0 (37/39)
- * cautious · guard    10 / 16 / 14      71– 86–107 s         310      2.7 (36/38)
- * cautious · villain  19 / 11 / 10      68– 83–107 s         111      2.9 (40/40)
- * duelist · elf       35 /  5 /  0      78– 96–133 s         118      3.5 (40/40)
- * duelist · guard     36 /  4 /  0      80–107–136 s         119      2.9 (39/40)
- * duelist · villain   38 /  2 /  0      75– 94–144 s         111      3.0 (40/40)
+ * beeline · elf       11 / 29 /  0       89–117–156 s        253      2.4 (33/38 with ≥ 1)
+ * beeline · guard     18 / 19 /  3      101–130–219 s        342      2.3 (32/36)
+ * beeline · villain   20 / 20 /  0       87–110–164 s        157      3.1 (39/40)
+ * cautious · elf      11 /  8 / 21       89–117–156 s        234      2.4 (32/38)
+ * cautious · guard    17 / 11 / 12      102–136–219 s        337      2.2 (32/37)
+ * cautious · villain  13 / 11 / 16       87–106–164 s        141      3.2 (38/39)
+ * duelist · elf       34 /  6 /  0      102–145–188 s        178      3.4 (36/36)
+ * duelist · guard     33 /  7 /  0      111–142–187 s        144      2.6 (38/40)
+ * duelist · villain   26 / 14 /  0      101–130–172 s        149      3.3 (38/38)
  * ```
  *
  * What it says, in the review's terms:
  *
- * - **F5, inverted.** Fighting everything within 13 m now wins 109 of 120 and walking past
- *   it 51 of 120. The review's 0 of 60 was a harness with no squad and no healing: every
+ * - **F5, inverted.** Fighting everything within 13 m wins 93 of 120 and walking past it
+ *   49 of 120. The review's 0 of 60 was a harness with no squad and no healing: every
  *   W1-5 arm off, with the review's `commit` rumours and 1 200 s limit, gives its 88 %
  *   against 0 % again (53/60 against 0/60), and one arm at a time each of the squad and
  *   healing more than halves the fighter's wins when taken away — `docs/run-harness.md`
- *   has the ablation.
- * - **F1, unchanged.** 302 of 360 runs end inside three minutes and the median doctrine
- *   drafts reached is zero in every cell but cautious elf and guard, where a third of the
- *   runs stall to the time limit. **W2-1 has since fixed the drafts half:** the tier follows
- *   the run's progress as well as the clock, so the same runs reach two drafts, while enemy
- *   stats stay on the clock and the win counts stay within noise. The table above is the
- *   clock-only rule (`escalation: 'time'`); `tests/runHarnessEscalation.test.ts` holds the
- *   comparison.
- * - **F2, corrected.** Every run reached its contract and started it: 360 started, 346
- *   kept, none abandoned. The first baseline's 239 `crowded` abandonments came from the
- *   harness simulating the whole 3x3 where the engine simulates only the plus inside it
- *   (W1-6's finding): the 3x3 kept the actor budget full for 45 s a run. NPCs took 12
- *   carts, each after a full load, and the squad took none.
+ *   has the ablation. The spine costs the fighter 16 of its 109 wins, the villain's most.
+ * - **F1, answered.** W2-1 made the tier follow the run's progress, so every cell now
+ *   reaches three drafts (median), where the clock alone dealt none in seven cells of nine.
+ *   W2-2's caravans made the run itself longer: a cell's median win is 106–145 s, against
+ *   78–108 s with the spine off, and 262 of 360 runs end inside three minutes (300 with it
+ *   off).
+ * - **F2, corrected.** 356 of 360 runs reached their contract and started it: 341 kept,
+ *   none abandoned. The first baseline's 239 `crowded` abandonments came from the harness
+ *   simulating the whole 3x3 where the engine simulates only the plus inside it (W1-6's
+ *   finding): the 3x3 kept the actor budget full for 45 s a run. NPCs took 22 carts, each
+ *   after a full load, and the squad took none.
  * - **F3, measured.** 420 of 1 226 rumours (34 %) were beyond reach when offered, and 490
  *   of 1 268 (39 %) once W2-1 paced the run by progress. W2-3 then offered only rumours the
  *   player can meet: 67 of 451 (15 %) on the same seeds and arms, every one an escort that
  *   this road-only estimate times to the cart's square rather than to where the player
- *   meets the cart. Wins, run lengths and gold moved by a run or less.
- * - **F4.** At least one companion reached 343 of 351 finales; the finale is still the
- *   single largest killer (54 of 119 defeats).
- *
- * The committed test below sweeps three seeds per cell and asserts bands that held at forty;
+ *   meets the cart. With the spine it is 67 of 617 (11 %).
+ * - **F4.** At least one companion reached 318 of 342 finales; the finale is still the
+ *   single largest killer (51 of 125 defeats).
+ * * The committed test below sweeps three seeds per cell and asserts bands that held at forty;
  * `KOROVANY_BALANCE_SEEDS` widens it without changing what it asserts.
  */
 
@@ -184,7 +182,8 @@ test('the shipped baseline: three factions, three policies, inside the measured 
   // offers could not be met when they were made (490 of 1 268 at forty seeds, 23 of 90
   // here); W2-3 offers only what the player can meet, and this independent road-only
   // estimate still calls a few escorts late (67 of 451, 3 of 48 here) because it times the
-  // walk to the cart's square now rather than to the square the player meets it in.
+  // walk to the cart's square now rather than to the square the player meets it in. With
+  // W2-2's caravan spine in the shipped arms it is 67 of 617 at forty seeds, 3 of 40 here.
   const offered = pooled(report.cells, (cell) => cell.rumours.offered)
   const beyond = pooled(report.cells, (cell) => cell.rumours.beyondReach)
   assert.ok(offered > 0)
@@ -307,7 +306,7 @@ test('W1-1 in whole runs: a random event up at arrival stands down, and the cont
 })
 
 test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never to the squad', () => {
-  // Under `engage`, the elf on seed 7920 and the guard on seed 79191 each reach a chronicle
+  // Under `engage`, the elf on seed 118786 and the guard on seed 1 each reach a chronicle
   // ambush whose raiders load their cart. In the baseline's `ignore` arm no NPC ever starts a
   // load, so these are the runs that show the channel working end to end. The pre-W1-2
   // touch rule would lose a cart without a load (`lost > loads`), and the old squad rule
@@ -320,10 +319,16 @@ test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never 
   //
   // W2-2 re-picked the guard's by the same rule. On 47515 the guard now defends an ambush of
   // its own side's cart instead of robbing it, the run takes another course, and no raider
-  // starts a load; the guard's first such seed is now 79191. The elf keeps 7920.
+  // starts a load; the guard's first such seed was then 79191, and the elf kept 7920.
+  //
+  // W2-2's caravan spine then joined the shipped arms, and both were re-picked by the same
+  // rule. Every run now starts at one of the camp's caravans and waits for two before the
+  // finale, so it reaches the chronicle's ambushes later and elsewhere: no raider starts a
+  // load on 7920 or 79191 any more. The first such seeds are 118786 for the elf (n = 15, 3
+  // loads, 1 cart lost) and 1 for the guard (n = 0, 1 load, 1 lost).
   const reports = ([
-    [7920, 'elf'],
-    [79191, 'guard'],
+    [118786, 'elf'],
+    [1, 'guard'],
   ] as const).map(([seed, faction]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,
@@ -360,13 +365,20 @@ test('the window arm: the shipped arms simulate the engine\'s plus, and the 3x3 
 })
 
 test('W1-6 in whole runs: the guard\'s own garrisons call for men only in a fight', () => {
-  // Seed 95029: the guard's road to «Домики жгут» runs past the two palace strongholds,
-  // whose friendly commanders called a soldier under the old rule while nobody fought. The
-  // shipped rule calls nobody there, and the contract is the same contract. The `inert`
-  // commander, a body and a swing, is what every pinned number was measured with.
+  // Seed 1: the guard's road to «Домики жгут» in D2 runs past the palace's strongholds in E2
+  // and E4, whose friendly commanders called a soldier under the old rule while nobody
+  // fought. The shipped rule calls nobody there, and the contract is the same contract. The
+  // `inert` commander, a body and a swing, is what every pinned number was measured with.
+  //
+  // Was 95029, the reported repro, until W2-2's caravan spine joined the shipped arms. The
+  // guard now first walks to one of the camp's caravans, passes the strongholds at another
+  // moment, and the old rule called nobody on that run. Re-picked as the first seed in the
+  // stride on which the old rule calls a soldier and the shipped and inert rules call none,
+  // with the contract started in all three: seed 1 (n = 0). The engine-level repro of 95029
+  // stays in `tests/commanderReinforcements.test.ts`.
   const options = {
     ...HARNESS_SHIPPED_ARMS,
-    seed: 95029,
+    seed: 1,
     faction: 'guard',
     policy: 'beeline',
     hz: 30,

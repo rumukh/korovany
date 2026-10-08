@@ -1683,6 +1683,12 @@ export interface RunOptions {
  * `rumourSteering: 'meeting'` is the shipped compass for a taken escort. It changes nothing
  * while rumours are ignored, and it is what a run that turns `commit` on over these arms
  * follows.
+ *
+ * `caravanBeats: 'shipped'` is W2-2's caravan spine, which every new run plays: the camp's
+ * two offers, the crossing and the road beat, the camp held until a met cart settles, and the
+ * finale behind the gate. Folded in after #115, so that "shipped" means what players get; the
+ * baseline in `docs/run-harness.md` was re-published with it. `caravanBeats: 'off'` is the
+ * run as it was before the spine.
  */
 export const HARNESS_SHIPPED_ARMS = {
   meleeModel: 'honest',
@@ -1701,16 +1707,6 @@ export const HARNESS_SHIPPED_ARMS = {
   commanders: 'shipped',
   staging: 'friendly',
   escalation: 'progress',
-} as const satisfies Partial<RunOptions>
-
-/**
- * W2-2, PR B — the shipped arms and the caravan spine every new run now plays. Kept apart from
- * `HARNESS_SHIPPED_ARMS` so the published baseline, and every whole-run test seeded on those
- * arms, still describe the runs they measured; `docs/run-harness.md` reports the spine against
- * that baseline.
- */
-export const HARNESS_SPINE_ARMS = {
-  ...HARNESS_SHIPPED_ARMS,
   caravanBeats: 'shipped',
 } as const satisfies Partial<RunOptions>
 
@@ -4441,6 +4437,9 @@ export function runHarness(options: RunOptions): RunReport {
         hostileToPlayer: false,
         squadEligible: true,
       })
+      // A press-ganged escort walks with the squad as a rescued captive does, so under the
+      // `decoy` placebo it never swings either.
+      actor.inert = squadPolicy === 'decoy'
       assignSquadSlot(actor)
       companionMetrics.recruited += 1
       return true
