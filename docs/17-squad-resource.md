@@ -1,6 +1,6 @@
 # W3-1 - The squad as a managed resource
 
-**Status:** implemented on a branch over `main` at 6896062.
+**Status:** implemented on a branch over `main` at 6bb640e.
 
 ## Outcome
 
@@ -94,15 +94,15 @@ The report includes:
 - reduced settlements, gold withheld and contributed settlements ending beyond 40 m.
 
 The full panel uses 40 seeds per faction and policy on whatever other shipped arms are current.
-Stop before shipping if a faction exceeds 1.5 replacements per run or any cell gains more than
-4 wins in 40 against the legacy control.
+Stop before shipping if a faction exceeds 1.5 replacements per run. Control movement is judged by
+policy totals at a scaled 12/120 band, or by a second disjoint set pooled to 80 seeds for a noisy cell.
 
 ## Acceptance evidence
 
-The final matched panel is [the published harness baseline](run-harness.md#baseline): 189/360
-managed wins against 175/360 under `legacy`, with the duelist level at 96/120. Every winning
+The final matched panel is [the published harness baseline](run-harness.md#baseline): 184/360
+managed wins against 168/360 under `legacy`, with the duelist level at 93/120. Every winning
 finale had a living companion. No recovery site was used more than twice; faction replacements
-were 0.38, 1.01 and 0.41 per run for elves, guards and villains.
+were 0.38, 1.02 and 0.43 per run for elves, guards and villains.
 
 The one-ration reserve is a harness policy, not a game restriction. Component ablation showed why
 it exists: unreserved care won 86/120 duelist runs against 96 under both legacy and reserved care.

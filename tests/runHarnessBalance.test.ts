@@ -19,9 +19,9 @@
  * ## The documented baseline
  *
  * `HARNESS_SHIPPED_ARMS`, 30 Hz, a 600 s limit, seeds `1 + 7919 n` for n = 0…39, every
- * faction under every policy — 360 runs on W3-1's branch over `main` at 6896062, in the
- * engine's streaming window, with the caravan spine, errand press, remnants, held streaming
- * and managed squad resources among the shipped arms — reproduced by
+ * faction under every policy — 360 runs on W3-1's branch over `main` at 6bb640e, in the
+ * engine's streaming window, with the caravan spine, errand press, remnants, held streaming,
+ * W3-2 combat economy and managed squad resources among the shipped arms — reproduced by
  * `KOROVANY_BALANCE_SEEDS=40 node --experimental-strip-types --test tests/runHarnessBalance.test.ts`
  * (that command uses the committed test's 480 s limit; the table used 600 s through
  * `sweepBalance` directly). Victories are win / defeat / timeout; length is the victories'
@@ -31,21 +31,21 @@
  *
  * ```text
  * policy · faction    win/def/timeout   won in p10–p50–p90   damage   companions at finale
- * beeline · elf       13 / 27 /  0       88–133–152 s        188      2.8 (38/39 with ≥ 1)
- * beeline · guard     16 / 24 /  0      102–131–178 s        158      3.6 (39/40)
- * beeline · villain   25 / 15 /  0       89–111–150 s        147      3.2 (40/40)
- * cautious · elf      13 /  7 / 20       88–133–159 s        166      2.8 (37/38)
- * cautious · guard    13 / 12 / 15      102–127–157 s        146      3.6 (39/40)
- * cautious · villain  13 / 11 / 16       87–107–159 s        138      3.2 (39/39)
- * duelist · elf       35 /  5 /  0      103–140–189 s        183      3.3 (38/38)
- * duelist · guard     34 /  6 /  0      109–147–187 s        134      3.8 (40/40)
- * duelist · villain   27 / 13 /  0      101–129–171 s        148      3.3 (37/37)
+ * beeline · elf       16 / 24 /  0       88–125–158 s        184      2.9 (39/40 with ≥ 1)
+ * beeline · guard     16 / 24 /  0      101–132–173 s        164      3.6 (39/40)
+ * beeline · villain   19 / 21 /  0       87–116–146 s        151      3.3 (39/39)
+ * cautious · elf      16 / 11 / 13       88–125–266 s        161      3.0 (37/37)
+ * cautious · guard    13 / 14 / 13      101–131–164 s        149      3.5 (38/40)
+ * cautious · villain  11 / 16 / 13       89–116–160 s        143      3.3 (37/37)
+ * duelist · elf       34 /  6 /  0      103–141–176 s        187      3.3 (37/37)
+ * duelist · guard     32 /  8 /  0      109–143–187 s        139      3.7 (40/40)
+ * duelist · villain   27 / 13 /  0      101–128–166 s        148      3.3 (37/37)
  * ```
  *
  * What it says, in the review's terms:
  *
- * - **F5, inverted.** Fighting everything within 13 m wins 96 of 120 and walking past it
- *   54 of 120. The review's 0 of 60 was a harness with no squad and no healing: every
+ * - **F5, inverted.** Fighting everything within 13 m wins 93 of 120 and walking past it
+ *   51 of 120. The review's 0 of 60 was a harness with no squad and no healing: every
  *   W1-5 arm off, with the review's `commit` rumours and 1 200 s limit, gives its 88 %
  *   against 0 % again (53/60 against 0/60), and one arm at a time each of the squad and
  *   healing more than halves the fighter's wins when taken away — `docs/run-harness.md`
@@ -55,7 +55,7 @@
  *   W2-2's caravans made the run itself longer: a cell's median win is 98–147 s, against
  *   77–107 s with the spine off, and 264 of 360 runs end inside three minutes (303 with it
  *   off).
- * - **F2, corrected.** 359 of 360 runs reached their contract and started it: 343 kept,
+ * - **F2, corrected.** All 360 runs reached their contract and started it: 346 kept,
  *   none abandoned. The first baseline's 239 `crowded` abandonments came from the harness
  *   simulating the whole 3x3 where the engine simulates only the plus inside it (W1-6's
  *   finding): the 3x3 kept the actor budget full for 45 s a run. NPCs took 29 carts, each
@@ -64,9 +64,9 @@
  *   of 1 268 (39 %) once W2-1 paced the run by progress. W2-3 then offered only rumours the
  *   player can meet: 67 of 451 (15 %) on the same seeds and arms, every one an escort that
  *   this road-only estimate times to the cart's square rather than to where the player
- *   meets the cart. With the spine, the errand press and W3-4 it is 37 of 583 (6 %).
- * - **F4.** At least one companion reached 347 of 351 finales, and every winning finale had
- *   one. Care restores 12–37 companion HP a run by faction; no recovery site is used over twice.
+ *   meets the cart. With the current shipped arms it is 39 of 583 (7 %).
+ * - **F4.** At least one companion reached 343 of 347 finales, and every winning finale had
+ *   one. Care restores 11–38 companion HP a run by faction; no recovery site is used over twice.
  * - **W3-5.** The 191cda5 table's three beeline guard timeouts, and three of the cautious
  *   guard's, were the harness's errand stand-in waiting out an archer at a healer. Under the
  *   press no run stalls at its errand, and threat-wave damage over the 360 runs falls from

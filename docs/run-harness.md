@@ -181,57 +181,57 @@ The committed file runs in about 20 s: its sweep takes three seeds per cell and 
 ## Baseline
 
 `HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-1's branch over
-`main` at 6896062, in the engine's streaming window. The matched control is the same branch and arms with
-`squadResource: 'legacy'`. The shipped arms now include bounded companion care, faction replacements and honest
-personal credit, on top of W3-4's remnants and streaming hold.
+`main` at 6bb640e, in the engine's streaming window. The matched control changes only
+`squadResource: 'managed'` to `squadResource: 'legacy'`. Both arms keep W3-2's shipped combat economy and heavy
+melee defence, W3-4's remnants and streaming hold, and every other shipped arm.
 
 | Policy · faction | Managed win / defeat / timeout | Legacy | Won in p10-p50-p90 | Damage | Kills |
 | --- | --- | --- | --- | ---: | ---: |
-| beeline · elf | 13 / 27 / 0 | 9 / 31 / 0 | 88-133-152 s | 188 | 7.9 |
-| beeline · guard | 16 / 24 / 0 | 18 / 22 / 0 | 102-131-178 s | 158 | 10.5 |
-| beeline · villain | 25 / 15 / 0 | 20 / 20 / 0 | 89-111-150 s | 147 | 9.0 |
-| cautious · elf | 13 / 7 / 20 | 9 / 10 / 21 | 88-133-159 s | 166 | 7.5 |
-| cautious · guard | 13 / 12 / 15 | 13 / 14 / 13 | 102-127-157 s | 146 | 10.5 |
-| cautious · villain | 13 / 11 / 16 | 10 / 12 / 18 | 87-107-159 s | 138 | 8.4 |
-| duelist · elf | 35 / 5 / 0 | 36 / 4 / 0 | 103-140-189 s | 183 | 18.4 |
-| duelist · guard | 34 / 6 / 0 | 35 / 5 / 0 | 109-147-187 s | 134 | 20.2 |
-| duelist · villain | 27 / 13 / 0 | 25 / 15 / 0 | 101-129-171 s | 148 | 17.0 |
+| beeline · elf | 16 / 24 / 0 | 12 / 28 / 0 | 88-125-158 s | 184 | 7.7 |
+| beeline · guard | 16 / 24 / 0 | 16 / 24 / 0 | 101-132-173 s | 164 | 10.2 |
+| beeline · villain | 19 / 21 / 0 | 17 / 23 / 0 | 87-116-146 s | 151 | 8.5 |
+| cautious · elf | 16 / 11 / 13 | 11 / 8 / 21 | 88-125-266 s | 161 | 7.2 |
+| cautious · guard | 13 / 14 / 13 | 12 / 17 / 11 | 101-131-164 s | 149 | 10.0 |
+| cautious · villain | 11 / 16 / 13 | 9 / 17 / 14 | 89-116-160 s | 143 | 8.1 |
+| duelist · elf | 34 / 6 / 0 | 33 / 7 / 0 | 103-141-176 s | 187 | 18.2 |
+| duelist · guard | 32 / 8 / 0 | 31 / 9 / 0 | 109-143-187 s | 139 | 20.1 |
+| duelist · villain | 27 / 13 / 0 | 27 / 13 / 0 | 101-128-166 s | 148 | 16.7 |
 
 | Policy · faction | Squad at finale | Drafts | Tier | Contracts s/k/a | Road | Late rumours | Carts |
 | --- | --- | --- | --- | --- | ---: | ---: | ---: |
-| beeline · elf | 2.8 (38/39) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.0 | 4% | 2.02 |
-| beeline · guard | 3.6 (39/40) | 3 / 3 | 4 / 4 | 40 / 36 / 0 | 11.5 | 2% | 2.10 |
-| beeline · villain | 3.2 (40/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.7 | 4% | 2.10 |
-| cautious · elf | 2.8 (37/38) | 3 / 3 | 4 / 4 | 39 / 39 / 0 | 10.8 | 3% | 2.00 |
-| cautious · guard | 3.6 (39/40) | 3 / 3 | 4 / 4 | 40 / 36 / 0 | 10.9 | 3% | 2.10 |
-| cautious · villain | 3.2 (39/39) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.5 | 6% | 2.08 |
-| duelist · elf | 3.3 (38/38) | 3 / 3 | 4 / 4 | 40 / 39 / 0 | 9.9 | 13% | 2.00 |
-| duelist · guard | 3.8 (40/40) | 3 / 3 | 4 / 4 | 40 / 34 / 0 | 10.6 | 5% | 2.13 |
-| duelist · villain | 3.3 (37/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.9 | 5% | 2.10 |
+| beeline · elf | 2.9 (39/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.0 | 6% | 2.05 |
+| beeline · guard | 3.6 (39/40) | 3 / 3 | 4 / 4 | 40 / 37 / 0 | 11.5 | 2% | 2.10 |
+| beeline · villain | 3.3 (39/39) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.7 | 4% | 2.08 |
+| cautious · elf | 3.0 (37/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.2 | 14% | 2.00 |
+| cautious · guard | 3.5 (38/40) | 3 / 3 | 4 / 4 | 40 / 37 / 0 | 11.0 | 1% | 2.10 |
+| cautious · villain | 3.3 (37/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.8 | 5% | 2.03 |
+| duelist · elf | 3.3 (37/37) | 3 / 3 | 4 / 4 | 40 / 39 / 0 | 9.9 | 13% | 1.98 |
+| duelist · guard | 3.7 (40/40) | 3 / 3 | 4 / 4 | 40 / 33 / 0 | 10.5 | 6% | 2.10 |
+| duelist · villain | 3.3 (37/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.9 | 8% | 2.10 |
 
-- **Wins.** Managed wins 189/360 against 175/360 under `legacy`: beeline 54 against 47, cautious 39 against 32,
-  duelist 96 against 96. Every one of the 189 winning runs reached its finale with at least one companion.
-- **Care.** Elves, guards and villains use 1.29, 1.08 and 0.53 companion treatments a run and restore 36.6, 25.9
-  and 12.0 companion HP. No site is used more than twice. The script spends a ration on a companion only above one
+- **Wins.** Managed wins 184/360 against 168/360 under `legacy`: beeline 51 against 45, cautious 40 against 32,
+  duelist 93 against 91. Every one of the 184 winning runs reached its finale with at least one companion. Policy
+  movements are +6, +8 and +2 of 120, inside the scaled +12/120 control band.
+- **Care.** Elves, guards and villains use 1.28, 1.08 and 0.51 companion treatments a run and restore 38.2, 26.1
+  and 11.3 companion HP. No site is used more than twice. The script spends a ration on a companion only above one
   in the bag; without that reserve the duelist falls from 96 to 89 wins.
-- **Replacements.** Elves receive 46 (45 rescues, one house defence), guards 121 from kept caravan orders and
-  villains 49 from press-gang, or 0.38, 1.01 and 0.41 a run. No muster was collected by this straight-line policy.
-- **Credit.** Sixteen fights settled without a player contribution and withheld 716 personal gold. Twelve contributed
+- **Replacements.** Elves receive 46 from rescues, guards 122 from kept caravan orders and villains 51 from
+  press-gang, or 0.38, 1.02 and 0.43 a run. No muster was collected by this straight-line policy.
+- **Credit.** Eight fights settled without a player contribution and withheld 358 personal gold. Twelve contributed
   guard fights settled beyond 40 m and kept full pay, the negative control for the removed distance penalty.
-- **Economy.** Mean gold is 435.6 a run against 436.3 under `legacy`, within 0.2%. The credit rule, not an economy
-  collapse, accounts for the withheld amount.
+- **Economy.** Mean gold is 433.8 a run against 440.6 under `legacy`, 1.5% lower and inside the 5% band.
 
 The caravans by side, measured on the managed arm. Timings are beeline / cautious / duelist:
 
 | Side | Verbs over 120 runs | Camp p50 | Gate p50 | W3-1 replacements; guards thinned |
 | --- | --- | --- | --- | --- |
-| Elves | take 105, give 135 | 25 / 25 / 25 s | 87 / 90 / 96 s | 46; - |
-| Palace guard | confiscate 104, deliver 68, release 79 | 18 / 18 / 18 s | 87 / 87 / 99 s | 121; - |
-| Villain | plunder 96, press 49, burn 104 | 17 / 17 / 19 s | 83 / 83 / 90 s | 49; 70 |
+| Elves | take 106, give 133 | 25 / 25 / 25 s | 88 / 89 / 103 s | 46; - |
+| Palace guard | confiscate 103, deliver 65, release 79 | 18 / 18 / 18 s | 87 / 87 / 101 s | 122; - |
+| Villain | plunder 93, press 51, burn 103 | 17 / 17 / 19 s | 83 / 85 / 90 s | 51; 68 |
 
 ### W3-1 attribution and policy control
 
-The care effect was isolated before the final panel. Wins over the moved cells:
+The care effect was isolated before W3-2 joined the shipped arms. Wins over the moved cells:
 
 | Cell | Legacy | Care | Recovery limit | Replenishment | Credit |
 | --- | ---: | ---: | ---: | ---: | ---: |
