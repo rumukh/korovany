@@ -347,46 +347,50 @@ the baseline's seeds, `main` at 9f3bf5d against the W2-2 branch, 360 runs a poli
 `caravanBeats: 'shipped'` runs the engine's spine on the harness's bodies (`tests/runHarnessBeats.ts`): the plans of
 `planCaravanSpine`, the camp held until its met cart settles, the finale behind `caravanSpineGate`, each side's verbs
 paid from `caravanBeatReward`, the market written by the chronicle's own helpers, a burn through `thinFinaleGarrison`,
-and two met carts to a W2-1 progress step. Staging follows the engine's seam: W1-1's make-way, a campaign reservation,
-a retry every 2 s and a cart let through after 30 s. The arms are `beatPolicy` (`engage`, `walk`, `ignore`),
-`openingPolicy`, `verbPolicy`, `beatGate`, `beatsPerProgressStep` and `roadCart: 'farm'`. With the spine off every
-report is main's byte for byte: 72 of 72 runs compared under the shipped and the pinned arms.
+and two met carts to a W2-1 progress step. Staging follows the engine's seam: W1-1's make-way, W1-6's step-back under
+`staging: 'friendly'`, a campaign reservation, a retry every 2 s and a cart let through after 30 s. The arms are
+`beatPolicy` (`engage`, `walk`, `ignore`), `openingPolicy`, `verbPolicy`, `beatGate`, `beatsPerProgressStep` and
+`roadCart: 'farm'`. With the spine off every report is main's byte for byte: 72 of 72 runs compared under the shipped
+and the pinned arms, on main at 7c893a3.
 
 `HARNESS_SPINE_ARMS` against `HARNESS_SHIPPED_ARMS`, 30 Hz, 1 200 s, seeds `1 + 7919 n`: beeline 40, cautious 30 and
-duelist 20 per side, 270 runs a row. Won in p50 is the middle of the three sides' medians.
+duelist 20 per side, 270 runs a row, on main at 7c893a3. Won in p50 is the middle of the three sides' medians.
 
 | Arm | Wins (beeline / cautious / duelist) | Won in p50 | Carts met per run | Finale tier |
 | --- | --- | --- | ---: | --- |
-| spine off | 134 (49 / 29 / 56) | 89 / 88 / 93 s | — | 3 |
-| spine | 127 (49 / 28 / 50) | 117 / 118 / 148 s | 2.05 | 4 |
-| one cart per step | 115 (45 / 26 / 44) | 132 / 130 / 148 s | 2.04 | 4 |
-| K = 3 | 96 (33 / 16 / 47) | 145 / 158 / 164 s | 2.79 | 4 |
-| `walk` | 97 (37 / 16 / 44) | 179 / 174 / 197 s | 2.02 | 4 |
-| `ignore` | 0 | — | 0.01 | never fielded |
-| road cart farmed | 102 (36 / 18 / 48) | 136 / 130 / 148 s | 2.02 | 4 |
+| spine off | 133 (48 / 29 / 56) | 89 / 88 / 93 s | — | 3 |
+| spine | 128 (49 / 29 / 50) | 117 / 118 / 145 s | 2.06 | 4 |
+| one cart per step | 115 (45 / 25 / 45) | 132 / 130 / 147 s | 2.04 | 4 |
+| K = 3 | 100 (36 / 16 / 48) | 154 / 158 / 164 s | 2.79 | 4 |
+| `walk` | 97 (36 / 18 / 43) | 180 / 174 / 190 s | 2.03 | 4 |
+| `ignore` | 0 | — | 0.02 | never fielded |
+| road cart farmed | 103 (37 / 18 / 48) | 130 / 105 / 145 s | 2.02 | 4 |
 
 - Every side meets its caravans: about two a run, robbed or walked in. The elves rob 2.0, the villain 2.1, and the
   guard confiscates 0.9 and walks in or sends on 1.2, so «корованов — 0» is gone. 1 % of carts end lost or escaped.
 - The camp closes at a median 17–25 s and the finale's gate opens at 82–113 s.
-- Two met carts to a step is the coordinator's fallback, taken because one to a step put the threat waves at 1 036
-  damage against the baseline's 367 and cost the duelist 12 wins. Two to a step keeps the waves at 392. Beeline wins are
-  unchanged, cautious lose one and duelist six (10 points). The finale is fought at pacing tier 4 either way, against
-  3 without the spine; its boss stays scaled by the clock.
-- The scripted player's median win grows by 28–55 s, a third to two thirds. This harness cannot show option A's 6–10
+- Two met carts to a step is the coordinator's fallback, taken because one to a step put the threat waves at 1 324
+  damage against the baseline's 364 and cost the duelist 11 wins. Two to a step keeps the waves at 335, leaving out one
+  run: a beeline guard (seed 285 085) that stalls for 1 100 s at an unfinished «interact» objective in region-1-4,
+  the same stall as the baseline's own timeout (seed 142 543), and takes 2 964 wave damage while it stands there.
+  Beeline gains one win, cautious none, and duelist loses six (10 points). The finale is fought at pacing tier 4 either
+  way, against 3 without the spine; its boss stays scaled by the clock.
+- The scripted player's median win grows by 28–52 s, a third to a half. This harness cannot show option A's 6–10
   minutes: its player walks straight to every target, never reads a card and wins in a minute and a half without the
-  spine. K = 3 adds another 30 s and costs another 31 wins, which is why the gate asks for two.
-- Both offers are worth taking. Seeded, the scripted player took the trunk's 46 % of the time and the light one's 52 %.
-  Forced, the trunk offer won 135 and the other road's 137.
-- The verbs are real choices. An elf who gives heals 140 a run from rations against 31 and wins 37 of 90 against 28; a
+  spine. K = 3 adds another 20–40 s and costs another 28 wins, which is why the gate asks for two.
+- Both offers are worth taking. Seeded, the scripted player took the trunk's 45 % of the time and the light one's 55 %.
+  Forced, the trunk offer won 132 and the other road's 135.
+- The verbs are real choices. An elf who gives heals 139 a run from rations against 31 and wins 39 of 90 against 27; a
   villain who press-gangs or burns brings 3.9 companions to the finale against 2.8, takes 32 finale damage against 42,
-  and wins 52 against 38. A guard who walks carts in wins 57 against 40 for one who sends them on unpaid.
+  and wins 52 against 38. A guard who walks carts in wins 59 against 40 for one who sends them on unpaid.
 - Farming the road cart does not dominate: 84 more gold a run, 25 fewer wins, because its detours keep the player in
-  fights. Without the spine the same farming was worth 10 wins (144 against 134); the carts are the better use of the
+  fights. Without the spine the same farming was worth 13 wins (146 against 133); the carts are the better use of the
   time.
-- Staging: 7 carts in 270 runs waited for room, 28 s in all, and none waited long enough to go through unfought. W1-6's
-  step-back would change little here; the seam is ready for it.
+- Staging: with W1-6's step-back in the seam, no cart in 270 runs waited for room. Before it was wired in, 7 carts
+  waited 28 s in all, and none waited long enough to go through unfought. Under `walk` 6 carts waited 37 s in all,
+  against 9 and 93 s before.
 - `ignore` is the gate's negative control: no win and no finale fielded in 270 runs. `walk` is the fail-forward
-  control: 98 % of its carts settle on the walked-away clock, its gate opens at a median 135–161 s, and 97 runs win.
+  control: 99 % of its carts settle on the walked-away clock, its gate opens at a median 135–161 s, and 97 runs win.
 - `tests/runHarnessBeats.test.ts` holds these in whole runs: off is inert, the camp and the gate behave, `ignore` never
   reaches the finale, `walk` settles every cart by its clock, a crowded road makes way first and then lets the cart
   through, and each arm does what its name says.

@@ -83,8 +83,8 @@ clamped to the caravans a world has. The gate is one input, `CampaignGate`, thre
 The engine, the launch view, the atlas and the harness pass the same gate, and the finale fields its garrison only
 when it is open.
 
-Two rather than three: one would leave the road optional again, and three cost 31 of 127 wins in the harness for 30 s
-more run. Two rather than one-plus-the-crossing: the gate asks for a number, not for a place, so a cart that cannot
+Two rather than three: one would leave the road optional again, and three cost 28 of 128 wins in the harness for 20–40
+s more run. Two rather than one-plus-the-crossing: the gate asks for a number, not for a place, so a cart that cannot
 be staged never strands a run.
 
 While the gate is shut the finale's row reads «Штурм после корованов: 1/2». The compass leads, in order: an atlas
@@ -95,16 +95,18 @@ nearest caravan by road (amended in [the atlas spec](13-expedition-atlas-spec.md
 
 Every two caravans the run met (resolved, lost or escaped) are one step of W2-1's progress
 (`countProgressSteps({ caravanBeatsResolved })`, `CARAVAN_SPINE_BEATS_PER_STEP`). One to a step was measured first and
-was out of band: threat waves dealt 1 036 damage against the baseline's 367 and the duelist lost 12 wins. Two to a step
+was out of band: threat waves dealt 1 324 damage against the baseline's 364 and the duelist lost 11 wins. Two to a step
 keeps the waves at baseline. The finale is fought at pacing tier 4 either way; enemy stats follow the clock alone.
 
 ## 7. Staging
 
 A cart stages through one seam, `requestBeatStagingRoom(count)`: W1-1's make-way (a random event the player is not in
-the middle of stands down for the cart), then a campaign reservation. Refused, the card says so («На дороге тесно…»),
-the cart retries every 2 s, and its stall clock runs while the player stands by it. After 30 s it goes through without
-its fight, unpaid, and counts as settled. Beat actors carry an `eventOwnerId`, so W1-6's step-back never parks them;
-W1-6's `makeRoomForStaging` joins the seam with one call when it lands.
+the middle of stands down for the cart), then W1-6's step-back (`makeRoomForStaging('campaign', count)`: the
+player's own idle packs out of sight make room, as they do for a contract), then a campaign reservation. Refused, the
+card says so («На дороге тесно…»), the cart retries every 2 s, and its stall clock runs while the player stands by it.
+After 30 s it goes through without its fight, unpaid, and counts as settled. Beat actors carry an `eventOwnerId`, so
+W1-6's step-back never parks them. In the harness no cart waited for room once the step-back joined the seam; before,
+7 in 270 runs waited 28 s in all.
 
 ## 8. Persistence
 
@@ -128,8 +130,8 @@ touched while the camp waits, a chosen offer that is no offer, a stall clock pas
 - `tests/openingInterface.test.ts`: the opening card (its short field form, the single-offer copy), the chosen offer,
   the journal and the gate line.
 - `tests/runHarnessBeats.test.ts` and [the harness](run-harness.md#w2-2-pr-b-the-caravan-spine): in 270 runs a row the
-  spine meets about two caravans a run for every side, wins 127 against 134 without it, and lengthens the scripted
-  player's median win by 28–55 s. The gate's control never reaches the finale; the walk-away control still does.
+  spine meets about two caravans a run for every side, wins 128 against 133 without it, and lengthens the scripted
+  player's median win by 28–52 s. The gate's control never reaches the finale; the walk-away control still does.
 
 ## 10. Not done
 

@@ -245,7 +245,8 @@ and after 30 seconds it settles itself. A robbery you never finished gets away w
 left of its escort, a defence you left is lost, and a won cart left standing is looted. An
 escorted cart goes on alone, unpaid, and a walk finishes without its guide or its reward. A
 walked cart that cannot move for six seconds beside you arrives where it stands. A cart
-that finds the road too crowded to stage its fight says so and waits while you stand by it;
+that finds the road crowded asks your side's idle packs to step back, as a contract does; if
+that is not room enough, it says so and waits while you stand by it;
 after 30 seconds it goes through without the fight, unpaid, and still counts for the camp
 and the gate. Until a choice is made, a won cart follows the claim rules below, and your
 squad never loads it. No random event is rolled while the camp's choice is open, while a
