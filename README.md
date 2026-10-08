@@ -41,6 +41,12 @@ previously saved effect-off choices. Bloom-off uses the real no-post path.
 Interface preferences do not replace or reset campaign saves.
 On desktop, the right-hand HUD column scrolls rather than slipping under the
 mouse-capture card, and notices start past the zone header instead of under its pause button.
+On phones and other narrow or touch layouts, notices sit at the foot of the left column and
+never cover the vitals, the squad strip or the touch controls. Bursts queue instead of
+stacking: two pieces of news at once on wider screens and one on narrow ones, the most
+urgent first (danger, then warnings, then rewards, then news), while first-time lines keep
+a place and a pace of their own. Repeats merge into one line with a count, and a notice's
+clock stops while the game is paused.
 Faction launch cards come first, above seed and starting-gift customization.
 Theme, effect, audio and interface controls are grouped under **Настройки** at
 the bottom of the main menu; the pause dialog keeps its live controls.

@@ -185,6 +185,9 @@ export type PartStatus = 'healthy' | 'wounded' | 'missing' | 'prosthetic'
 
 export type NoticeTone = 'info' | 'success' | 'warning' | 'danger'
 
+/** W3-6 — who released a notice, when that changes how it may be queued. */
+export type NoticeOrigin = 'hint'
+
 export type LootRarity = 'common' | 'uncommon' | 'rare' | 'legendary'
 
 export type LootRewardKind = 'coins' | 'medicine' | 'whetstone'
@@ -721,7 +724,7 @@ export interface GameView {
 
 export interface GameCallbacks {
   onView: (view: GameView) => void
-  onNotice: (message: string, tone?: NoticeTone) => void
+  onNotice: (message: string, tone?: NoticeTone, origin?: NoticeOrigin) => void
   onShop: () => void
   onPauseRequest: () => void
   onAtlasRequest?: () => void

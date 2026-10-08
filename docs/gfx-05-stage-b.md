@@ -420,3 +420,27 @@ new absolute JSON path when running `tests\compactCombatHud.test.ts`, then pass
 that path to the existing runner using `--notice-component-layout` and
 `--repeat 1`. That path never creates a game engine, profiles frames or performs
 a native-input replay. Malformed packets fail rather than falling back to play.
+
+### W3-6 amendment: the narrow lane moves to the left column (2026-10-08)
+
+The right-hand placement above was measured with one hint and no W2-2 cards. On
+main at 191cda5 the camp's choice card took y139–552 of the 390×844 right column,
+so Compact notices began at y563 in a column that ends at y594, and 31 px of the
+first one was visible. Full still covered the vitals, the squad strip and the
+compass.
+
+W3-6 keeps this section's rules: one live region, no hidden copy, nothing inside a
+disclosure, finale cues never pushed, notices never buried. On the narrow layout
+it now renders that region, in both modes, at the foot of the left column after
+the mission panel. The mission panel yields its height while a notice shows. On
+phones at least 780px tall the status column never yields, and a second notice
+scrolls inside the lane. Wide layouts keep the lanes described above byte for byte.
+`GameScreen` takes the layout as `narrowHud`, and the App reads it from the CSS's
+own media query.
+
+The component packet is now `production-hud-component-layout-v2`. Each case carries
+`markup` (wide) and `narrowMarkup`, and the runner uses the narrow markup at 390.
+All eight cases must clear the essentials, now including the squad strip. The
+bottom HUD's essentials are its body panel and control ribbon rather than its
+transparent full-width row. Main's runner already failed on that row: at 1920 the
+original finale lane overlapped the empty box by 17 px, but none of its content.

@@ -625,6 +625,20 @@ test('four mechanics tripped in one frame arrive one at a time, not as a wall', 
   }
 })
 
+test('every first-time line says it is a hint, so the notice queue never drops one (W3-6)', () => {
+  const base = launchView()
+  const everything = TRIPPING_VIEW.loot(
+    TRIPPING_VIEW.threat(TRIPPING_VIEW.bleeding(TRIPPING_VIEW.interact(base))),
+  )
+  const origins: string[] = []
+  const director = new HintDirector({ emit: (_text, _tone, origin) => origins.push(origin) })
+  director.observe(base)
+  for (let step = 0; step < 200; step += 1) director.observe({ ...everything, elapsed: step * 0.25 })
+  // A floor first, so an emission-free run cannot pass the label check vacuously.
+  assert.equal(origins.length, 4)
+  assert.deepEqual(new Set(origins), new Set(['hint']))
+})
+
 test('a paused game holds hints instead of spending them behind the pause screen', () => {
   const base = launchView()
   const tripped = TRIPPING_VIEW.bleeding(base)

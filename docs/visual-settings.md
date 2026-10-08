@@ -32,7 +32,7 @@ Compact mode groups the existing mission boards under **Поход**, and chroni
 and rumours under **Вести**. Native keyboard/touch disclosures keep all original
 actions and full copy available; active contract/rumour deadlines remain in the
 closed summaries. Vitals, ability/defense, squad, compass, E prompts, finale cues,
-all four notice slots and their teaching messages remain outside the disclosures.
+notices and their teaching messages remain outside the disclosures.
 It also restrains notice decoration and the peripheral damage tint without
 changing damage state or intentional injury-related vision loss. Full mode keeps
 the original panel arrangement. Browser layout/visual acceptance is separate from
@@ -49,9 +49,35 @@ On desktop layouts, both modes keep two lanes clear. The right-hand column ends
 above the bottom-right mouse-capture card and scrolls, so the card can no longer
 cover a rumour's «Взяться» while capture is off. Wider than 1000px, the notice
 lane starts past the widest zone header, capped at 31rem, instead of under its
-pause button. Finale notice lanes are unchanged. On narrow screens the Full HUD
-still lays notices over the vitals column; taps reach the controls beneath, and
-Compact mode moves notices into the right-hand flow.
+pause button. Finale notice lanes are unchanged.
+
+On the narrow layout (`(max-width: 720px), (pointer: coarse)`), both modes put the
+one live notice region at the foot of the left column, below the mission panel. No
+lane on a phone is free of controls, and W2-2's camp and caravan cards fill the
+right column, so the notice takes height from the mission panel instead: the panel's
+content stays put and scrolls, and the vitals, squad strip, touch controls, prompt
+and right column are never covered. On phones at least 780px tall the whole status
+column (vitals, squad strip, ability and melee chips) keeps its height; when a long
+notice and a long first-time line meet, the lane scrolls and only the older one is
+cut short. On shorter screens the vitals card and squad strip keep their place and
+the rest of the status column scrolls first. Fine-pointer windows 721–1000px wide
+still use the centred lane, which can reach over the left column; W3-6 left them
+out of scope.
+
+Notices are paced by one queue (`src/game/ui/noticeQueue.ts`). News shows two at a
+time on wide layouts and one on the narrow layout; a first-time line has a place of
+its own beside it, so lessons and news never starve each other, and the rest wait.
+Danger goes first, then warnings, rewards and other news, so a more urgent notice may
+take the place of a calmer one that has been up for 1.2s; the calmer one comes back
+with the time it had left. The narrow lane lists the newest on top, so a notice
+already up never moves. A repeated notice is one line with a `×N` count. A notice
+lives 4.3–5.8s by length, and its clock counts painted, unpaused frames only: it
+stops behind any overlay and in a hidden tab, and a load stall counts as one short
+frame. Plain news that waited 10s is dropped. First-time lines are never dropped and
+keep the hint director's 6s spacing. The achievement banner no longer takes taps
+meant for the controls beneath it. Add `?noticeLog=1` to the URL to record every
+notice's arrival in `window.__korovanyNoticeLog` and the live queue in
+`window.__korovanyNoticeQueue`.
 
 Interface preferences are stored as `{ version: 2, hudMode }` at
 `korovany-visual-preferences`. Version 1 records are also read, retaining only

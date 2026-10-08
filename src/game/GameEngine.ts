@@ -2788,8 +2788,8 @@ export class GameEngine {
       // so a queued line survives a checkpoint and continue instead of dying with the
       // engine that queued it.
       pending: readSerializableStringArray(restoredRun?.directorState, 'pendingHints'),
-      emit: (message, tone) => {
-        this.callbacks.onNotice(message, tone)
+      emit: (message, tone, origin) => {
+        this.callbacks.onNotice(message, tone, origin)
       },
       onSeen: (hintId) => {
         this.callbacks.onHintSeen(hintId)

@@ -74,10 +74,10 @@ function fixture(mode: HudMode, faction: 'elf' | 'guard' | 'villain' = 'guard'):
   }
   return {
     view, worldRef: createRef(), notices: [
-      { id: 1, message: 'Первый урок целиком', tone: 'info' },
-      { id: 2, message: 'Награда целиком', tone: 'success' },
-      { id: 3, message: 'Предупреждение целиком', tone: 'warning' },
-      { id: 4, message: 'Опасность целиком', tone: 'danger' },
+      { id: 1, message: 'Первый урок целиком', tone: 'info', count: 1 },
+      { id: 2, message: 'Награда целиком', tone: 'success', count: 1 },
+      { id: 3, message: 'Предупреждение целиком', tone: 'warning', count: 1 },
+      { id: 4, message: 'Опасность целиком', tone: 'danger', count: 1 },
     ],
     achievementBanner: null, runAchievements: [], activeOverlay: null, simulationPaused: false,
     touchCaptures: new GameplayPointerCaptures(), endResult: null, terminalRun: null,
@@ -100,6 +100,20 @@ function fixture(mode: HudMode, faction: 'elf' | 'guard' | 'villain' = 'guard'):
   }
 }
 
+/** The outer markup of the first `<div class="…">` with this class, by counting nested divs. */
+function elementSlice(html: string, className: string): string {
+  const start = html.indexOf(`<div class="${className}"`)
+  assert.notEqual(start, -1, `Missing ${className}`)
+  const tags = /<div\b|<\/div>/g
+  tags.lastIndex = start
+  let depth = 0
+  for (let match = tags.exec(html); match; match = tags.exec(html)) {
+    depth += match[0] === '</div>' ? -1 : 1
+    if (depth === 0) return html.slice(start, match.index + match[0].length)
+  }
+  assert.fail(`Unclosed ${className}`)
+}
+
 if (process.env.GFX_NOTICE_COMPONENT_OUTPUT) {
   test('export the production HUD fixture for explicitly staged browser layout evidence', () => {
     const output = process.env.GFX_NOTICE_COMPONENT_OUTPUT!
@@ -107,12 +121,14 @@ if (process.env.GFX_NOTICE_COMPONENT_OUTPUT) {
     const cases = (['compact', 'full'] as const).flatMap((mode) => [true, false].map((finale) => {
       const props = fixture(mode)
       if (!finale) props.view.finale = null
-      props.notices = [{ id: 1, message: describeHint('perfectGuard').text, tone: describeHint('perfectGuard').tone }]
+      props.notices = [{ id: 1, message: describeHint('perfectGuard').text, tone: describeHint('perfectGuard').tone, count: 1 }]
+      // W3-6 — the lane depends on the layout, so each case carries the markup for both.
       return { id: `${mode}-${finale ? 'finale' : 'ordinary'}`, mode, finale,
-        markup: renderToStaticMarkup(createElement(GameScreen, props)) }
+        markup: renderToStaticMarkup(createElement(GameScreen, props)),
+        narrowMarkup: renderToStaticMarkup(createElement(GameScreen, { ...props, narrowHud: true })) }
     }))
     writeFileSync(output, JSON.stringify({
-      kind: 'production-hud-component-layout-v1',
+      kind: 'production-hud-component-layout-v2',
       limitation: 'STAGED COMPONENT LAYOUT: real GameScreen/FinaleHud markup and notice copy, not engine boss gameplay or a native notice trigger.',
       cases,
     }, null, 2), { flag: 'wx' })
@@ -161,10 +177,33 @@ test('production HUD retains essential combat/navigation/interaction and every n
       assert.equal((rendered.match(/class="notice-stack"/g) ?? []).length, 1, 'one live notice region, not duplicate responsive copies')
       const side = rendered.slice(rendered.indexOf('class="top-hud-side"'), rendered.indexOf('class="left-hud"'))
       assert.equal(side.includes('class="notice-stack"'), mode === 'compact')
+      assert.equal(elementSlice(rendered, 'left-hud').includes('class="notice-stack"'), false, 'wide layouts keep GFX-05 lanes')
       if (mode === 'compact') {
         assert.ok(side.indexOf('class="notice-stack"') > side.indexOf('finale-hud'), 'finale cues retain priority above notices')
         assert.ok(side.indexOf('class="notice-stack"') < side.indexOf('compact-hud-disclosure'), 'notices are not buried below optional world news')
       }
+      // W3-6 — the narrow layout moves the same single region to the foot of the left column.
+      const narrow = renderToStaticMarkup(createElement(GameScreen, { ...props, narrowHud: true }))
+      assert.equal((narrow.match(/class="notice-stack"/g) ?? []).length, 1, `${mode}/${faction}: narrow duplicated the live region`)
+      const leftHud = elementSlice(narrow, 'left-hud')
+      const mission = elementSlice(narrow, 'mission-hud')
+      assert.ok(leftHud.indexOf('class="notice-stack"') > leftHud.indexOf('class="status-hud"'))
+      assert.ok(leftHud.indexOf('class="notice-stack"') > leftHud.indexOf('class="mission-hud"') + mission.length - 1,
+        `${mode}/${faction}: the notices are not after the mission panel`)
+      const stack = elementSlice(narrow, 'notice-stack')
+      assert.ok(leftHud.endsWith(`${stack}</div>`), `${mode}/${faction}: the notices are not the last thing in the column`)
+      assert.equal(elementSlice(narrow, 'top-hud-side').includes('notice-stack'), false)
+      for (const disclosure of narrow.matchAll(/<details class="compact-hud-disclosure">[\s\S]*?<\/details>/g)) {
+        assert.doesNotMatch(disclosure[0], /notice-stack/)
+      }
+      for (const notice of props.notices) assert.ok(leftHud.includes(notice.message))
+      // The narrow lane grows upward from the column's foot, so the newest notice is on top.
+      const order = props.notices.map((notice) => stack.indexOf(notice.message))
+      assert.deepEqual([...order].sort((first, second) => second - first), order, 'narrow lists the newest first')
+      // Control: the wide stack grows downward and keeps the oldest first.
+      const wideStack = elementSlice(rendered, 'notice-stack')
+      const wideOrder = props.notices.map((notice) => wideStack.indexOf(notice.message))
+      assert.deepEqual([...wideOrder].sort((first, second) => first - second), wideOrder)
       for (const entry of props.view.contracts) {
         assert.ok(rendered.includes(entry.task))
         assert.ok(rendered.includes(entry.stake))
@@ -178,6 +217,21 @@ test('production HUD retains essential combat/navigation/interaction and every n
         assert.ok(summary.includes('9 с'))
       }
     }
+  }
+})
+
+test('W3-6: a merged notice shows its count to the eye only, in either lane; a single one shows none', () => {
+  for (const narrowHud of [false, true]) {
+    const props = fixture('full')
+    props.notices = [
+      { id: 7, message: 'Нет выносливости.', tone: 'warning', count: 3 },
+      { id: 8, message: 'Одна весть.', tone: 'info', count: 1 },
+    ]
+    const html = renderToStaticMarkup(createElement(GameScreen, { ...props, narrowHud }))
+    assert.equal((html.match(/<b class="notice-count" aria-hidden="true">×3<\/b>/g) ?? []).length, 1)
+    // Control: the single notice carries no badge, so there is exactly one.
+    assert.equal((html.match(/class="notice-count"/g) ?? []).length, 1)
+    assert.ok(html.includes('<span>Нет выносливости.</span>'), 'the merged line lost its words')
   }
 })
 

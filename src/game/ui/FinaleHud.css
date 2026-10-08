@@ -100,10 +100,4 @@
   .finale-hud p {
     font-size: 0.75rem;
   }
-
-  .game-screen:has(.finale-hud) .notice-stack {
-    bottom: calc(var(--mobile-controls-bottom) + var(--mobile-touch-controls-height) + var(--mobile-hud-region-gap));
-    left: 0.55rem;
-    width: calc(50% - 0.85rem);
-  }
 }

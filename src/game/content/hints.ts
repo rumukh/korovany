@@ -26,15 +26,18 @@ import {
   getEnemyScalingTier,
   type BodyPart,
   type GameView,
+  type NoticeOrigin,
   type NoticeTone,
   type UpgradeId,
 } from '../types.ts'
 import { HINT_IDS, describeHint, isHintId, type HintId } from './gameCopy.ts'
 
 /**
- * Seconds between two hints. Longer than the 4.3 s a notice lives in `App.tsx`, so two
- * first-time lines can never share the notice stack: a run that trips four mechanics in
- * one fight teaches them one at a time instead of burying the fight under a wall of text.
+ * Seconds between two hints. Longer than the longest a notice lives (5.8 s, W3-6's
+ * `NOTICE_MAX_LIFETIME_MS` in `ui/noticeQueue.ts`), so two first-time lines can never
+ * share the notice stack: a run that trips four mechanics in one fight teaches them one
+ * at a time instead of burying the fight under a wall of text. The notice queue gives
+ * first-time lines a place of their own beside the news and keeps this gap between two.
  */
 export const HINT_MIN_GAP_SECONDS = 6
 
@@ -384,8 +387,11 @@ export interface HintDirectorOptions {
    * dropped rather than trusted.
    */
   pending?: Iterable<string>
-  /** The existing notice channel. Hints do not get a surface of their own. */
-  emit: (message: string, tone: NoticeTone) => void
+  /**
+   * The existing notice channel. Hints do not get a surface of their own; they say they are
+   * hints (W3-6), so the App's queue never drops one and keeps the gap between two.
+   */
+  emit: (message: string, tone: NoticeTone, origin: NoticeOrigin) => void
   /** Called once, when a hint is actually shown, so the profile can record it. */
   onSeen?: (hintId: HintId) => void
   minGapSeconds?: number
@@ -402,7 +408,7 @@ export interface HintDirectorOptions {
  */
 export class HintDirector {
   private readonly seen: Set<string>
-  private readonly emit: (message: string, tone: NoticeTone) => void
+  private readonly emit: (message: string, tone: NoticeTone, origin: NoticeOrigin) => void
   private readonly onSeen: ((hintId: HintId) => void) | undefined
   private readonly minGapSeconds: number
   private readonly mechanics: readonly HudMechanic[]
@@ -455,7 +461,7 @@ export class HintDirector {
     this.seen.add(hintId)
     const copy = describeHint(hintId)
     this.nextHintAt = view.elapsed + this.minGapSeconds
-    this.emit(copy.text, copy.tone)
+    this.emit(copy.text, copy.tone, 'hint')
     this.onSeen?.(hintId)
   }
 }

@@ -76,7 +76,7 @@ if (componentLayoutPath && (!isAbsolute(componentLayoutPath) || repeat !== 1 ||
   throw new Error('Notice component layout requires an absolute fixture, --repeat 1 and no engine diagnostic jobs')
 }
 const componentLayout = componentLayoutPath ? JSON.parse(await readFile(componentLayoutPath, 'utf8')) : null
-if (componentLayoutPath && componentLayout?.kind !== 'production-hud-component-layout-v1') {
+if (componentLayoutPath && componentLayout?.kind !== 'production-hud-component-layout-v2') {
   throw new Error('Invalid HUD component layout packet; refusing to fall back to an engine run')
 }
 if (!['full', 'compact'].includes(hudMode)) throw new Error('Invalid HUD mode')
