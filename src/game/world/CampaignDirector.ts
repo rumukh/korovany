@@ -735,7 +735,7 @@ export const RUMOUR_DEADLINE_TICKS = 12
 /**
  * Ticks between offers, so the feed does not become a queue. W2-3 left it at four: offering
  * only rumours the player can meet, and none while one is pinned, already halves the offers
- * the review's `commit` arm sees (4.4 a run to 2.1 for `beeline`, 8.7 to 2.3 for `cautious`),
+ * the review's `commit` arm sees (4.7 a run to 2.1 for `beeline`, 9.0 to 2.3 for `cautious`),
  * and six on top cut the kept ones by a third, below where they were before W2-3.
  */
 export const RUMOUR_OFFER_INTERVAL_TICKS = 4
@@ -764,9 +764,9 @@ export const RUMOUR_CANDIDATE_POOL = 4
  * The estimate is a walk along the compass's itinerary on a clear road. It knows nothing of
  * fights, props, slopes or a cart that changes square on the way, so an offer that fits only
  * the bare estimate is a coin toss. Measured with the review's `commit` arm in the engine's
- * streaming window, 40 seeds per faction: ×1.0 kept fewer cautious rumours than it broke
- * (0.7 : 1), ×1.25 + 8 s kept 1.8 : 1 with the guard at 1.0 : 1, and ×1.5 + 8 s kept 2.8 : 1
- * with no faction under 2.2 : 1. Beeline kept 1.3, 3.6 and 4.8 : 1.
+ * streaming window, 80 seeds per faction: ×1.0 kept about as many cautious rumours as it
+ * broke (1.1 : 1), ×1.25 + 8 s kept 2.0 : 1 with the elf at 1.6 : 1, and ×1.5 + 8 s kept
+ * 2.8 : 1 with no faction under 2.1 : 1. Beeline kept 1.8, 3.9 and 5.2 : 1.
  */
 export const RUMOUR_TRAVEL_MARGIN = 1.5
 export const RUMOUR_TRAVEL_SLACK_SECONDS = 8
@@ -778,13 +778,24 @@ export const RUMOUR_MIN_DEADLINE_TICKS = 6
 /** W2-3 — ticks a scaled clock leaves past the margined finish: room for a fight on the way. */
 export const RUMOUR_SPARE_TICKS = 2
 /**
+ * W2-3 — the longest walk a rumour is offered for, in seconds at the player's own pace: a
+ * rumour asks for a detour, not an expedition. Every square it is met in lies this close.
+ *
+ * Without it the board offered walks of up to a minute that the review's `commit` arm, which
+ * takes rumours within 110 m, never took, and an untaken rumour resolves against the player.
+ * Measured with that arm in the engine's window, 80 seeds per faction: 25 s raised cautious
+ * kept : broken from 2.0 to 2.8 : 1, with the elf from 1.6 to 2.1, and kept a few more.
+ */
+export const RUMOUR_OFFER_WALK_SECONDS = 25
+/**
  * W2-3 — what keeping a rumour pays the player, once, when the kept verdict lands.
  *
  * Small on purpose: the world change is the point, and a rumour must never become the way to
- * make money. In the run harness's purse a run earns about 334 gold. With every W1-5 arm on,
- * the `commit` arm's kept rumours paid 2 % of what its runs earned; keeping 1.4 a run, as
- * the review's arm does, would pay about 6 %. The elf gets a ration instead, from the wooden
- * houses it stood up for: the 35 health a 35-gold field kit restores.
+ * make money. In the run harness's purse a run earns about 335 gold. With every W1-5 arm on,
+ * the `commit` arm's kept rumours paid the guard and the villain 3 to 4 % of what their runs
+ * earned; keeping 1.6 a run, as the review's arm does, would pay about 7 %. The elf gets a
+ * ration instead, from the wooden houses it stood up for: the 35 health a 35-gold field kit
+ * restores.
  */
 export const RUMOUR_KEPT_GOLD = 15
 export const RUMOUR_KEPT_RATIONS = 1
@@ -1162,11 +1173,12 @@ function findSabotageCandidates(context: RumourWorldContext): RumourCandidate[] 
  * itself a source of divergence between two otherwise identical runs.
  *
  * W2-3 — and only rumours the player can meet. `travel` times a walk from where the player
- * stands; `findRumourOffers` keeps a candidate only when the walk, stretched by
- * `RUMOUR_TRAVEL_MARGIN` and `RUMOUR_TRAVEL_SLACK_SECONDS`, fits its clock. On 4963002 every
- * escort the reviewer saw was offered with 16–40 s left and the cart 200 m away, and the
- * W1-5 baseline found 34 % of offers beyond reach the moment they were made. While a rumour
- * is pinned the board does not grow: one commitment at a time.
+ * stands; `findRumourOffers` keeps a candidate only when that walk is no longer than
+ * `RUMOUR_OFFER_WALK_SECONDS` and, stretched by `RUMOUR_TRAVEL_MARGIN` and
+ * `RUMOUR_TRAVEL_SLACK_SECONDS`, fits its clock. On 4963002 every escort the reviewer saw
+ * was offered with 16–40 s left and the cart 200 m away, and the W1-5 baseline found 34 %
+ * of offers beyond reach the moment they were made. While a rumour is pinned the board does
+ * not grow: one commitment at a time.
  */
 export function offerRumours(
   state: ChronicleCommitmentState,
@@ -1282,9 +1294,10 @@ export function estimateRumourReach(
 
 /**
  * W2-3 — the offer `candidate` becomes, or null when the player cannot meet it with the
- * margin. A defence or a sabotage gets a clock fitted to the walk — the margined finish plus
- * `RUMOUR_SPARE_TICKS`, between `RUMOUR_MIN_DEADLINE_TICKS` and `RUMOUR_DEADLINE_TICKS` — so
- * a square next door does not sit on the board for 96 s. An escort keeps its cart's clock.
+ * margin within `RUMOUR_OFFER_WALK_SECONDS`. A defence or a sabotage gets a clock fitted to
+ * the walk — the margined finish plus `RUMOUR_SPARE_TICKS`, at least
+ * `RUMOUR_MIN_DEADLINE_TICKS` — so a square next door does not sit on the board for 96 s. An
+ * escort keeps its cart's clock.
  */
 export function fitRumourOffer(
   candidate: ChronicleRumour,
@@ -1292,8 +1305,12 @@ export function fitRumourOffer(
   travel: RumourTravelEstimate,
 ): ChronicleRumour | null {
   const tick = context.state.tick
+  const nearby: RumourTravelEstimate = (point) => {
+    const seconds = travel(point)
+    return seconds !== null && seconds <= RUMOUR_OFFER_WALK_SECONDS ? seconds : null
+  }
   const finish = rumourFinishTicks(
-    candidate, context, travel, tick, 0,
+    candidate, context, nearby, tick, 0,
     RUMOUR_TRAVEL_MARGIN, RUMOUR_TRAVEL_SLACK_SECONDS,
   )
   if (finish === null) return null

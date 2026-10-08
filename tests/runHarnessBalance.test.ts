@@ -59,10 +59,11 @@
  *   harness simulating the whole 3x3 where the engine simulates only the plus inside it
  *   (W1-6's finding): the 3x3 kept the actor budget full for 45 s a run. NPCs took 12
  *   carts, each after a full load, and the squad took none.
- * - **F3, measured.** 420 of 1 226 rumours (34 %) were beyond reach when offered. W2-3 then
- *   offered only rumours the player can meet: 66 of 545 (12 %) on the same seeds, every one
- *   an escort this road-only estimate times to the cart's square rather than to where the
- *   player meets the cart. Wins, run lengths and gold are unchanged within a run or two.
+ * - **F3, measured.** 420 of 1 226 rumours (34 %) were beyond reach when offered, and 490
+ *   of 1 268 (39 %) once W2-1 paced the run by progress. W2-3 then offered only rumours the
+ *   player can meet: 67 of 451 (15 %) on the same seeds and arms, every one an escort that
+ *   this road-only estimate times to the cart's square rather than to where the player
+ *   meets the cart. Wins, run lengths and gold moved by a run or less.
  * - **F4.** At least one companion reached 343 of 351 finales; the finale is still the
  *   single largest killer (54 of 119 defeats).
  *
@@ -179,11 +180,11 @@ test('the shipped baseline: three factions, three policies, inside the measured 
   const loads = pooled(report.cells, (cell) => cell.caravans.lootsStarted)
   assert.ok(lostToNpcs <= loads, `${lostToNpcs} carts lost to NPCs after only ${loads} loads`)
 
-  // Rumours: offered, and only rarely beyond reach (F3). Before W2-3 a third of the offers
-  // could not be met when they were made (420 of 1 226 at forty seeds, 21 of 94 here); W2-3
-  // offers only what the player can meet, and this independent road-only estimate still
-  // calls a few escorts late (66 of 545, 2 of 44 here) because it times the walk to the
-  // cart's square now rather than to the square the player meets it in.
+  // Rumours: offered, and only rarely beyond reach (F3). Before W2-3 over a third of the
+  // offers could not be met when they were made (490 of 1 268 at forty seeds, 23 of 90
+  // here); W2-3 offers only what the player can meet, and this independent road-only
+  // estimate still calls a few escorts late (67 of 451, 3 of 48 here) because it times the
+  // walk to the cart's square now rather than to the square the player meets it in.
   const offered = pooled(report.cells, (cell) => cell.rumours.offered)
   const beyond = pooled(report.cells, (cell) => cell.rumours.beyondReach)
   assert.ok(offered > 0)

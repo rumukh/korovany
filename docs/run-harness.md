@@ -185,52 +185,10 @@ Over all 360 runs:
   them, each after a full load, and the squad took none. A claim opened 164 times.
 - **Events.** 393 random events and 2 850 located fights, more than double the 3x3's 1 238 now that the budget has
   room for them; 15 threat waves; 10 events won without the player.
-- **Rumours.** 420 of 1 226 offers (34 %) were beyond the player's reach the moment they were offered.
+- **Rumours.** 420 of 1 226 offers (34 %) were beyond the player's reach the moment they were offered. W2-3 offers
+  only rumours the player can meet; see its section below.
 - **Economy.** About 334 gold earned and 9 spent per run. About 96 health healed per run: healers 17 263,
   rations 10 877, loot 3 505, medicine 2 489, events 283.
-
-### W2-3: rumours the player can meet
-
-The same 360 runs on W2-3, which offers a rumour only when the player can meet it from where they stand, and none
-while one is pinned. The board offers 545 rumours instead of 1 226. The road-only estimate above still calls 66 of
-them late (12 %), every one an escort: it times the walk to the square the cart is in when offered, while the board
-times it to the square where the player would meet the cart. Wins, run lengths and gold do not move: 200 wins against
-201, every cell's p10–p50–p90 within a second, about 334 gold a run.
-
-| Policy · faction | Win / defeat / timeout | Late rumours |
-| --- | --- | ---: |
-| beeline · elf | 14 / 26 / 0 | 8 % |
-| beeline · guard | 14 / 24 / 2 | 25 % |
-| beeline · villain | 22 / 18 / 0 | 0 % |
-| cautious · elf | 12 / 16 / 12 | 16 % |
-| cautious · guard | 10 / 16 / 14 | 25 % |
-| cautious · villain | 19 / 9 / 12 | 1 % |
-| duelist · elf | 35 / 5 / 0 | 5 % |
-| duelist · guard | 36 / 4 / 0 | 5 % |
-| duelist · villain | 38 / 2 / 0 | 0 % |
-
-The review's `commit` arm pins the first rumour within 110 m and walks to it. With honest melee, heavy defence, the
-nearest contract, seeded doctrines and a 1 200 s limit, in the engine's window (`regionWindow: 'engine'`), 40 seeds
-per faction:
-
-| Policy | Offers a run | Kept | Broken (while pinned) | Kept : broken | Wins | Median win |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| beeline before | 4.35 | 1.11 | 2.40 (0.68) | 0.46 | 111 / 120 | 156 s |
-| beeline after | 2.11 | 1.32 | 0.28 (0.09) | 4.8 | 113 / 120 | 117 s |
-| cautious before | 8.68 | 1.18 | 6.61 (1.24) | 0.18 | 96 / 120 | 151 s |
-| cautious after | 2.33 | 1.38 | 0.50 (0.19) | 2.8 | 104 / 120 | 118 s |
-
-After W2-3 every faction keeps at least 2.2 rumours for each one it breaks: beeline elf 4.3, guard 4.1, villain 6.1;
-cautious elf 2.2, guard 2.6, villain 3.4. More are kept because the arm no longer holds its one pin on a rumour it
-cannot meet, and a nearby rumour's clock is 48 s rather than 96 s. That is also why its winning runs are shorter.
-
-With every W1-5 arm on as well (`HARNESS_SHIPPED_ARMS` with `rumourPolicy: 'commit'`, 600 s), kept : broken goes
-from 0.36 to 1.39 for `beeline` and from 0.11 to 0.39 for `cautious`, on 52 % and 68 % fewer offers. The guard's and
-the villain's kept rumours paid 8 to 9 gold a run, 2.4 % to 2.9 % of what their runs earned, and the elf's 0.33 to
-0.57 rations a run against the 1.0 to 1.4 it ate. Here the scripted player's own goals take the wheel from a pinned
-rumour: a healer, a contract's fight, the road cart. It also chases a pinned escort from square to square, so 35 of
-the 41 rumours `beeline` broke were escorts. The `cautious` arm meets the same encounters again each time it retreats
-across a square's edge, as the window section above describes.
 
 ## What each arm is worth
 
@@ -320,6 +278,60 @@ and rejected: progress scaling enemy stats as well. Same seeds, the engine's win
 - «Устав дозора» stays distinct. Runs that held it threw 268 waves on closures; runs without it threw none.
 - `tests/runHarnessEscalation.test.ts` holds these in whole runs. With no card taken and the director silent, a
   `progress` run is the `time` run to the frame, and a `progressAll` run is not.
+
+## W2-3: rumours the player can meet
+
+Since W2-3 the board offers a rumour only when the player can meet it from where they stand, within a 25 s walk, and
+none while one is pinned; the README's Rumours section has the rule. The shipped arms leave rumours unchased
+(`rumourPolicy: 'ignore'`), so in the same 360 runs W2-3 changes only what the chronicle is offered: 451 rumours
+instead of 1 268. The road-only estimate in the metrics still calls 67 of them late, 15 % against 39 %, and every one
+is an escort: it times the walk to the square the cart is in when offered, while the board times it to the squares
+where the player would meet the cart. Wins move by one run, 195 against 196, every cell's median win is unchanged,
+and a run still earns about 335 gold.
+
+| Policy · faction | Win / defeat / timeout | Late rumours |
+| --- | --- | ---: |
+| beeline · elf | 11 / 29 / 0 | 13 % |
+| beeline · guard | 16 / 22 / 2 | 24 % |
+| beeline · villain | 20 / 20 / 0 | 0 % |
+| cautious · elf | 10 / 11 / 19 | 20 % |
+| cautious · guard | 12 / 18 / 10 | 33 % |
+| cautious · villain | 17 / 12 / 11 | 3 % |
+| duelist · elf | 36 / 4 / 0 | 9 % |
+| duelist · guard | 36 / 4 / 0 | 2 % |
+| duelist · villain | 37 / 3 / 0 | 3 % |
+
+The review's `commit` arm pins the first rumour within 110 m and walks to it. With honest melee, heavy defence, the
+nearest contract, seeded doctrines and a 1 200 s limit, in the engine's window (`regionWindow: 'engine'`), 80 seeds
+per faction:
+
+| Policy | Offers a run | Kept | Broken (while pinned) | Kept : broken | Wins | Median win |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| beeline before | 4.66 | 1.33 | 2.41 (0.78) | 0.55 | 225 / 240 | 160 s |
+| beeline after | 2.05 | 1.55 | 0.30 (0.13) | 5.2 | 224 / 240 | 121 s |
+| cautious before | 9.03 | 1.31 | 6.80 (1.25) | 0.19 | 187 / 240 | 144 s |
+| cautious after | 2.29 | 1.55 | 0.56 (0.28) | 2.8 | 198 / 240 | 118 s |
+
+Every faction now keeps at least two rumours for each one it breaks: beeline elf 4.2, guard 7.1, villain 4.7;
+cautious elf 2.1, guard 5.0, villain 2.3. More are kept because the arm no longer holds its one pin on a rumour it
+cannot meet, and a nearby rumour's clock is 48 s rather than 96 s. That is also why its winning runs are shorter.
+The constants were chosen on this panel:
+
+| Variant | Beeline kept : broken | Cautious kept : broken (elf / guard / villain) | Kept a run (beeline / cautious) |
+| --- | ---: | --- | --- |
+| walk ×1.0, no slack | 1.8 | 1.1 (0.8 / 1.1 / 1.1) | 1.62 / 1.54 |
+| walk ×1.25 + 8 s | 3.9 | 2.0 (1.6 / 2.4 / 2.1) | 1.74 / 1.72 |
+| walk ×1.5 + 8 s, as shipped | 5.2 | 2.8 (2.1 / 5.0 / 2.3) | 1.55 / 1.55 |
+| without the 25 s ceiling | 4.9 | 2.0 (1.6 / 3.2 / 1.8) | 1.47 / 1.48 |
+| an offer every 6 ticks | 6.0 | 2.4 (1.6 / 3.9 / 2.4) | 1.00 / 0.99 |
+
+With every W1-5 arm on as well (`HARNESS_SHIPPED_ARMS` with `rumourPolicy: 'commit'`, 600 s, 40 seeds per faction),
+kept : broken goes from 0.34 to 1.64 for `beeline` and from 0.11 to 0.50 for `cautious`, on 54 % and 71 % fewer
+offers. The guard's and the villain's kept rumours paid 10 to 12 gold a run, 3.0 % to 3.7 % of what their runs
+earned, and the elf's 0.42 to 0.53 rations a run against the 1.2 to 1.4 it ate. Here the scripted player's own goals
+take the wheel from a pinned rumour: a healer, a contract's fight, the road cart. It also chases a pinned escort from
+square to square, so 36 of the 45 rumours `beeline` broke were escorts. The `cautious` arm meets the same encounters
+again each time it retreats across a square's edge, as the window section above describes.
 
 ## What it still does not model
 

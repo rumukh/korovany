@@ -424,4 +424,6 @@ by each check.
 
 The offer is timed by `estimateWalkSeconds`: the same itinerary, without the per-4 m memo and
 without knowledge, so an offer depends on the player's position and body and nothing else. The
-shortest itinerary never weighs danger, so the fog cannot move it.
+shortest itinerary never weighs danger, so the fog cannot move it. The board asks for no walk
+longer than `RUMOUR_OFFER_WALK_SECONDS`, 25 s at the player's own pace; the card's verdict
+leaves that ceiling out, because it judges a rumour already on the board.

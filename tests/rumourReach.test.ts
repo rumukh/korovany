@@ -10,6 +10,8 @@
  * - a cart rolling toward the player is met where the same cart, for a player behind it, is
  *   not; held still, as a defence of its square, the two players swap, which is what a reach
  *   that ignored the cart's motion would answer;
+ * - a defence 30 s away is refused though its card would say «успеешь», because the board
+ *   asks for no walk longer than 25 s;
  * - a board filled without the filter offers rumours the player cannot meet, which is the
  *   defect the filter removes, and the filtered board never does;
  * - the same square is offered on two legs and refused on none, so the engine times the walk
@@ -49,6 +51,7 @@ import {
   RUMOUR_KEPT_RATIONS,
   RUMOUR_MIN_DEADLINE_TICKS,
   RUMOUR_OFFER_INTERVAL_TICKS,
+  RUMOUR_OFFER_WALK_SECONDS,
   createChronicleCommitmentState,
   estimateRumourReach,
   findRumourCandidates,
@@ -303,17 +306,25 @@ test('a defence or a sabotage gets a clock fitted to the walk, and nothing past 
     return offer === null ? null : offer.deadlineTick - state.tick
   }
   // walk × 1.5 + 8 s is the arrival; a defence then holds three ticks, a sabotage needs one,
-  // and two spare ticks follow, between the 48 s floor and the 96 s ceiling.
+  // and two spare ticks follow, never under the 48 s floor. Nothing past a 25 s walk.
+  assert.equal(RUMOUR_OFFER_WALK_SECONDS, 25, 'the table below is written for a 25 s walk')
   assert.deepEqual(
-    [0, 20, 40, 48, 49].map((walk) => window('defend', walk)),
-    [RUMOUR_MIN_DEADLINE_TICKS, 9, RUMOUR_DEADLINE_TICKS, RUMOUR_DEADLINE_TICKS, null],
+    [0, 20, 25, 26].map((walk) => window('defend', walk)),
+    [RUMOUR_MIN_DEADLINE_TICKS, 9, 10, null],
   )
   assert.deepEqual(
-    [0, 40, 58, 59].map((walk) => window('sabotage', walk)),
-    [RUMOUR_MIN_DEADLINE_TICKS, 11, RUMOUR_DEADLINE_TICKS, null],
+    [0, 20, 25, 26].map((walk) => window('sabotage', walk)),
+    [RUMOUR_MIN_DEADLINE_TICKS, 7, 8, null],
   )
   assert.equal(fitRumourOffer(standingRumour('defend', state.tick), context, () => null), null,
     'a walk that cannot be timed is not offered')
+
+  // Control for the walk's ceiling: a defence 30 s away still fits its 96 s clock, so its card
+  // would say «успеешь», but the board does not ask for a walk that long.
+  const far = standingRumour('defend', state.tick)
+  assert.equal(estimateRumourReach(far, context, () => 30, state.tick), 'yes')
+  assert.equal(fitRumourOffer(far, context, () => 30), null)
+  assert.ok(fitRumourOffer(far, context, () => RUMOUR_OFFER_WALK_SECONDS), 'the ceiling itself is offered')
 })
 
 // ---------------------------------------------------------------------------
