@@ -225,8 +225,12 @@ const STALLS: ReadonlyArray<readonly [number, InputPolicy, CaravanBeats]> = [
 
 test('the harness presses its errand done the way the engine does, and its old stand-in still stalls', () => {
   for (const [seed, policy, caravanBeats] of STALLS) {
+    // Hold W3-2 off in both arms: this regression isolates the errand press from later
+    // combat routing changes and keeps the historical stall as a non-vacuous control.
     const options = {
       ...HARNESS_SHIPPED_ARMS,
+      combatEconomy: 'legacy',
+      meleeDefence: 'heavy',
       caravanBeats,
       seed,
       faction: FACTION,
@@ -271,6 +275,8 @@ test('the beeline runs that stalled now end long before the limit', () => {
   for (const [seed, caravanBeats] of [[142543, 'shipped'], [285085, 'shipped'], [79191, 'off'], [142543, 'off']] as const) {
     const report = runHarness({
       ...HARNESS_SHIPPED_ARMS,
+      combatEconomy: 'legacy',
+      meleeDefence: 'heavy',
       caravanBeats,
       seed,
       faction: FACTION,

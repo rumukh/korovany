@@ -16,6 +16,8 @@ import {
 import {
   EVADE_COOLDOWN,
   EVADE_DISTANCE,
+  EVADE_STAMINA_COST,
+  OFFENCE_STAMINA_REGEN_DELAY,
   createCombatMasteryState,
   isEvadeWindow,
   normalizeCombatMastery,
@@ -689,19 +691,67 @@ test('real keyboard and public touch action spend once, normalize diagonals and 
         engine.setInput('KeyD', true)
         if (touch) engine.evade()
         else engine.onKeyDown(key('KeyC'))
-        assert.equal(engine.stamina, 75)
+        assert.equal(engine.stamina, 100 - EVADE_STAMINA_COST)
         while (engine.combatMastery.evadeRemaining > 0) {
           if (!touch) engine.onKeyDown(key('KeyC', true))
           engine.updatePlayerMelee(1 / hz)
           engine.updatePlayer(1 / hz)
         }
-        assert.equal(engine.stamina, 75, 'an active step must not regenerate or spend twice')
+        assert.equal(
+          engine.stamina,
+          100 - EVADE_STAMINA_COST,
+          'an active step must not regenerate or spend twice',
+        )
         assert.ok(Math.abs(Math.hypot(engine.player.position.x, engine.player.position.z) - EVADE_DISTANCE) < 1e-8)
         assert.ok(Math.abs(engine.player.position.x + engine.player.position.z) < 1e-8)
         assert.equal(engine.melee.bufferRemaining, 0)
       }
     }
   }
+})
+
+test('accepted offence delays regeneration while guard defence and refused actions do not', () => {
+  const melee = fixture('elf').engine
+  melee.stamina = 50
+  melee.attack()
+  melee.updatePlayerMelee(0)
+  assert.equal(melee.combatMastery.staminaRegenDelay, OFFENCE_STAMINA_REGEN_DELAY)
+  melee.updatePlayer(0.3)
+  assert.equal(melee.stamina, 50, 'the first half of the delay regenerated stamina')
+  melee.updatePlayer(0.3)
+  assert.equal(melee.stamina, 50, 'the frame that expires the delay regenerated stamina')
+  melee.updatePlayer(0.1)
+  assert.ok(Math.abs(melee.stamina - 51.6) < 1e-9)
+
+  const bow = fixture('elf').engine
+  bow.stamina = 50
+  bow.bowAiming = true
+  bow.fireArrow = () => {}
+  bow.useAbility()
+  assert.equal(bow.stamina, 35)
+  assert.equal(bow.combatMastery.staminaRegenDelay, OFFENCE_STAMINA_REGEN_DELAY)
+
+  const cleave = fixture('villain').engine
+  cleave.stamina = 50
+  Object.assign(cleave, { cleave() {} })
+  cleave.useAbility()
+  assert.equal(cleave.stamina, 20)
+  assert.equal(cleave.combatMastery.staminaRegenDelay, OFFENCE_STAMINA_REGEN_DELAY)
+
+  const guard = fixture('guard').engine
+  guard.setShield(true)
+  assert.equal(guard.shieldActive, true)
+  assert.equal(guard.combatMastery.staminaRegenDelay, 0)
+
+  const refused = fixture('elf').engine
+  refused.stamina = 14
+  refused.bowAiming = true
+  refused.fireArrow = () => {
+    assert.fail('a refused bow shot fired')
+  }
+  refused.useAbility()
+  assert.equal(refused.stamina, 14)
+  assert.equal(refused.combatMastery.staminaRegenDelay, 0)
 })
 
 test('engine rejects actions during evasion and does not change the honestMelee off arm', () => {
@@ -714,7 +764,7 @@ test('engine rejects actions during evasion and does not change the honestMelee 
   engine.useAbility()
   assert.equal(engine.melee.bufferRemaining, 0)
   assert.equal(engine.shieldActive, false)
-  assert.equal(engine.stamina, 75)
+  assert.equal(engine.stamina, 100 - EVADE_STAMINA_COST)
 
   const legacy = fixture()
   legacy.engine.honestMelee = false
@@ -818,7 +868,7 @@ test('engine evasion uses the normal collision path for walls, water, bridges, s
       engine.setInput('KeyD', true)
       engine.evade()
       while (engine.combatMastery.evadeRemaining > 0) engine.updatePlayer(1 / hz)
-      assert.equal(engine.stamina, 75)
+      assert.equal(engine.stamina, 100 - EVADE_STAMINA_COST)
       assert.ok(engine.combatMastery.evadeCooldown < EVADE_COOLDOWN)
       if (obstacle === 'bridge') assert.ok(Math.abs(engine.player.position.x - 4.2) < 1e-8)
       else assert.ok(engine.player.position.x <= 1.360001, `${obstacle} tunneled at ${hz} Hz`)
@@ -850,7 +900,7 @@ test('the engine releases inputs without renewing defenses or cancelling committ
     assert.equal(isEvadeWindow(engine.combatMastery), false)
     assert.equal(engine.combatMastery.evadeRemaining, remaining)
     assert.equal(engine.combatMastery.evadeCooldown, cooldown)
-    assert.equal(engine.stamina, 75)
+    assert.equal(engine.stamina, 100 - EVADE_STAMINA_COST)
   }
   const { engine } = fixture()
   Object.assign(engine.melee, { beat: 3, phase: 'windup', phaseRemaining: 0.1, bufferRemaining: 0.4 })
@@ -994,7 +1044,10 @@ test('a paid saved finisher expires in legacy mode and resolves its remaining co
     assert.equal(engine.melee.bufferRemaining, 0, 'future legacy swings must not start a new combo')
     engine.evade()
     assert.equal(engine.combatMastery.evadeRemaining, 0.3)
-    assert.equal(engine.stamina, 53)
+    assert.equal(
+      engine.stamina,
+      100 - playerBeatSpec(3).staminaCost - EVADE_STAMINA_COST,
+    )
   }
 })
 

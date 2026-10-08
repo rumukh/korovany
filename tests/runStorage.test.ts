@@ -45,6 +45,7 @@ import {
   advanceCombatMastery,
   beginEvade,
   createCombatMasteryState,
+  delayStaminaRegeneration,
   normalizeCombatMastery,
   serializeCombatMastery,
 } from '../src/game/world/CombatMastery.ts'
@@ -320,11 +321,13 @@ test('combat recovery and paid stamina survive repeated active-run save/load wit
   const save = makeRun()
   const state = createCombatMasteryState()
   const melee = createPlayerMeleeState()
+  delayStaminaRegeneration(state)
   const action = beginEvade(state, {
     stamina: save.player.stamina, body: save.player.body, melee, paused: false, ended: false,
     moveX: 0, moveZ: 0, aimX: 0, aimZ: -1,
   })
-  save.player.stamina -= action.staminaSpent
+  const expectedStamina = save.player.stamina - action.staminaSpent
+  save.player.stamina = expectedStamina
   advanceCombatMastery(state, 0.1)
   save.directorState.combatMastery = serializeCombatMastery(state, melee, 0.3, 0.2, false)
   save.directorState.siblingSentinel = { order: 'hold', destination: 'bridge' }
@@ -334,9 +337,10 @@ test('combat recovery and paid stamina survive repeated active-run save/load wit
     assert.ok(loaded)
     const restored = normalizeCombatMastery(loaded.directorState.combatMastery, save.config.faction)
     assert.equal(restored.rejected, false)
-    assert.equal(loaded.player.stamina, 39)
+    assert.equal(loaded.player.stamina, expectedStamina)
     assert.equal(restored.state.evadeCooldown, state.evadeCooldown)
     assert.equal(restored.state.evadeRemaining, state.evadeRemaining)
+    assert.equal(restored.state.staminaRegenDelay, state.staminaRegenDelay)
     assert.equal(restored.state.evadeProtection, false)
     assert.deepEqual(loaded.directorState.siblingSentinel, { order: 'hold', destination: 'bridge' })
     save.directorState.combatMastery = serializeCombatMastery(

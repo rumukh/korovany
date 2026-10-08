@@ -134,6 +134,7 @@ function actorEngine(value: Record<string, unknown>): object {
     updateActorMorale() {},
     updateCivilianRoutine() {},
     updateActorAction() {},
+    syncActorTelegraphs() {},
     updateChampionAura() {},
     animateActorCharacter() {},
     moveToOrderPost: () => 0,

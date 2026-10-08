@@ -40,7 +40,7 @@ Initial shipping targets:
 
 | Parameter | Value |
 | --- | --- |
-| Stamina cost | 25, paid once when accepted |
+| Stamina cost | 19, paid once when accepted (25 before W3-2) |
 | Action duration | 0.30 seconds |
 | Healthy maximum travel | 4.2 world units |
 | Evasion window | 0.06 through 0.18 seconds after acceptance |
@@ -134,7 +134,7 @@ may provide an explicit comparison arm; it must not add a confusing settings pan
 ## 7. Acceptance
 
 1. Each faction can evade through both keyboard and touch controls. A normal moving
-   step travels no farther than 4.2 units and spends exactly 25 stamina.
+   step travels no farther than 4.2 units and spends exactly 19 stamina.
 2. Early melee beats cancel; the finisher does not. Repeated input, zero stamina,
    missing legs, pause, and death cannot create an illegal step.
 3. Identical contact before, within, and after the window gives hit/avoid/hit.
@@ -165,20 +165,21 @@ tuning changes. Report limitations plainly; do not claim human feel from arithme
 
 ## 8. Delivered rules and integration
 
-Implemented on 2026-09-05. The approved step cost, duration, distance, window and
-cooldown are unchanged. The evasion window includes both 0.06 and 0.18, with only a
-floating-point tolerance at those boundaries. The perfect-guard window expires at
-0.12: contacts before that boundary can qualify; contacts at/after it cannot.
+Implemented on 2026-09-05, then tuned by W3-2 on 2026-10-08. W3-2 changes the step
+cost from 25 to 19; duration, distance, protection window and cooldown stay unchanged.
+The evasion window includes both 0.06 and 0.18, with only a floating-point tolerance
+at those boundaries. The perfect-guard window expires at 0.12: contacts before that
+boundary can qualify; contacts at/after it cannot.
 
 `world\CombatMastery.ts` is the production state machine, defense admission, view
-factory and version-1 save normalizer. `GameEngine.evade()` is the keyboard/touch
+factory and version-2 save normalizer. `GameEngine.evade()` is the keyboard/touch
 entry point. `updatePlayer` integrates the returned displacement through its existing
 `moveCharacter` / `CollisionWorld.resolveMovement` path. Diagonals are normalized;
 no-input steps go backward. The bounded step does not acquire the elf forest speed
 bonus. Existing one-missing-leg and prosthetic multipliers apply; two missing legs
 refuse the step. Jump/vertical physics and the existing bleed update remain live.
 
-Acceptance pays 25 once, cancels only cancellable melee, drops the shield, and blocks
+Acceptance pays 19 once, cancels only cancellable melee, drops the shield, and blocks
 melee/ability starts and idle stamina recovery for the remaining action. Collision
 shortens displacement without refunding cost or extending protection. The existing
 `honestMelee` off arm remains usable, including the same evasion exclusion.
@@ -254,9 +255,11 @@ input without refreshing the mastery action or its cooldown.
 
 ### Save policy
 
-`directorState.combatMastery` version 1 contains remaining evade action/cooldown,
-guard rearm, ability cooldown, legacy attack cooldown and settled melee state.
-Stamina and health remain in the existing player block.
+`directorState.combatMastery` version 2 contains remaining evade action/cooldown,
+offensive stamina-regeneration delay, guard rearm, ability cooldown, legacy attack
+cooldown and settled melee state. Version 1 migrates with no new delay; an absent block
+is still the ordinary old-save case. Stamina and health remain in the existing player
+block.
 
 Saving or releasing input settles transient displacement and protection rather
 than reopening them on continue. Remaining action recovery still elapses before
@@ -344,3 +347,55 @@ guarantee. The embedded-browser rejection from reconnaissance was not re-observe
 naturally here; the final fallback check injected that browser-API failure while
 leaving game input/defense code intact. Combined bridge, squad, atlas, finale, and
 camera observations are recorded separately in the parent milestone.
+
+## 10. W3-2 combat economy and ordinary tells
+
+W3-2 adds a 0.55-second stamina-regeneration delay when a melee beat actually starts,
+an arrow is actually fired or the villain's cleave is accepted. Refused input, bow aim,
+shield raise and perfect guard do not start it. Sprint, shield and evasion retain their
+own drain/no-regeneration rules while the timer elapses on gameplay time. Version-2
+saves retain its exact remainder; repeated continue cannot renew or erase it.
+
+The first candidate was 0.60 seconds; the shipped value is the lower 0.55-second
+candidate. On the final W3-5 arms it produces 3.15, 3.70 and 1.65 starved finisher
+moments per duelist run for elf, guard and villain: 12.1%, 14.3% and 8.1% of
+resolved-plus-starved attempts. A bow at its 0.9-second cadence can regenerate for
+0.35 seconds, 5.6 stamina, so a shot still costs 9.4 net. A cleave still has 2.95
+seconds of its cooldown left after the delay.
+
+Ordinary `meleePlayer` and `meleeActor` actions follow their target for 60% of the
+wind-up and lock a world-space heading for the final 40%. Contact keeps the existing
+forward reach and 0.35 forgiveness, then checks a lane with 0.17 units around the
+target's real collider radius. The existing tick is 0.34 units wide to show that lane.
+Arrows, event props, boar charges and finale signatures keep their own rules.
+
+Scouts, minions, wolves, boars, bears and trolls now receive that pooled tick. Direct
+attacks on the player rank first, then nearest attackers, role severity and stable actor
+id; the pool remains capped at eight. Reduced motion shows the full static tell instead
+of removing information.
+
+The final `HARNESS_SHIPPED_ARMS` panel at 30 Hz and 40 seeds per policy/faction wins
+107/120 duelists against 93/120 under the matched prior combat: elf 38/40, guard 31/40
+and villain 38/40. Beeline moves 49→55 (+5.0 percentage points) and cautious 38→42
+(+3.3). Duelists whiff 15.7–18.2% of their own attacks and avoid 69.4–78.8% of
+telegraphed heavies. The harness still does not model the real evade, shield or bow, so
+the evade-cost decision is arithmetic plus engine and browser evidence, not a harness
+claim.
+
+An isolated Chrome 153 SwiftShader run used Vite port 5194 and CDP port 9794. The elf
+reached its caravan fight naturally at 1366×768; a live minion tick remained readable
+among the cart, squad rings and rain. The villain reached natural combat under
+`prefers-reduced-motion: reduce`: its minion tell tracked through 0.10 seconds and locked
+at 0.1167 seconds of the 0.18-second wind-up, while the full static tick stayed visible.
+
+The guard's generated route could not reach the active minion across that seed's terrain,
+so its check used the repository's labelled graphics-diagnostic staging seam: the real
+production minion, action, collision and renderer, with no health or attack-state rewrite.
+Its heading changed on every sidestep frame through 0.10 seconds, then froze at 0.1167
+seconds. This is controlled readability evidence, not a natural encounter or difficulty
+claim.
+
+At 390×844 the villain view had `scrollWidth === innerWidth`; all thirteen visible touch
+buttons measured 44×44 CSS pixels, and the evade label read `Готов · 19`. JPEG sequences
+and the diagnostic traces are retained in the W3-2 session artifacts outside the
+repository.

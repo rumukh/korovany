@@ -5,7 +5,7 @@ day in #108, after W1-6 found the shipped arms simulating the whole 3x3. Every n
 window and **supersedes the baseline published with #106**, which was measured in the 3x3. Its 239 `crowded`
 contract abandonments, and every figure derived from them, came from the harness rather than the game. On 2026-10-08
 W2-2's caravan spine joined `HARNESS_SHIPPED_ARMS`, and the [baseline](#baseline) was re-published with it. W3-5's
-errand press joined the same day, and the baseline was re-published again.
+errand press and W3-2's combat-economy arm joined the same day, and the baseline was re-published again.
 
 `tests/runHarness.ts` drives whole campaigns headlessly through the real generator, terrain, collision, navigation,
 chronicle, campaign director, combat resolver and actor AI. The gameplay review of 2026-10-06 used it for 330 runs and
@@ -34,6 +34,7 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `caravanBeats` (W2-2) | `off`: before the spine | `shipped`: the caravan spine | `beatPolicy`: `walk`, `ignore` |
 | `rumourSteering` (W2-3) | `cart`: an escort's cart's square | `meeting`: where its cart is met | `cart` |
 | `errand` (W3-5) | `clear`: waits for no hostile within 12 m | `press`: the engine's `E` at the errand | `clear` |
+| `combatEconomy` (W3-2) | `legacy`: tracking, no delay | `shipped`: heading lock, 0.55 s delay | `legacy` |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
   through `selectSquadIntent` and `getSquadFollowSpeed`, fight through the squad's own `selectThreat` pass and the
@@ -78,6 +79,10 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
   `cameraOrbitDistance` behind the heading at `CAMERA_DEFAULT_PITCH`, `CAMERA_BASE_FOV` on 16:9. The fidelity test
   has the engine's own `updateCamera` pose its camera and holds the harness's cone to what the engine's
   `stagingViewer` reads off it.
+- **Combat economy and fast tells (W3-2).** The shipped arm delays stamina regeneration for 0.55 s after a melee
+  beat and resolves ordinary melee against the engine's locked heading lane. Because every ordinary wind-up now has
+  a ground tell, the shipped duelist answers `all` tells rather than only heavies. The matched control restores
+  `combatEconomy: 'legacy'` and `meleeDefence: 'heavy'`; all other arms, seeds and streams stay paired.
 
 ### Walk speed: the harness's 6.4 m/s is not the engine's 8.2
 
@@ -136,6 +141,8 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   its boss was scaled by, and threat waves by trigger (clock or closed objective).
 - **Damage by system** (encounter, finale, random, contract or located event, threat wave, caravan, bleeding) and the
   **system behind each death**.
+- **W3-2 combat:** damage dealt, player melee whiffs, telegraphed heavies avoided, requested finishers that fell back
+  to beat one for lack of stamina, and that starvation count as a share of finisher attempts.
 - **Encounters:** how many the generator fielded, the bodies it spawned, how many stood on the road at once on
   average, and the seconds in which the actor budget refused one. The report's `regionWindow` names the window. Also
   the soldiers commanders called (W1-6), which count on the road once called, the packs that stepped back to make
@@ -155,6 +162,77 @@ KOROVANY_BALANCE_SEEDS=40 node --experimental-strip-types --test tests/runHarnes
 The committed file runs in about 20 s: its sweep takes three seeds per cell and asserts bands that held at forty.
 
 ## Baseline
+
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-2's branch based on
+`04c1c7b`, in the engine's streaming window. The matched control changes only
+`combatEconomy: 'legacy'` and `meleeDefence: 'heavy'`; it reproduces the W3-5 baseline below exactly. This baseline
+supersedes it.
+
+| Policy · side | Outcome | Prior | Win p10–p50–p90 | Taken / dealt | Whiff | Heavy avoid | Starved mean / rate |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| beeline · elf | 19 / 21 / 0 | 11 / 29 / 0 | 88–129–179 s | 209 / 1239 | 23.4 % | 35.8 % | 0.93 / 6.1 % |
+| beeline · guard | 16 / 24 / 0 | 18 / 22 / 0 | 100–130–219 s | 163 / 1493 | 24.0 % | 30.1 % | 3.05 / 16.2 % |
+| beeline · villain | 20 / 20 / 0 | 20 / 20 / 0 | 88–108–155 s | 165 / 1309 | 26.1 % | 44.1 % | 0.80 / 5.5 % |
+| cautious · elf | 18 / 8 / 14 | 11 / 8 / 21 | 88–124–179 s | 190 / 1157 | 23.9 % | 37.7 % | 0.80 / 5.6 % |
+| cautious · guard | 14 / 13 / 13 | 17 / 11 / 12 | 100–138–219 s | 152 / 1481 | 24.6 % | 35.6 % | 2.85 / 15.2 % |
+| cautious · villain | 10 / 12 / 18 | 10 / 12 / 18 | 85–98–130 s | 142 / 1191 | 27.2 % | 48.8 % | 0.50 / 3.7 % |
+| duelist · elf | 38 / 2 / 0 | 34 / 6 / 0 | 103–158–187 s | 134 / 2338 | 17.2 % | 69.4 % | 3.15 / 12.1 % |
+| duelist · guard | 31 / 9 / 0 | 33 / 7 / 0 | 109–140–179 s | 121 / 2505 | 15.7 % | 78.8 % | 3.70 / 14.3 % |
+| duelist · villain | 38 / 2 / 0 | 26 / 14 / 0 | 100–130–167 s | 77 / 2035 | 18.2 % | 76.2 % | 1.65 / 8.1 % |
+
+| Policy · faction | Squad at finale | Drafts p50/max | Tier p50/max | Contracts s/k/a | Road | Late rumours | Carts |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| beeline · elf | 2.8 (38/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.1 | 9 % | 2.05 |
+| beeline · guard | 2.5 (39/40) | 3 / 3 | 4 / 4 | 40 / 36 / 0 | 11.6 | 2 % | 2.15 |
+| beeline · villain | 3.2 (40/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.7 | 7 % | 2.17 |
+| cautious · elf | 2.8 (37/39) | 3 / 3 | 4 / 4 | 39 / 39 / 0 | 10.9 | 13 % | 2.00 |
+| cautious · guard | 2.5 (39/40) | 3 / 3 | 4 / 4 | 40 / 36 / 0 | 11.1 | 3 % | 2.15 |
+| cautious · villain | 3.1 (39/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.9 | 13 % | 2.15 |
+| duelist · elf | 3.1 (40/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 9.8 | 12 % | 2.05 |
+| duelist · guard | 2.5 (37/40) | 3 / 3 | 4 / 4 | 40 / 36 / 0 | 10.5 | 7 % | 2.10 |
+| duelist · villain | 3.3 (40/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.9 | 3 % | 2.20 |
+
+Squad at finale is the mean number of companions standing when the finale opened, recruits included, and in brackets
+the finales at least one of them reached. Tier is the highest threat tier reached; every finale fielded was fought at
+pacing tier 4. Contracts are started, kept and abandoned. Road is the mean generated encounter bodies on the field.
+Carts are the spine's caravans a run met: resolved, lost or escaped.
+
+Over all 360 runs, against the matched prior combat:
+
+- **Wins.** 204 against 180. Duelist recovers from 93 to 107 of 120: elf 38, guard 31 and villain 38. Beeline moves
+  from 49 to 55 (+5.0 percentage points) and cautious from 38 to 42 (+3.3), both inside the guardrail.
+- **Combat economy.** Duelists whiff 15.7–18.2 % of their own beats, avoid 69.4–78.8 % of telegraphed heavies and
+  fall back from a finisher for stamina on 8.1–14.3 % of attempts. Damage taken falls 13.3 % overall,
+  62 444 → 54 161, while damage dealt rises 2.3 %, 576 311 → 589 837.
+- **Run length.** 266 runs end inside three minutes and 45 reach ten minutes.
+- **Deaths.** 111 defeats: the finale 55, located fights 21, road encounters 19, bleeding 14 and random events 2.
+  The finale deals the most damage (22 137), then road encounters (12 421), caravan beats (8 822), located fights
+  (6 409) and contract fights (3 171).
+- **Caravans.** The spine settles 761 carts: 755 resolved and 6 lost, with no staging stall. Its players rob 608 and
+  escort 147. Including road carts and chronicle ambushes, they rob 683 and escort 191; NPCs take 27 after a full
+  load, and the squad none.
+- **Contracts.** 359 runs start their contract: 347 kept, 12 failed and none abandoned. Random events stand down 112
+  times for a contract or caravan, and 58 located fights are handed back to make room.
+- **Encounters and events.** The generator fields 20.0 encounters a run, with 10.9 bodies on the road and 0.05 s of
+  actor-budget refusal. There are 499 random events, 3 467 located fights and 375 threat waves.
+- **Rumours.** 46 of 588 offers (8 %) are beyond reach by the independent road-only estimate.
+- **Economy.** A run earns about 450 gold, spends 16 and heals 86 health: rations 18 576, healers 5 244,
+  medicine 3 524, loot 3 499 and events 196.
+- **Squad.** A companion reaches 349 of 359 finales.
+
+The caravans by side are regenerated from the same shipped cells. Timings are each policy's p50, beeline / cautious /
+duelist:
+
+| Side | Verbs over its 120 runs | Camp closed, p50 | Gate opened, p50 | Recruits, guards thinned |
+| --- | --- | --- | --- | --- |
+| Elves | take 104 (43 %), give 139 (57 %) | 25 / 25 / 26 s | 83 / 87 / 110 s | — |
+| Palace guard | confiscate 105 (42 %), deliver 68 (27 %), release 79 (31 %) | 18 / 18 / 18 s | 88 / 88 / 100 s | — |
+| Villain | plunder 98 (38 %), press 52 (20 %), burn 110 (42 %) | 17 / 17 / 19 s | 82 / 82 / 94 s | 52, 73 |
+
+The camp's offer is taken on the road to the finale in 165 runs and on the other road in 189, the light one in 186
+and the rich one in 168; 6 runs meet no offer. The scripted verb policy is unchanged from the prior baseline.
+
+### Superseded: the W3-5 baseline before W3-2
 
 `HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-5's branch, `main` at
 02059ed with the errand press merged, in the engine's streaming window. **This baseline supersedes the ones measured
@@ -779,11 +857,10 @@ mid-frame. In 14 runs (48 without the spine) the finale's boss spawned in that s
 completion now lands at step 7b, where the stand-in's did, and every finale is fielded at pacing tier 4 (3 without
 the spine), as on 191cda5.
 
-`tests/errandPress.test.ts` holds the stalled runs. Under `press`, each errand completes on the frame its site is
-reached, with a hostile within 12 m, and the beeline runs end long before the limit. Under `clear`, none of them
-completes in 300 s. `tests/runHarnessEscalation.test.ts` keeps `errand: 'clear'` for its fight that never ends. W1-2's
-whole-run test in `tests/runHarnessBalance.test.ts` was checked against its own rule and keeps its seeds: under the
-press the elf on 118786 and the guard on 1 are still the first seeds in the stride on which a raider starts a load.
+`tests/errandPress.test.ts` holds the stalled runs. It fixes W3-2's combat arm at `legacy` in both sides so the
+negative control isolates the errand rule: under `press`, each errand completes on arrival with a hostile within
+12 m; under `clear`, none completes in 300 s. `tests/runHarnessEscalation.test.ts` keeps `errand: 'clear'` for its
+fight that never ends. W1-2's whole-run test is re-seeded when later shipped arms change the road it walks.
 
 ## What it still does not model
 

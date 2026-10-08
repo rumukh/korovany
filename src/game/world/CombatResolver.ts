@@ -76,6 +76,10 @@ export const LARGE_ROLE_KNOCKBACK_SCALE = 0.55
 export const HIGH_KNOCKBACK_THRESHOLD = 2.5
 /** Slack on the contact check, so a target that stepped back mid-swing still gets hit. */
 export const CONTACT_RANGE_FORGIVENESS = 0.35
+/** Share of an ordinary melee wind-up whose heading no longer follows the target. */
+export const ACTOR_MELEE_HEADING_LOCK_SHARE = 0.40
+/** Extra half-width around the target collider in the locked strike lane. */
+export const ACTOR_MELEE_LANE_HALF_WIDTH = 0.17
 export const ARCHER_FIRE_COOLDOWN = 1.8
 /** Poise damage multiplier by attack kind: a cleave rocks composure, a jab does not. */
 export const CLEAVE_POISE_MULTIPLIER = 1.45
@@ -320,6 +324,30 @@ export function canStartAction(actor: {
  */
 export function isWithinContact(distance: number, contactRange: number): boolean {
   return distance <= contactRange + CONTACT_RANGE_FORGIVENESS
+}
+
+export function shouldLockActorMeleeHeading(elapsed: number, duration: number): boolean {
+  return duration > 0 && elapsed >= duration * (1 - ACTOR_MELEE_HEADING_LOCK_SHARE)
+}
+
+export function isWithinLockedMeleeLane(input: {
+  offsetX: number
+  offsetZ: number
+  headingX: number
+  headingZ: number
+  contactRange: number
+  targetRadius: number
+}): boolean {
+  const distance = Math.hypot(input.offsetX, input.offsetZ)
+  if (!isWithinContact(distance, input.contactRange)) return false
+  const headingLength = Math.hypot(input.headingX, input.headingZ)
+  if (headingLength <= 1e-9 || distance <= 1e-9) return true
+  const headingX = input.headingX / headingLength
+  const headingZ = input.headingZ / headingLength
+  const forward = input.offsetX * headingX + input.offsetZ * headingZ
+  if (forward < -input.targetRadius) return false
+  const lateral = Math.abs(input.offsetX * headingZ - input.offsetZ * headingX)
+  return lateral <= input.targetRadius + ACTOR_MELEE_LANE_HALF_WIDTH
 }
 
 /**

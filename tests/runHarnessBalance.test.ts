@@ -262,6 +262,32 @@ test('the sustain arm: wounds bleed, the healer heals, and its placebo heals not
   )
 })
 
+test('W3-2 combat economy makes fast tells actionable and stamina starvation measurable', () => {
+  const shipped = sample({})
+  const legacy = sample({ combatEconomy: 'legacy', meleeDefence: 'heavy' })
+  const fastRoles = ['scout', 'minion', 'wolf', 'boar', 'bear', 'troll']
+  const fastAttempts = (reports: readonly RunReport[]) =>
+    total(reports, (report) =>
+      fastRoles.reduce(
+        (sum, role) => sum + (report.melee.windupClearAttempts[role] ?? 0),
+        0,
+      ),
+    )
+  assert.ok(shipped.every((report) => report.combatEconomy === 'shipped'))
+  assert.ok(legacy.every((report) => report.combatEconomy === 'legacy'))
+  assert.ok(fastAttempts(shipped) > 0, 'the scripted duelist answered no newly visible fast tell')
+  assert.equal(fastAttempts(legacy), 0, 'the pre-W3-2 control could read a fast ground tick')
+  assert.ok(
+    total(shipped, (report) => report.melee.staminaStarvedMoments) >
+      total(legacy, (report) => report.melee.staminaStarvedMoments),
+    'the offensive regeneration delay created no measurable stamina pressure',
+  )
+  assert.ok(
+    shipped.some((report) => report.melee.staminaStarvedRate > 0),
+    'the shipped reports hid every starved finisher',
+  )
+})
+
 test('events are fought: the director and the chronicle put bodies down, the counted model none', () => {
   const fought = sample({ eventModel: 'fought' })
   const counted = sample({ eventModel: 'counted' })
@@ -337,9 +363,14 @@ test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never 
   //
   // W3-5's errand press was checked against the same rule and moves neither: both seeds still
   // start a load under it, with the same loads and losses.
+  //
+  // W3-2 made every ordinary wind-up readable and delayed stamina recovery after offence,
+  // changing which road fights the scripted duelist reaches. With the final 0.55-second
+  // rule and W3-5's press together, the first witnesses are 182138 for the elf (n = 23)
+  // and 142543 for the guard (n = 18), each with one completed load and one cart lost.
   const reports = ([
-    [118786, 'elf'],
-    [1, 'guard'],
+    [182138, 'elf'],
+    [142543, 'guard'],
   ] as const).map(([seed, faction]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,
@@ -452,6 +483,7 @@ test('the arms leave the pinned run alone, and the shipped kit walks the engine\
     commanders: 'inert',
     staging: 'none',
     errand: 'clear',
+    combatEconomy: 'legacy',
   })
   assert.deepEqual(explicit, omitted, 'the declared defaults must be the defaults')
   assert.equal(omitted.balance.companions.started, 0)

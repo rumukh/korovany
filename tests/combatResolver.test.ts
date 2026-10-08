@@ -26,6 +26,8 @@ import { deriveSeed } from '../src/game/random/seed.ts'
 import { BEAST_ROLES, isBeastRole, type ActorRole } from '../src/game/types.ts'
 import { BEAST_PROFILES } from '../src/game/world/Fauna.ts'
 import {
+  ACTOR_MELEE_HEADING_LOCK_SHARE,
+  ACTOR_MELEE_LANE_HALF_WIDTH,
   ARCHER_FIRE_COOLDOWN,
   CONTACT_RANGE_FORGIVENESS,
   MELEE_DAMAGE,
@@ -39,6 +41,7 @@ import {
   canStartAction,
   isLargeBody,
   isWithinContact,
+  isWithinLockedMeleeLane,
   killReward,
   knockbackMagnitude,
   meleeDamageSpec,
@@ -48,6 +51,7 @@ import {
   rollMeleeDamage,
   rollPropBite,
   selectDeathStyle,
+  shouldLockActorMeleeHeading,
   shouldInjurePlayer,
   type CombatActionKind,
   type CombatActor,
@@ -455,6 +459,49 @@ test('contact forgiveness is the slack the engine applied inline', () => {
     comparisons += 1
   }
   assert.ok(comparisons >= 4_000)
+})
+
+test('ordinary melee locks for its final 40 percent and contact follows the locked lane', () => {
+  assert.equal(ACTOR_MELEE_HEADING_LOCK_SHARE, 0.4)
+  assert.equal(ACTOR_MELEE_LANE_HALF_WIDTH, 0.17)
+  assert.equal(shouldLockActorMeleeHeading(0.155, 0.26), false)
+  assert.equal(shouldLockActorMeleeHeading(0.156, 0.26), true)
+
+  const contact = {
+    offsetX: 0,
+    offsetZ: 2.4,
+    headingX: 0,
+    headingZ: 1,
+    contactRange: 2.55,
+    targetRadius: 0.64,
+  }
+  assert.equal(isWithinLockedMeleeLane(contact), true)
+  assert.equal(
+    isWithinLockedMeleeLane({ ...contact, offsetX: 1 }),
+    false,
+    'a lateral clear outside the collider and tick lane must miss',
+  )
+  const trackedLength = Math.hypot(1, contact.offsetZ)
+  assert.equal(
+    isWithinLockedMeleeLane({
+      ...contact,
+      offsetX: 1,
+      headingX: 1 / trackedLength,
+      headingZ: contact.offsetZ / trackedLength,
+    }),
+    true,
+    'the same target still connects under the old live-tracking control',
+  )
+  assert.equal(
+    isWithinLockedMeleeLane({ ...contact, offsetZ: -1 }),
+    false,
+    'the locked strike does not wrap behind its attacker',
+  )
+  assert.equal(
+    isWithinLockedMeleeLane({ ...contact, offsetZ: 3 }),
+    false,
+    'heading lock does not replace the existing forward reach',
+  )
 })
 
 // ---------------------------------------------------------------------------

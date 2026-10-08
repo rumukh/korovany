@@ -17,6 +17,7 @@ import {
   EVADE_STAMINA_COST,
   EVADE_WINDOW_END,
   EVADE_WINDOW_START,
+  OFFENCE_STAMINA_REGEN_DELAY,
   PERFECT_GUARD_COST,
   PERFECT_GUARD_OPENING,
   PERFECT_GUARD_REARM,
@@ -26,6 +27,7 @@ import {
   beginEvade,
   buildCombatMasteryView,
   createCombatMasteryState,
+  delayStaminaRegeneration,
   evadeReadiness,
   isEvadeWindow,
   normalizeCombatMastery,
@@ -62,14 +64,14 @@ function contact(state = createCombatMasteryState()) {
 test('the shipping timings and costs are fixed, with diagonal and backward directions', () => {
   assert.deepEqual(
     [EVADE_STAMINA_COST, EVADE_DURATION, EVADE_DISTANCE, EVADE_WINDOW_START, EVADE_WINDOW_END, EVADE_COOLDOWN],
-    [25, 0.30, 4.2, 0.06, 0.18, 0.85],
+    [19, 0.30, 4.2, 0.06, 0.18, 0.85],
   )
   assert.deepEqual([PERFECT_GUARD_WINDOW, PERFECT_GUARD_COST, PERFECT_GUARD_REARM], [0.12, 12, 0.65])
   for (const yaw of [0, Math.PI / 2, -1.8]) {
     const move = cameraRelativeMovement(new Set(['KeyW', 'KeyD']), yaw)
     const state = createCombatMasteryState()
     const result = beginEvade(state, { ...context(), moveX: move.x, moveZ: move.z })
-    assert.equal(result.staminaSpent, 25)
+    assert.equal(result.staminaSpent, EVADE_STAMINA_COST)
     const travelled = advanceCombatMastery(state, EVADE_DURATION)
     assert.ok(Math.abs(Math.hypot(travelled.x, travelled.z) - 4.2) < 1e-9)
     assert.ok(Math.abs(travelled.x / travelled.z - move.x / move.z) < 1e-9)
@@ -89,7 +91,7 @@ test('leg losses and prostheses affect the step, not its cost or defensive clock
     input.body.leftLeg = leftLeg
     input.body.rightLeg = rightLeg
     const state = createCombatMasteryState()
-    assert.equal(beginEvade(state, input).staminaSpent, 25)
+    assert.equal(beginEvade(state, input).staminaSpent, EVADE_STAMINA_COST)
     assert.equal(state.evadeRemaining, 0.3)
     assert.ok(Math.abs(advanceCombatMastery(state, 0.3).x - 4.2 * scale) < 1e-9)
   }
@@ -115,7 +117,8 @@ test('early beats cancel, but windup and recovery of the finisher remain committ
 
 test('unready actions reject without spending or queuing state', () => {
   for (const [patch, expected] of [
-    [{ stamina: 24.999 }, 'stamina'], [{ stamina: 0 }, 'stamina'], [{ stamina: NaN }, 'stamina'],
+    [{ stamina: EVADE_STAMINA_COST - 0.001 }, 'stamina'],
+    [{ stamina: 0 }, 'stamina'], [{ stamina: NaN }, 'stamina'],
     [{ paused: true }, 'paused'], [{ ended: true }, 'ended'], [{ inputBlocked: true }, 'input'],
   ] as const) {
     const state = createCombatMasteryState()
@@ -253,13 +256,39 @@ test('pause and repeat continue settle protection but preserve paid recovery and
       assert.equal(isEvadeWindow(restored.state), false)
       assert.ok(Math.abs(restored.state.evadeRemaining - 0.2) < 1e-9)
       assert.equal(restored.state.evadeCooldown, state.evadeCooldown)
-      assert.equal(input.stamina - spent, 75)
+      assert.equal(input.stamina - spent, 100 - EVADE_STAMINA_COST)
       block = serializeCombatMastery(restored.state, restored.melee, restored.abilityCooldown, restored.attackCooldown, false)
     }
     settleCombatMastery(state, input.melee)
     assert.equal(isEvadeWindow(state), false)
     assert.deepEqual(advanceCombatMastery(state, 0.1), { x: 0, z: 0, activeSeconds: 0.1 })
   }
+})
+
+test('offence delay advances on gameplay time and survives repeated version-two saves', () => {
+  const state = createCombatMasteryState()
+  const melee = createPlayerMeleeState()
+  delayStaminaRegeneration(state)
+  assert.equal(state.staminaRegenDelay, OFFENCE_STAMINA_REGEN_DELAY)
+  advanceCombatMastery(state, 0.25)
+  assert.ok(Math.abs(state.staminaRegenDelay - 0.30) < 1e-9)
+  delayStaminaRegeneration(state)
+  let block = serializeCombatMastery(state, melee, 0, 0, false)
+  assert.equal(block.version, 2)
+  for (let load = 0; load < 5; load += 1) {
+    const restored = normalizeCombatMastery(JSON.parse(JSON.stringify(block)), 'elf')
+    assert.equal(restored.rejected, false)
+    assert.equal(restored.state.staminaRegenDelay, OFFENCE_STAMINA_REGEN_DELAY)
+    block = serializeCombatMastery(
+      restored.state,
+      restored.melee,
+      restored.abilityCooldown,
+      restored.attackCooldown,
+      false,
+    )
+  }
+  advanceCombatMastery(state, OFFENCE_STAMINA_REGEN_DELAY)
+  assert.equal(state.staminaRegenDelay, 0)
 })
 
 test('a save cannot reopen a guard window or skip/duplicate a committed contact', () => {
@@ -286,12 +315,19 @@ test('a save cannot reopen a guard window or skip/duplicate a committed contact'
 })
 
 test('old absent saves are inactive; malformed present blocks are reported and never protected', () => {
-  assert.equal(normalizeCombatMastery(undefined, 'elf').rejected, false)
+  const absent = normalizeCombatMastery(undefined, 'elf')
+  assert.equal(absent.rejected, false)
+  assert.equal(absent.state.staminaRegenDelay, 0)
   const state = createCombatMasteryState()
   const block = serializeCombatMastery(state, createPlayerMeleeState(), 0, 0, false)
+  const { staminaRegenDelay: _delay, ...versionOne } = block
+  const migrated = normalizeCombatMastery({ ...versionOne, version: 1 }, 'elf')
+  assert.equal(migrated.rejected, false)
+  assert.equal(migrated.state.staminaRegenDelay, 0)
   for (const corrupt of [
     null, {}, { ...block, version: 9 }, { ...block, evadeRemaining: NaN },
     { ...block, evadeCooldown: Infinity }, { ...block, guardRearm: -10 },
+    { ...block, staminaRegenDelay: NaN }, { ...block, staminaRegenDelay: 2 },
     { ...block, evadeCooldown: 100 }, { ...block, melee: { ...block.melee, phase: 'invincible' } },
   ]) {
     const result = normalizeCombatMastery(corrupt, 'elf')
@@ -300,6 +336,7 @@ test('old absent saves are inactive; malformed present blocks are reported and n
     assert.equal(result.state.guardWindow, 0)
     assert.ok(Number.isFinite(result.state.evadeRemaining))
     assert.ok(result.state.evadeCooldown <= 0.85)
+    assert.equal(result.state.staminaRegenDelay, OFFENCE_STAMINA_REGEN_DELAY)
   }
 })
 
@@ -322,7 +359,10 @@ test('the HUD reports committed/stamina/cooldown states and does not advertise a
   const state = createCombatMasteryState()
   const viewInput = { ...input, state, faction: 'guard' as const, shieldActive: false, abilityCooldown: 0, cameraMode: 'drag' as const }
   assert.equal(buildCombatMasteryView(viewInput).evadeReady, true)
-  assert.equal(buildCombatMasteryView({ ...viewInput, stamina: 24 }).evadeReason, 'stamina')
+  assert.equal(
+    buildCombatMasteryView({ ...viewInput, stamina: EVADE_STAMINA_COST - 1 }).evadeReason,
+    'stamina',
+  )
   bufferPlayerMelee(input.melee)
   Object.assign(input.melee, { beat: 3, phase: 'windup', phaseRemaining: playerBeatSpec(3).windup })
   assert.equal(buildCombatMasteryView(viewInput).evadeReason, 'committed')
