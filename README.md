@@ -41,13 +41,15 @@ previously saved effect-off choices. Bloom-off uses the real no-post path.
 Interface preferences do not replace or reset campaign saves.
 On desktop, the right-hand HUD column scrolls rather than slipping under the
 mouse-capture card, and notices start past the zone header instead of under its pause button.
-On phones and other narrow or touch layouts, notices sit at the foot of the left column and
-never cover the vitals, the squad strip or the touch controls. Bursts queue instead of
-stacking: two pieces of news at once on wider screens and one on narrow ones, the most
+On phones, touch screens and windows up to 1000px wide, notices sit at the foot of the left
+column and never cover the vitals, the squad strip or the touch controls. Bursts queue instead of
+stacking: two pieces of news at once on wider screens and one in the left-column lane, the most
 urgent first (danger, then warnings, then rewards, then news), while first-time lines keep
-a place and a pace of their own. How a caravan beat ended is never dropped. Repeats merge
-into one line with a count, and a notice's
-clock stops while the game is paused.
+a place and a pace of their own. How a caravan beat ended is never dropped. An unlocked
+achievement and a find are notices in the same lane rather than a banner and a toast over the
+HUD. Repeats merge into one line with a count, and a notice's
+clock stops while the game is paused. A setting changed in a menu raises no notice; the menu
+already shows it.
 Faction launch cards come first, above seed and starting-gift customization.
 Theme, effect, audio and interface controls are grouped under **Настройки** at
 the bottom of the main menu; the pause dialog keeps its live controls.

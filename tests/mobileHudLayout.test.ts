@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { NARROW_HUD_QUERY } from '../src/game/ui/noticeQueue.ts'
+import { COLUMN_LANE_QUERY } from '../src/game/ui/noticeQueue.ts'
 
 const appCss = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
@@ -31,6 +31,8 @@ function extractRule(source: string, selector: string): string {
 }
 
 const mobileHudCss = extractBlock(appCss, '@media (max-width: 720px), (pointer: coarse) {')
+/** W3-6b — the notice lane's own block: phones, touch screens and windows up to 1000px. */
+const columnLaneCss = extractBlock(appCss, '@media (max-width: 1000px), (pointer: coarse) {')
 const compactCss = readFileSync(new URL('../src/game/ui/compact-combat.css', import.meta.url), 'utf8')
 const finaleCss = readFileSync(new URL('../src/game/ui/FinaleHud.css', import.meta.url), 'utf8')
 
@@ -44,35 +46,37 @@ test('journal compatibility styles leave the upstream compact HUD geometry autho
 })
 
 test('W3-6: narrow notices use the foot of the left column in both modes, in flow, never lifted out of it', () => {
-  const lane = extractRule(mobileHudCss, '.game-screen[data-hud] .left-hud > .notice-stack')
+  const lane = extractRule(columnLaneCss, '.game-screen[data-hud] .left-hud > .notice-stack')
   assert.match(lane, /position:\s*static;/)
   assert.match(lane, /transform:\s*none;/)
   assert.match(lane, /width:\s*100%;/)
   assert.match(lane, /flex:\s*0\s+0\s+auto;/)
-  assert.match(lane, /max-height:\s*max\(4\.5rem,\s*calc\(100% - var\(--mobile-notice-status-reserve\)\)\);/)
+  assert.match(lane, /max-height:\s*max\(4\.5rem,\s*calc\(100% - var\(--notice-status-reserve\)\)\);/)
   assert.match(lane, /overflow-y:\s*auto;/)
   assert.match(lane, /pointer-events:\s*auto;/)
   assert.doesNotMatch(lane, /overflow:\s*hidden|display:\s*none|margin|(?:^|\s)(?:top|bottom|left|right):/)
   // Empty, the lane leaves the column's flow but stays a live region, never `display: none`:
   // a region that only enters the accessibility tree with its content is often not announced.
-  const empty = extractRule(mobileHudCss, '.game-screen[data-hud] .left-hud > .notice-stack:empty')
+  const empty = extractRule(columnLaneCss, '.game-screen[data-hud] .left-hud > .notice-stack:empty')
   assert.match(empty, /position:\s*absolute;/)
   assert.match(empty, /clip-path:\s*inset\(50%\);/)
   assert.match(empty, /pointer-events:\s*none;/)
   assert.doesNotMatch(empty, /display:\s*none|visibility:\s*hidden/)
-  assert.doesNotMatch(mobileHudCss, /notice-stack[^{}]*\{[^}]*display:\s*none/, 'a narrow rule hides the live region')
+  assert.doesNotMatch(columnLaneCss, /notice-stack[^{}]*\{[^}]*display:\s*none/, 'a lane rule hides the live region')
+  // W3-6b — the lane's rules live in its own block, not in the phone-only one.
+  assert.doesNotMatch(mobileHudCss, /notice-stack/)
   assert.match(
-    extractRule(mobileHudCss, '.game-screen[data-hud] .left-hud > .notice-stack .notice'),
+    extractRule(columnLaneCss, '.game-screen[data-hud] .left-hud > .notice-stack .notice'),
     /overflow-wrap:\s*anywhere;/,
   )
   // The mission panel gives up its height while a notice shows; nothing above the lane moves.
   const yielding = extractRule(
-    mobileHudCss, '.game-screen[data-zone] .left-hud:has(> .notice-stack > .notice) > .mission-hud',
+    columnLaneCss, '.game-screen[data-zone] .left-hud:has(> .notice-stack > .notice) > .mission-hud',
   )
   assert.match(yielding, /flex-basis:\s*0;/)
   assert.match(yielding, /min-height:\s*0;/)
-  // A phone at least 780px tall keeps the whole status column; the lane scrolls instead.
-  const tall = extractBlock(appCss, '@media (max-width: 720px) and (min-height: 780px), (pointer: coarse) and (min-height: 780px) {')
+  // A phone or a column-lane window at least 780px tall keeps the whole status column; the lane scrolls instead.
+  const tall = extractBlock(appCss, '@media (max-width: 1000px) and (min-height: 780px), (pointer: coarse) and (min-height: 780px) {')
   assert.match(extractRule(tall, '.game-screen[data-hud] .left-hud:has(> .notice-stack > .notice) > .status-hud'),
     /flex-shrink:\s*0;/)
   const tallLane = extractRule(tall, '.game-screen[data-hud] .left-hud > .notice-stack')
@@ -86,21 +90,25 @@ test('W3-6: narrow notices use the foot of the left column in both modes, in flo
   assert.doesNotMatch(compactMobile, /notice/)
   assert.doesNotMatch(compactMobile, /position:\s*fixed;/)
   assert.doesNotMatch(extractBlock(finaleCss, '@media (max-width: 720px), (pointer: coarse) {'), /notice/)
-  // Wide Compact keeps the GFX-05 and W1-4 lanes.
-  const desktop = extractBlock(compactCss, '@media (min-width: 721px) and (pointer: fine) {')
+  // Wide Compact keeps the GFX-05 and W1-4 lanes, from 1001px now (W3-6b): below that the lane
+  // is the column's foot, and no Compact rule at 721px and up may fight it there.
+  const desktop = extractBlock(compactCss, '@media (min-width: 1001px) and (pointer: fine) {')
   const desktopNotice = extractRule(desktop, '.game-screen[data-hud="compact"] .notice-stack')
   assert.match(desktopNotice, /top:\s*0;/)
-  assert.match(desktopNotice, /width:\s*min\(28rem,\s*calc\(100% - 30rem\)\);/)
+  assert.match(desktopNotice, /width:\s*min\(28rem,\s*calc\(100% - 50rem\)\);/)
   const finaleNotice = extractRule(desktop, '.game-screen[data-hud="compact"]:has(.finale-hud) .notice-stack')
   assert.match(finaleNotice, /position:\s*fixed;/)
   assert.match(finaleNotice, /top:\s*auto;/)
   assert.match(finaleNotice, /bottom:\s*4\.5rem;/)
   assert.match(finaleNotice, /left:\s*1rem;/)
   assert.match(finaleNotice, /width:\s*19rem;/)
-  // The achievement banner still lands over the top of the screen; it must not take the taps
-  // meant for the compass or the pause button under it (measured at 390x844 on main: a tap
-  // on the compass reached the banner).
-  assert.match(extractRule(appCss, '.achievement-banner'), /pointer-events:\s*none;/)
+  assert.doesNotMatch(extractBlock(compactCss, '@media (min-width: 721px) and (pointer: fine) {'), /notice-stack/)
+  assert.doesNotMatch(compactCss, /max-width:\s*1000px[^{]*\{[^}]*notice-stack/)
+  // W3-6b — the achievement banner and the loot toast no longer float over the HUD on their
+  // own timers (measured on main: the banner over the vitals at 390x844 and over the first
+  // notice at 1366x768, the toast over the vitals at 390x844). They are notices in the lane.
+  assert.doesNotMatch(appCss, /\.achievement-banner|\.loot-toast/)
+  assert.doesNotMatch(appSource, /achievement-banner|loot-toast|<AchievementBanner|<LootToast/)
 })
 
 /** The condition of the `@media` block that holds `selector`. */
@@ -112,11 +120,12 @@ function mediaConditionOf(source: string, selector: string): string {
 }
 
 test('W3-6: the App moves the lane with the same media query the CSS lays it out with', () => {
-  assert.equal(mediaConditionOf(appCss, '.left-hud > .notice-stack'), NARROW_HUD_QUERY)
-  assert.equal(mediaConditionOf(appCss, '.touch-controls {'), NARROW_HUD_QUERY)
+  assert.equal(mediaConditionOf(appCss, '.left-hud > .notice-stack'), COLUMN_LANE_QUERY)
+  // The touch controls stay a phone and touch-screen matter; only the lane reaches 1000px.
+  assert.equal(mediaConditionOf(appCss, '.touch-controls {'), '(max-width: 720px), (pointer: coarse)')
   // Control: no desktop block holds the lane, and the lookup does see a different query.
   assert.doesNotMatch(extractBlock(appCss, '@media (min-width: 721px) and (pointer: fine) {'), /notice-stack/)
-  assert.notEqual(mediaConditionOf(appCss, '.left-hud {\n    top: 5.6rem;'), NARROW_HUD_QUERY)
+  assert.notEqual(mediaConditionOf(appCss, '.left-hud {\n    top: 5.6rem;'), COLUMN_LANE_QUERY)
 })
 
 function remValue(source: string, property: string): number {
@@ -377,7 +386,7 @@ const MEASURED_VITALS_BOTTOM_390 = 265
 function narrowRegions(width: number, height: number) {
   const rem = 16
   const screen = extractRule(mobileHudCss, '.game-screen')
-  const lane = extractRule(mobileHudCss, '.game-screen[data-hud] .left-hud > .notice-stack')
+  const lane = extractRule(columnLaneCss, '.game-screen[data-hud] .left-hud > .notice-stack')
   const floorMatch = lane.match(/max-height:\s*max\(([\d.]+)rem,/)
   assert.ok(floorMatch, 'Missing the lane floor')
   const controlsEdge = 0.8 * rem
@@ -389,7 +398,7 @@ function narrowRegions(width: number, height: number) {
   const columnBottom = controlsTop - regionGap
   const columnHeight = columnBottom - columnTop
   // The tallest the lane may grow: `max(floor, 100% - reserve)` of the column.
-  const laneHeight = Math.max(Number(floorMatch[1]) * rem, columnHeight - remValue(screen, '--mobile-notice-status-reserve'))
+  const laneHeight = Math.max(Number(floorMatch[1]) * rem, columnHeight - remValue(extractRule(columnLaneCss, '.game-screen'), '--notice-status-reserve'))
   const column = { left: objectiveLeft, right: width / 2 - halfGap }
   const sideWidth = Math.min(8.4 * rem, Math.max(6.5 * rem, width * 0.34))
   const promptTop = columnBottom - remValue(screen, '--mobile-prompt-height')
@@ -405,7 +414,7 @@ function narrowRegions(width: number, height: number) {
 }
 
 test('W3-6: the narrow notice lane never meets the vitals, the squad strip, a touch control, the prompt or the right column', () => {
-  const reserve = remValue(extractRule(mobileHudCss, '.game-screen'), '--mobile-notice-status-reserve')
+  const reserve = remValue(extractRule(columnLaneCss, '.game-screen'), '--notice-status-reserve')
   // Portrait phones, a coarse-pointer 1366x768 laptop, and a landscape phone where only the floor is left.
   for (const [width, height] of [[390, 844], [375, 667], [360, 640], [320, 568], [1366, 768], [844, 390]]) {
     const regions = narrowRegions(width, height)
@@ -554,9 +563,9 @@ test('desktop: the notice lane starts past the widest identity panel and stops s
     extractRule(compactWideCss, '.game-screen[data-hud="compact"] .notice-stack'),
     /width:\s*min\(28rem,\s*calc\(100% - 50rem\)\);/,
   )
-  // Finale lanes keep their own, more specific placement.
+  // Finale lanes keep their own, more specific placement (from 1001px since W3-6b).
   assert.match(
-    extractRule(compactDesktopCss, '.game-screen[data-hud="compact"]:has(.finale-hud) .notice-stack'),
+    extractRule(compactWideCss, '.game-screen[data-hud="compact"]:has(.finale-hud) .notice-stack'),
     /left:\s*1rem;/,
   )
 
@@ -597,12 +606,78 @@ test('W3-6: at 1366x768 and wider, the notice lanes clear the vitals and squad s
       assert.equal(intersectionArea(rectangle, column), 0, `${mode} ${String(width)}px lane over the left column`)
     }
   }
-  // Negative control, and the residual W3-6 leaves alone: below 1001 px with a fine pointer
-  // the lane is the centred `min(26rem, 100% - 2rem)` from App.css's 1000 px block, and at
-  // 900 px it still reaches over the vitals column.
-  const medium = extractRule(extractBlock(appCss, '@media (max-width: 1000px) {'), '.notice-stack')
-  assert.match(medium, /width:\s*min\(26rem,\s*calc\(100% - 2rem\)\);/)
+  // Negative control: the centred lane the 721–1000 px windows had until W3-6b,
+  // `min(26rem, 100% - 2rem)` from App.css's 1000 px block, reached over this column at 900 px.
   const mediumWidth = Math.min(26 * REM, 900 - 2 * REM)
   const mediumLane = { left: 450 - mediumWidth / 2, right: 450 + mediumWidth / 2, top: 0, bottom: 768 }
   assert.ok(intersectionArea(mediumLane, column) > 0)
+})
+
+// ---------------------------------------------------------------------------
+// W3-6b — 721–1000 px with a fine pointer. Measured on main in Chrome 153: the centred lane
+// (top 5.7rem, `min(26rem, 100% - 2rem)`) ran over the left column at every width, from
+// 18036 px² of the vitals card at 721x768 to 3024 px² at 1000x768, in both HUD modes. There
+// is no free lane between the columns below about 800 px, so these windows use the column
+// lane the phones use: the foot of the left column, below the mission panel.
+// ---------------------------------------------------------------------------
+
+const mediumLaneCss = extractBlock(appCss, '@media (min-width: 721px) and (max-width: 1000px) and (pointer: fine) {')
+
+/** The desktop vitals card with its squad strip, as measured at 721–1000 px: 246 px tall. */
+const MEASURED_MEDIUM_VITALS_HEIGHT = 246
+
+function mediumRegions(width: number, height: number) {
+  const base = extractRule(appCss, '.left-hud')
+  const shortTop = remValue(extractRule(extractBlock(appCss, '@media (max-height: 700px) and (min-width: 721px) {'),
+    '.left-hud'), 'top')
+  const top = height <= 700 ? shortTop : remValue(extractRule(extractBlock(appCss, '@media (max-width: 1000px) {'),
+    '.left-hud'), 'top')
+  const tall = extractRule(appCss, '.game-screen[data-zone] .left-hud:has(.mission-hud)')
+  const heightMatch = tall.match(/height:\s*calc\(100dvh - ([\d.]+)rem\);/)
+  assert.ok(heightMatch, 'Missing the column height')
+  const columnHeight = height - Number(heightMatch[1]) * REM
+  const lane = extractRule(columnLaneCss, '.game-screen[data-hud] .left-hud > .notice-stack')
+  const floorMatch = lane.match(/max-height:\s*max\(([\d.]+)rem,/)
+  assert.ok(floorMatch, 'Missing the lane floor')
+  const reserve = remValue(extractRule(mediumLaneCss, '.game-screen'), '--notice-status-reserve')
+  // The tallest the lane may grow: `max(floor, 100% - reserve)` of the column.
+  const laneHeight = Math.max(Number(floorMatch[1]) * REM, columnHeight - reserve)
+  const left = remValue(base, 'left')
+  const right = left + remValue(base, 'width')
+  const bottom = top + columnHeight
+  return {
+    column: { left, right, top, bottom },
+    lane: { left, right, top: bottom - laneHeight, bottom },
+    vitals: { left, right, top, bottom: top + MEASURED_MEDIUM_VITALS_HEIGHT },
+    // The right column at its widest: 17rem anchored 1rem from the right edge.
+    side: { left: width - REM - 17 * REM, right: width - REM, top: REM, bottom: height },
+    reserve,
+  }
+}
+
+
+test('W3-6b: between 721 and 1000 px the lane is the left column\'s foot and clears the vitals and the right column', () => {
+  // The centred medium lane is gone from both files; the lane is the column lane's.
+  assert.doesNotMatch(extractBlock(appCss, '@media (max-width: 1000px) {'), /notice-stack/)
+  assert.doesNotMatch(compactCss, /max-width:\s*1000px[^{]*\{[^}]*notice-stack/)
+  assert.equal(mediaConditionOf(appCss, '.left-hud > .notice-stack'), '(max-width: 1000px), (pointer: coarse)')
+  // The desktop vitals card is taller than a phone's, so these windows reserve more for it.
+  assert.ok(mediumRegions(900, 768).reserve >= MEASURED_MEDIUM_VITALS_HEIGHT)
+  for (const width of [721, 800, 900, 1000]) {
+    for (const height of [600, 700, 768, 900, 1080]) {
+      const regions = mediumRegions(width, height)
+      const label = `${String(width)}x${String(height)}`
+      assert.equal(intersectionArea(regions.lane, regions.vitals), 0, `${label}: lane over the vitals card`)
+      assert.equal(intersectionArea(regions.lane, regions.side), 0, `${label}: lane over the right column`)
+      assert.ok(regions.lane.top >= regions.column.top && regions.lane.bottom <= regions.column.bottom,
+        `${label}: lane outside the column`)
+      assert.ok(regions.lane.bottom - regions.lane.top >= 4.5 * REM, `${label}: no room for a notice`)
+    }
+  }
+  // Negative control: with the phones' 15rem reserve the lane could reach the vitals card's
+  // squad strip at 721x768, which is why these windows reserve more.
+  const phoneReserve = remValue(extractRule(columnLaneCss, '.game-screen'), '--notice-status-reserve')
+  const regions = mediumRegions(721, 768)
+  const unreserved = { ...regions.lane, top: regions.column.bottom - (regions.column.bottom - regions.column.top - phoneReserve) }
+  assert.ok(intersectionArea(unreserved, regions.vitals) > 0)
 })
