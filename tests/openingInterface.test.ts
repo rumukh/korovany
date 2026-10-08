@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { JsxEmit, ModuleKind, ScriptTarget, transpileModule } from 'typescript'
 import { summarizeAchievements } from '../src/game/achievements.ts'
 import { createDefaultProfile } from '../src/game/run/storage.ts'
-import { FACTION_INFO } from '../src/game/types.ts'
+import { FACTION_INFO, type GameView } from '../src/game/types.ts'
 import { buildInitialGameView } from '../src/game/world/CampaignView.ts'
 import type { CaravanBeatView } from '../src/game/world/CaravanBeats.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
@@ -201,7 +201,75 @@ test('compact field HUD keeps journal access and the paused journal renders full
   assert.match(journal, /class="objective-list"/)
   assert.match(journal, /aria-label="Хроника мира"/)
   assert.match(journal, /class="journal-world"/)
+  assert.match(journal, /Отряд как запас/)
   assert.match(planning, /class="gameplay-layer" inert=""/)
+})
+
+test('event and shop cards disclose squad-only pay and companion medicine targets', () => {
+  const eventView: GameView = {
+    ...gameProps.view,
+    activeEvent: {
+      id: 'priced-event',
+      kind: 'bounty',
+      title: 'Награда за голову',
+      description: 'Отряд уже рядом.',
+      tone: 'warning',
+      payout: {
+        gold: 70,
+        withoutPlayerGold: 35,
+        supplies: 0,
+        heal: 0,
+        damage: 0,
+        companion: false,
+        loot: 'uncommon',
+      },
+    },
+  }
+  const eventMarkup = renderToStaticMarkup(createElement(GameScreen, {
+    ...gameProps,
+    view: eventView,
+  }))
+  const event = eventMarkup.slice(eventMarkup.indexOf('class="hud-card event-banner'))
+  assert.match(event, /Плата: 70 · без тебя 35/)
+
+  const shopView: GameView = {
+    ...gameProps.view,
+    gold: 100,
+    squad: 2,
+    squadCommand: {
+      ...gameProps.view.squadCommand,
+      roster: [
+        {
+          id: 'near',
+          role: 'scout',
+          slot: 0,
+          health: 20,
+          maxHealth: 55,
+          distance: 3,
+          status: 'following',
+        },
+        {
+          id: 'far',
+          role: 'archer',
+          slot: 1,
+          health: 20,
+          maxHealth: 45,
+          distance: 20,
+          status: 'distant',
+        },
+      ],
+    },
+  }
+  const shop = renderToStaticMarkup(createElement(GameScreen, {
+    ...gameProps,
+    view: shopView,
+    activeOverlay: 'shop',
+    simulationPaused: true,
+  }))
+  assert.match(shop, /Кого лечить/)
+  assert.match(shop, /разведчик · 20\/55/)
+  assert.match(shop, /лучник · 20\/45 · далеко/)
+  assert.match(shop, /value="far" disabled=""/)
 })
 
 test('PR B — the camp\'s two caravans are priced on the field and in the journal, and the finale says what it waits on', () => {

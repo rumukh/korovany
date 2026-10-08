@@ -15,7 +15,7 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 - «Грабить корованы» as every run's spine: the camp is a choice between two caravans, the finale waits on two, and
   each side settles a won cart with its own verb from the letter while the market's prices remember it
 - Directional evasion, perfect guard, and drag-to-look when mouse capture is unavailable
-- Follow, Hold, Focus, and Regroup squad orders with a live health and status roster
+- Follow, Hold, Focus, and Regroup squad orders with a live roster, companion care and faction replacements
 - An expedition atlas with road/bridge itineraries and cautious routes; the compass follows the road by default
 - Faction-specific two-phase finale opponents with readable attack tells and recovery windows
 - Dynamic events, escalating threat, pooled loot, run upgrades, achievements, and starting boons
@@ -75,7 +75,7 @@ faction-colored cloth, warm skin, neutral steel, and dark leather remain distinc
 | Right click / `R` / touch ability | Hold to aim the elf's bow or raise the guard's shield; villain uses the rush |
 | `E` / touch `E` | Interact |
 | `Q` / touch `Q` | Toggle squad Follow / Hold |
-| `T` / squad HUD / touch `T` | Open squad orders: Follow, Hold, Focus, Regroup (pauses play) |
+| `T` / squad HUD / touch `T` | Open squad orders and spend a ration on a nearby wounded companion (pauses play) |
 | `M` / minimap / compass / touch map | Open the paused expedition atlas |
 | `J` / **Поход** | Open the paused journal: contracts, objectives, doctrines, rumours, and chronicle |
 | `F` / pause-menu save | Save |
@@ -111,6 +111,25 @@ Faction launch is available before optional run configuration. Expand **Наст
 to change the seed or starting boon; graphics and audio controls live under **Настройки**.
 The field HUD keeps immediate vitals and navigation visible. Open **Поход** for the
 full campaign details, or **Отряд** for individual companion health and orders.
+
+## Squad care and replacements
+
+Companions keep their wounds across the run, but they are no longer disposable. In **Отряд**, one
+existing ration heals one chosen companion within 14 m for 35 HP. Field medicine at the shop may
+treat the player or a nearby companion for 55 HP at the same price. A recovery site has two
+treatments for the whole run; each restores the player and tends every wounded companion nearby.
+Its prompt always shows the treatments left, and an exhausted healer still lets `E` complete an
+errand sited there.
+
+The squad cap is four, shared with the villain's «Забрить в войско». Elves gain a partisan after
+rescuing a captive or defending the wooden houses. The palace guard earns a soldier by personally
+delivering or confiscating a caravan order. The villain can replace one casualty per run by
+returning to the old fort and calling a muster. Nobody sells soldiers for gold.
+
+A fight pays full personal gold only after the player contributes a hit, receives or blocks one, or
+uses its interaction. If the squad settles it alone, the event and contract gold are each halved and
+the warning says so. Choice cards disclose the condition before commitment:
+`Плата: 120 · без тебя 60`.
 
 ## Contracts
 

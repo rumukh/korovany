@@ -2179,6 +2179,8 @@ export function contractPayout(
   const reward = WORLD_EVENT_REWARDS[template.eventKind]
   return {
     gold: template.reward + reward.gold,
+    withoutPlayerGold:
+      Math.floor(template.reward * 0.5) + Math.floor(reward.gold * 0.5),
     supplies: 0,
     heal: reward.heal,
     damage: eventDamageGain(reward, championBonusSoFar),
@@ -2720,4 +2722,3 @@ export function serializeCampaignContractState(
     contracts: state.contracts.map((entry) => ({ ...entry })),
   }
 }
-

@@ -27,7 +27,10 @@ import { registerHooks } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import * as THREE from 'three'
-import { HEALER_TREATED_NOTICE, describeObjectiveCompleted } from '../src/game/content/gameCopy.ts'
+import {
+  describeObjectiveCompleted,
+  describeRecoveryTreated,
+} from '../src/game/content/gameCopy.ts'
 import { resolveDoctrineEffects } from '../src/game/run/doctrine.ts'
 import { createHealthyBody, type Faction } from '../src/game/types.ts'
 import {
@@ -41,6 +44,7 @@ import { createChronicleRegions } from '../src/game/world/Chronicle.ts'
 import { createFinaleIdentity, createFinaleState } from '../src/game/world/FinaleDirector.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
+import { createSquadResourceState } from '../src/game/world/SquadResource.ts'
 import type { FactionObjectiveNode } from '../src/game/world/worldTypes.ts'
 import {
   HARNESS_ERRAND_CLEAR_RADIUS,
@@ -115,6 +119,7 @@ function fixture(options: { offset?: number; pinContract?: boolean } = {}) {
   const caravan = new THREE.Group()
   caravan.position.set(site.x + 400, 0, site.z + 400)
   const notices: string[] = []
+  const noticeOrigins: Array<string | undefined> = []
   const engine: object = Object.assign(Object.create(GameEngine.prototype), {
     faction: FACTION,
     generatedBlueprint: BLUEPRINT,
@@ -133,6 +138,7 @@ function fixture(options: { offset?: number; pinContract?: boolean } = {}) {
     stamina: 20,
     maxStamina: 100,
     body: createHealthyBody(),
+    squadResource: createSquadResourceState([HEALER]),
     generatedSupplyCount: 0,
     threatTier: 1,
     doctrineEffects: resolveDoctrineEffects([]),
@@ -140,15 +146,55 @@ function fixture(options: { offset?: number; pinContract?: boolean } = {}) {
     chronicleRegions: createChronicleRegions(BLUEPRINT),
     chronicleRazedSiteIds: new Set<string>(),
     finale: createFinaleState(createFinaleIdentity(BLUEPRINT, FACTION)),
-    callbacks: { onNotice: (message: string) => notices.push(message) },
+    callbacks: {
+      onNotice: (message: string, _tone?: string, origin?: string) => {
+        notices.push(message)
+        noticeOrigins.push(origin)
+      },
+    },
     achievements: { recordObjectiveCompleted() {}, recordGoldEarned() {} },
     resumeAudio() {},
     emitView() {},
     playSound() {},
+    drawActorHealthBar() {},
   })
+
   const errandDone = () => objectives.find((objective) => objective.id === ERRAND.id)?.done === true
-  return { engine, world, objectives, archer, player, notices, errandDone }
+  return { engine, world, objectives, archer, player, notices, noticeOrigins, errandDone }
 }
+
+test('one recovery treatment tends nearby companions but not distant ones', () => {
+  const value = fixture()
+  const near = {
+    id: 'squad:guard:test:near',
+    role: 'soldier',
+    allegiance: 'guard',
+    alive: true,
+    hp: 10,
+    maxHp: 70,
+    hostileToPlayer: false,
+    squadEligible: true,
+    budgetCategory: 'squad',
+    eventOwnerId: null,
+    aiMode: 'normal',
+    mesh: new THREE.Group(),
+  }
+  near.mesh.position.copy(value.player.position).add(new THREE.Vector3(2, 0, 0))
+  const far = { ...near, id: 'squad:guard:test:far', hp: 10, mesh: new THREE.Group() }
+  far.mesh.position.copy(value.player.position).add(new THREE.Vector3(15, 0, 0))
+  Reflect.set(value.engine, 'actors', [value.archer, near, far])
+  try {
+    invoke(value.engine, 'interact')
+    assert.equal(near.hp, 50)
+    assert.equal(far.hp, 10)
+    const resource = Reflect.get(value.engine, 'squadResource') as ReturnType<typeof createSquadResourceState>
+    assert.equal(resource.recoveryTreatments[HEALER], 1)
+    assert.match(value.notices[0], /Отряд рядом подлатали: 1/)
+    assert.equal(value.noticeOrigins[0], 'outcome')
+  } finally {
+    value.world.dispose()
+  }
+})
 
 test('the engine finishes the guard\'s errand at the healer on E, with an archer 10 m away', () => {
   assert.equal(ERRAND.kind, 'interact')
@@ -160,16 +206,37 @@ test('the engine finishes the guard\'s errand at the healer on E, with an archer
     const away = value.archer.mesh.position.distanceTo(value.player.position)
     assert.ok(away < HARNESS_ERRAND_CLEAR_RADIUS, `the archer is ${away} m away`)
     // The prompt is up: the errand's own site is the healer, so it offers the healer's verb.
-    assert.match(invoke<string>(value.engine, 'getGeneratedPrompt'), /^\[E\] Вылечиться/)
+    assert.match(
+      invoke<string>(value.engine, 'getGeneratedPrompt'),
+      /^\[E\] Осмотреть и вылечить пользователя · лечений 2\/2$/,
+    )
 
     invoke(value.engine, 'interact')
     assert.equal(value.errandDone(), true, 'one press finished the errand')
     assert.equal(Reflect.get(value.engine, 'health'), 90, 'and healed, on the same press')
-    assert.ok(value.notices.includes(HEALER_TREATED_NOTICE), value.notices.join(' | '))
+    assert.ok(value.notices.includes(describeRecoveryTreated(true, 0, 1)), value.notices.join(' | '))
     const errandText = value.objectives.find((objective) => objective.id === ERRAND.id)?.text ?? ''
     assert.ok(value.notices.includes(describeObjectiveCompleted(errandText)), value.notices.join(' | '))
     // The archer was never consulted, and it is still there.
     assert.equal(value.archer.alive, true)
+  } finally {
+    value.world.dispose()
+  }
+})
+
+test('an exhausted healer still finishes its errand and says every effect of E', () => {
+  const value = fixture()
+  try {
+    const resource = Reflect.get(value.engine, 'squadResource') as ReturnType<typeof createSquadResourceState>
+    resource.recoveryTreatments[HEALER] = 0
+    assert.equal(
+      invoke<string>(value.engine, 'getGeneratedPrompt'),
+      '[E] Осмотреть · лекарь занят · лечений 0/2',
+    )
+    invoke(value.engine, 'interact')
+    assert.equal(value.errandDone(), true)
+    assert.equal(Reflect.get(value.engine, 'health'), 50)
+    assert.equal(resource.recoveryTreatments[HEALER], 0)
   } finally {
     value.world.dispose()
   }
@@ -233,6 +300,7 @@ test('the harness presses its errand done the way the engine does, and its old s
   for (const [seed, policy, caravanBeats] of STALLS) {
     const options = {
       ...HARNESS_SHIPPED_ARMS,
+      squadResource: 'legacy',
       caravanBeats,
       seed,
       faction: FACTION,

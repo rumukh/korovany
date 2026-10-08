@@ -33,6 +33,10 @@
   font-weight: 600;
 }
 
+.choice-price-extra {
+  color: var(--cp-text-muted);
+}
+
 .choice-price-route {
   color: var(--cp-text-muted);
 }

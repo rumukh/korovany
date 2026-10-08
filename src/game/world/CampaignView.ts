@@ -150,6 +150,11 @@ import {
   type SquadCommandView,
 } from './SquadCommand.ts'
 import {
+  buildSquadResourceView,
+  restoreSquadResourceState,
+  type SquadResourceView,
+} from './SquadResource.ts'
+import {
   FINALE_ENGAGE_RADIUS,
   createFinaleIdentity,
   finaleGarrisonThinTarget,
@@ -283,6 +288,7 @@ export interface LiveViewInput {
   shopPriceMultiplier: number
   squad: number
   squadCommand: SquadCommandView
+  squadResource: SquadResourceView
   elapsed: number
   pointerLocked: boolean
   paused: boolean
@@ -788,6 +794,13 @@ export function buildGameView(input: LiveViewInput): GameView {
       anchor: input.squadCommand.anchor ?? { x: input.playerX, z: input.playerZ, heading: input.playerHeading },
       focusTargetId: input.squadCommand.focusTargetId,
     }, input.squadCommand.roster, input.squadCommand.targets, input.squadCommand.focus),
+    squadResource: {
+      ...input.squadResource,
+      reinforcements: { ...input.squadResource.reinforcements },
+      villainMuster: input.squadResource.villainMuster
+        ? { ...input.squadResource.villainMuster }
+        : null,
+    },
     elapsed: input.elapsed,
     pointerLocked: input.pointerLocked,
     paused: input.paused,
@@ -897,6 +910,35 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
   const squadCommand = buildSquadCommandView(squadState,
     buildSavedSquadRoster(restored?.companions ?? [], squadState, config.faction,
       { x: position[0], z: position[2] }))
+  const recoverySiteIds = blueprint.sites
+    .filter((site) => site.kind === 'recovery')
+    .map((site) => String(site.id))
+  const squadResourceState = restoreSquadResourceState(
+    restored?.directorState.squadResource,
+    {
+      recoverySiteIds,
+      companions: restored?.companions ?? [],
+      faction: config.faction,
+      startingSquadVersion: restored?.directorState.startingSquadVersion,
+      bounds: blueprint.bounds,
+    },
+  ).state
+  const musterRegion = blueprint.regions.find((region) => region.id === startSite.regionId)
+  const squadResource = buildSquadResourceView({
+    state: squadResourceState,
+    rations: Math.max(0, Math.floor(serializableNumber(
+      restored?.directorState.supplyCount,
+      boon.startingSupplyCount,
+    ))),
+    playerHealth: health,
+    playerMaxHealth: maxHealth,
+    faction: config.faction,
+    livingSquad: squadCommand.roster.length,
+    musterSiteId: String(startSite.id),
+    musterRegionLabel: musterRegion
+      ? formatRegionGridLabel(musterRegion.coordinate.x, musterRegion.coordinate.y)
+      : '??',
+  })
   const finaleIdentity = createFinaleIdentity(blueprint, config.faction)
   const finaleDelta = restored?.regionDeltas[finaleIdentity.regionId]
   const finaleState = normalizeFinaleState(restored?.directorState.finale, finaleIdentity, {
@@ -984,7 +1026,7 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     player: playerPoint,
     heading,
     expedition,
-    squadSize: squadCommand.roster.length,
+    squadSize: squadCommand.roster.length + squadResourceState.pending.length,
     garrisonThinned: beatState?.garrisonThinned ?? false,
     // Nothing stands in the world before the engine's first frame, so only the finale's own
     // state can stop a burn from sending a guard away.
@@ -1048,6 +1090,7 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     shopPriceMultiplier: 1,
     squad: squadCommand.roster.length,
     squadCommand,
+    squadResource,
     elapsed,
     pointerLocked: false,
     paused: false,

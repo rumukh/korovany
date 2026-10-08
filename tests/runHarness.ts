@@ -359,6 +359,25 @@ import {
   selectSquadIntent,
   type SquadCommandState,
 } from '../src/game/world/SquadCommand.ts'
+import {
+  MEDICINE_COMPANION_HEAL,
+  RATION_COMPANION_HEAL,
+  RECOVERY_COMPANION_HEAL,
+  SQUAD_CREDIT_REPORT_DISTANCE,
+  SQUAD_RESOURCE_CAP,
+  canTreatCompanion,
+  canVillainMuster,
+  consumeRecoveryTreatment,
+  createSquadResourceState,
+  healCompanionHealth,
+  queueSquadReinforcement,
+  recordImmediateSquadReinforcement,
+  recordSquadCasualty,
+  recoveryTreatmentsRemaining,
+  removePendingSquadReinforcement,
+  squadRewardCredit,
+  type SquadReinforcementSource,
+} from '../src/game/world/SquadResource.ts'
 import { chooseGeneratedInteraction } from '../src/game/world/GeneratedInteraction.ts'
 import { missingPlayerLegs, playerLegMobility } from '../src/game/world/CombatMastery.ts'
 import {
@@ -794,6 +813,18 @@ export type DoctrinePolicy = 'off' | 'none' | 'seeded' | 'first'
  *   won the fight" from "the squad stood where the blows were going to land".
  */
 export type SquadPolicy = 'off' | 'starting' | 'decoy'
+
+/** W3-1 — matched component arms plus the complete managed policy. */
+export type SquadResourceModel =
+  | 'legacy'
+  | 'care'
+  | 'recoveryLimit'
+  | 'rescueFactionOnly'
+  | 'guardOrderOnly'
+  | 'replenishment'
+  | 'credit'
+  | 'managedUnreserved'
+  | 'managed'
 
 /**
  * W1-5 — the body and the purse: wounds, bleeding, rations, healers, the trader's
@@ -1368,6 +1399,19 @@ export interface SustainMetrics {
   healingWithheld: number
 }
 
+export interface SquadResourceMetrics {
+  companionHealed: number
+  companionHealedBySource: Record<string, number>
+  companionTreatmentsBySource: Record<string, number>
+  recoveryUses: number
+  replacementsBySource: Record<SquadReinforcementSource, number>
+  reducedSettlements: number
+  contributedBeyond40: number
+  goldWithheld: number
+  attendedGuardDeliveries: number
+  attendedGuardConfiscations: number
+}
+
 /** W1-5 — the director's fights. */
 export interface EventMetrics {
   randomStarted: Record<string, number>
@@ -1536,6 +1580,7 @@ export interface BalanceMetrics {
   deathSystem: string | null
   companions: CompanionMetrics
   sustain: SustainMetrics
+  squadResource: SquadResourceMetrics
   events: EventMetrics
   caravans: CaravanMetrics
   contracts: ContractBalanceMetrics
@@ -1568,6 +1613,7 @@ export interface RunReport {
   doctrinePolicy: DoctrinePolicy
   /** W1-5 — the arms below default to the pre-W1-5 run every pinned number describes. */
   squad: SquadPolicy
+  squadResource: SquadResourceModel
   sustain: SustainPolicy
   eventModel: EventModel
   eventPolicy: EventPolicy
@@ -1729,6 +1775,8 @@ export interface RunOptions {
   combatNoiseSalt?: number
   /** W1-5 — defaults to `off`: nobody walks with the player. */
   squad?: SquadPolicy
+  /** W3-1 — defaults to `legacy`; `managed` is companion care, replacements and half pay. */
+  squadResource?: SquadResourceModel
   /** W1-5 — defaults to `off`: no wounds, no healing, no gold. */
   sustain?: SustainPolicy
   /** W1-5 — defaults to `counted`: events are counted, not fought. */
@@ -1849,6 +1897,9 @@ export interface RunOptions {
  * left of its packs, not the packs whole again. `encounterMemory: 'fresh'` is the run before it.
  * `streaming: 'held'` is W3-4's hold on the window's centre: turning back into the square just
  * left does not recentre the window for 16 m. `streaming: 'instant'` is the run before it.
+ *
+ * `squadResource: 'managed'` is W3-1: bounded companion care, faction replacements and
+ * half personal gold when the squad settles a fight without a player contribution.
  */
 export const HARNESS_SHIPPED_ARMS = {
   meleeModel: 'honest',
@@ -1858,6 +1909,7 @@ export const HARNESS_SHIPPED_ARMS = {
   contractPolicy: 'nearest',
   doctrinePolicy: 'seeded',
   squad: 'starting',
+  squadResource: 'managed',
   sustain: 'shipped',
   eventModel: 'fought',
   eventPolicy: 'ignore',
@@ -2088,6 +2140,18 @@ export function runHarness(options: RunOptions): RunReport {
   const doctrinePolicy = options.doctrinePolicy ?? 'off'
   // W1-5 — every new arm defaults to the run the pinned numbers describe.
   const squadPolicy = options.squad ?? 'off'
+  const squadResourceModel = options.squadResource ?? 'legacy'
+  const completeSquadResource = squadResourceModel === 'managed' ||
+    squadResourceModel === 'managedUnreserved'
+  const companionCareOn = completeSquadResource || squadResourceModel === 'care'
+  const recoveryLimitOn = completeSquadResource || squadResourceModel === 'recoveryLimit'
+  const replenishmentOn = completeSquadResource || squadResourceModel === 'replenishment'
+  const factionRescueOn = replenishmentOn || squadResourceModel === 'rescueFactionOnly'
+  const guardOrderReinforcementOn =
+    replenishmentOn || squadResourceModel === 'guardOrderOnly'
+  const pendingReinforcementsOn = replenishmentOn || guardOrderReinforcementOn
+  const honestCreditOn = completeSquadResource || squadResourceModel === 'credit'
+  const rationReserveOn = squadResourceModel === 'managed'
   const sustainPolicy = options.sustain ?? 'off'
   const eventModel = options.eventModel ?? 'counted'
   const eventPolicy = options.eventPolicy ?? 'ignore'
@@ -2467,6 +2531,21 @@ export function runHarness(options: RunOptions): RunReport {
     kills: 0,
     damageTaken: 0,
   }
+  const squadResourceState = createSquadResourceState(
+    blueprint.sites.filter((site) => site.kind === 'recovery').map((site) => String(site.id)),
+  )
+  const squadResourceMetrics: SquadResourceMetrics = {
+    companionHealed: 0,
+    companionHealedBySource: {},
+    companionTreatmentsBySource: {},
+    recoveryUses: 0,
+    replacementsBySource: { ...squadResourceState.reinforcements },
+    reducedSettlements: 0,
+    contributedBeyond40: 0,
+    goldWithheld: 0,
+    attendedGuardDeliveries: 0,
+    attendedGuardConfiscations: 0,
+  }
   const sustainMetrics: SustainMetrics = {
     goldEarned: 0,
     goldBySource: {},
@@ -2776,6 +2855,91 @@ export function runHarness(options: RunOptions): RunReport {
     }
     actor.squadSlot = allocateSquadSlot(actor.id, occupied)
   }
+  const nearbyWoundedCompanions = (): HarnessActor[] =>
+    companions()
+      .filter((actor) => canTreatCompanion({
+        health: actor.hp,
+        maxHealth: actor.maxHp,
+        distance: Math.hypot(actor.x - player.x, actor.z - player.z),
+      }))
+      .sort((left, right) =>
+        left.hp / left.maxHp - right.hp / right.maxHp ||
+        left.id.localeCompare(right.id))
+  const healCompanion = (actor: HarnessActor, amount: number, source: string): number => {
+    const treatment = healCompanionHealth(actor.hp, actor.maxHp, amount)
+    if (!healingOn) {
+      sustainMetrics.healingWithheld += treatment.restored
+      return 0
+    }
+    actor.hp = treatment.health
+    squadResourceMetrics.companionHealed += treatment.restored
+    bump(squadResourceMetrics.companionHealedBySource, source, treatment.restored)
+    if (treatment.restored > 0) {
+      bump(squadResourceMetrics.companionTreatmentsBySource, source)
+    }
+    return treatment.restored
+  }
+  const materializePendingReinforcements = (): void => {
+    for (const pending of [...squadResourceState.pending]) {
+      if (!squadOn || !reserveSlots('squad', 1)) continue
+      const actor = spawnEngineActor({
+        allegiance: options.faction,
+        role: pending.role,
+        x: pending.position.x,
+        z: pending.position.z,
+        system: 'squad',
+        budget: 'squad',
+        hostileToPlayer: false,
+        squadEligible: true,
+      })
+      actor.id = pending.id
+      actor.inert = squadPolicy === 'decoy'
+      assignSquadSlot(actor)
+      removePendingSquadReinforcement(squadResourceState, pending.id)
+      companionMetrics.recruited += 1
+    }
+  }
+  const earnReplacement = (
+    source: 'elfDefense' | 'guardOrder' | 'villainMuster' | 'villainPress',
+    role: ActorRole,
+    at: PlanPoint,
+    id: string,
+  ): boolean => {
+    const enabled = source === 'guardOrder'
+      ? guardOrderReinforcementOn
+      : replenishmentOn
+    if (!enabled || !squadOn) return false
+    if (source === 'villainPress') {
+      if (companions().length + squadResourceState.pending.length >= SQUAD_RESOURCE_CAP) {
+        return false
+      }
+      if (!reserveSlots('squad', 1)) return false
+      const actor = spawnEngineActor({
+        allegiance: options.faction,
+        role,
+        x: at.x,
+        z: at.z,
+        system: 'squad',
+        budget: 'squad',
+        hostileToPlayer: false,
+        squadEligible: true,
+      })
+      actor.id = id
+      actor.inert = squadPolicy === 'decoy'
+      assignSquadSlot(actor)
+      companionMetrics.recruited += 1
+      recordImmediateSquadReinforcement(squadResourceState, source)
+      return true
+    }
+    if (!queueSquadReinforcement(squadResourceState, companions().length, {
+      id,
+      source,
+      role,
+      position: { x: at.x, z: at.z },
+    })) return false
+    materializePendingReinforcements()
+    return true
+  }
   /** `isMovementPathClear`, against this file's collision world. */
   const pathClear = (x0: number, z0: number, x1: number, z1: number, radius: number): boolean => {
     const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 0.32))
@@ -3053,6 +3217,29 @@ export function runHarness(options: RunOptions): RunReport {
     if (site.kind === 'recovery') {
       if (serviceRazed(site)) return
       sustainMetrics.healerVisits += 1
+      if (companionCareOn || recoveryLimitOn) {
+        const companionsToTreat = companionCareOn ? nearbyWoundedCompanions() : []
+        const playerNeedsTreatment =
+          player.health < player.maxHealth || player.bleeding > 0 || hasWounds()
+        if (
+          (!recoveryLimitOn ||
+            recoveryTreatmentsRemaining(squadResourceState, site.id) > 0) &&
+          (playerNeedsTreatment || companionsToTreat.length > 0) &&
+          (!recoveryLimitOn || consumeRecoveryTreatment(squadResourceState, site.id))
+        ) {
+          if (recoveryLimitOn) squadResourceMetrics.recoveryUses += 1
+          if (playerNeedsTreatment) {
+            heal(HARNESS_HEALER_HEAL, 'healer')
+            if (healingOn) player.stamina = player.maxStamina
+            stopBleeding('all')
+            healWounds()
+          }
+          for (const companion of companionsToTreat) {
+            healCompanion(companion, RECOVERY_COMPANION_HEAL, 'recovery')
+          }
+        }
+        return
+      }
       heal(HARNESS_HEALER_HEAL, 'healer')
       if (healingOn) player.stamina = player.maxStamina
       stopBleeding('all')
@@ -3063,14 +3250,18 @@ export function runHarness(options: RunOptions): RunReport {
       if (serviceRazed(site)) return
       sustainMetrics.traderVisits += 1
       const medicine = priceAt(site, MEDICINE)
-      if (
-        (player.health < player.maxHealth || player.bleeding > 0 || hasWounds()) &&
-        player.gold >= medicine
-      ) {
+      const playerNeedsMedicine =
+        player.health < player.maxHealth || player.bleeding > 0 || hasWounds()
+      const companion = companionCareOn ? nearbyWoundedCompanions()[0] : null
+      if ((playerNeedsMedicine || companion) && player.gold >= medicine) {
         spendGold(medicine, 'medicine')
-        heal(HARNESS_MEDICINE_HEAL, 'medicine')
-        stopBleeding('all')
-        healWounds()
+        if (playerNeedsMedicine) {
+          heal(HARNESS_MEDICINE_HEAL, 'medicine')
+          stopBleeding('all')
+          healWounds()
+        } else if (companion) {
+          healCompanion(companion, MEDICINE_COMPANION_HEAL, 'medicine')
+        }
       }
       for (const [item, parts] of [
         [LEG, ['leftLeg', 'rightLeg']],
@@ -3178,6 +3369,15 @@ export function runHarness(options: RunOptions): RunReport {
     )
     const actor = lead >= 0 ? live.actors[lead] : undefined
     return actor ? { x: actor.x, z: actor.z } : live.plan.marker
+  }
+  const earnFightGold = (amount: number, source: string, live: LiveEvent): void => {
+    if (!honestCreditOn) {
+      earnGold(amount, source)
+      return
+    }
+    const credit = squadRewardCredit(amount, live.playerTouched)
+    earnGold(credit.gold, source)
+    squadResourceMetrics.goldWithheld += credit.fullGold - credit.gold
   }
 
   /** Puts a planned event's bodies on the ground, exactly as the builder lists them. */
@@ -3429,7 +3629,7 @@ export function runHarness(options: RunOptions): RunReport {
       return
     }
     if (!resolveContract(contracts, nodeId, 'kept')) return
-    earnGold(template.reward, 'contract')
+    earnFightGold(template.reward, 'contract', live)
     contractMetrics.kept += 1
     contractBalance.kept += 1
     if (objectivePrerequisitesDone(node, objectives) && completeObjectiveEntry(objectives, node.id)) {
@@ -3469,13 +3669,26 @@ export function runHarness(options: RunOptions): RunReport {
     if (!activeEvents.includes(live)) return
     const kind = live.plan.kind
     const source = live.contractNodeId ? 'contractEvent' : live.system
+    if (honestCreditOn && succeeded) {
+      if (!live.playerTouched) squadResourceMetrics.reducedSettlements += 1
+      else if (Math.hypot(markerOf(live).x - player.x, markerOf(live).z - player.z) >
+        SQUAD_CREDIT_REPORT_DISTANCE) {
+        squadResourceMetrics.contributedBeyond40 += 1
+      }
+    }
+    const elfDefenseAt = replenishmentOn &&
+      succeeded &&
+      options.faction === 'elf' &&
+      kind === 'defendHome'
+      ? markerOf(live)
+      : null
     if (isRandomWorldEventKind(kind)) {
       if (live.system === 'randomEvent') {
         if (succeeded) eventMetrics.randomSucceeded += 1
         else eventMetrics.randomFailed += 1
       }
       if (succeeded) {
-        earnGold(HARNESS_RANDOM_EVENT_REWARDS[kind], source)
+        earnFightGold(HARNESS_RANDOM_EVENT_REWARDS[kind], source, live)
         if (kind === 'defendHome') heal(HARNESS_DEFEND_HOME_HEAL, 'event')
         if (kind === 'champion') {
           const bonus = Math.min(
@@ -3493,11 +3706,12 @@ export function runHarness(options: RunOptions): RunReport {
       }
       handBack(live)
       if (succeeded) {
-        earnGold(
+        earnFightGold(
           live.plan.defend === true
             ? HARNESS_CARAVAN_AMBUSH_DEFENDED_REWARD
             : HARNESS_LOCATED_EVENT_REWARDS[kind as ChronicleWorldEventKind],
           source,
+          live,
         )
       }
     }
@@ -3512,6 +3726,14 @@ export function runHarness(options: RunOptions): RunReport {
     }
     if (live.contractNodeId) resolveContractEvent(live, succeeded)
     releaseEvent(live)
+    if (elfDefenseAt) {
+      earnReplacement(
+        'elfDefense',
+        'scout',
+        elfDefenseAt,
+        `${live.id}:partisan`,
+      )
+    }
     if (live.plan.anchor === 'player') {
       eventCooldown = rollEventCooldown(threatTier, fightRng.next())
     }
@@ -3535,6 +3757,14 @@ export function runHarness(options: RunOptions): RunReport {
       removeActor(captive.id)
       return
     }
+    if (
+      factionRescueOn &&
+      (options.faction !== 'elf' ||
+        companions().length + squadResourceState.pending.length >= SQUAD_RESOURCE_CAP)
+    ) {
+      removeActor(captive.id)
+      return
+    }
     captive.eventOwnerId = null
     captive.aiMode = 'normal'
     captive.squadEligible = true
@@ -3545,6 +3775,9 @@ export function runHarness(options: RunOptions): RunReport {
     captive.homeZ = captive.z
     assignSquadSlot(captive)
     companionMetrics.recruited += 1
+    if (factionRescueOn) {
+      recordImmediateSquadReinforcement(squadResourceState, 'elfRescue')
+    }
   }
 
   /** The builders' `onKill`, for a death anywhere on the field. */
@@ -3710,7 +3943,9 @@ export function runHarness(options: RunOptions): RunReport {
   const notePlayerExchange = (actorId: string): void => {
     if (!eventsFought) return
     for (const live of activeEvents) {
-      if (live.actorIds.includes(actorId)) live.playerExchangeAt = elapsed
+      if (!live.actorIds.includes(actorId)) continue
+      live.playerExchangeAt = elapsed
+      if (honestCreditOn) live.playerTouched = true
     }
   }
   /**
@@ -4618,6 +4853,7 @@ export function runHarness(options: RunOptions): RunReport {
   // --- W2-2, PR B: the caravan spine -------------------------------------------------
 
   /** The engine's beats on this file's bodies, through a narrow port (`runHarnessBeats.ts`). */
+  let pressRecruitSequence = 0
   const beats = createBeatHarness({
     faction: options.faction,
     blueprint,
@@ -4677,8 +4913,18 @@ export function runHarness(options: RunOptions): RunReport {
     addSupplies: (amount) => {
       if (sustainOn) player.supplies += amount
     },
-    squadSize: () => companions().length,
+    squadSize: () => companions().length +
+      (pendingReinforcementsOn ? squadResourceState.pending.length : 0),
     recruit: (at) => {
+      if (replenishmentOn) {
+        pressRecruitSequence += 1
+        return earnReplacement(
+          'villainPress',
+          'minion',
+          { x: at.x + 1.5, z: at.z },
+          `caravan-press:${String(pressRecruitSequence)}`,
+        )
+      }
       if (!squadOn || companions().length >= CARAVAN_BEAT_SQUAD_CAP || !reserveSlots('squad', 1)) {
         return false
       }
@@ -4698,6 +4944,20 @@ export function runHarness(options: RunOptions): RunReport {
       assignSquadSlot(actor)
       companionMetrics.recruited += 1
       return true
+    },
+    guardOrderKept: (outcome, at) => {
+      if (!guardOrderReinforcementOn) return
+      if (outcome === 'deliver') squadResourceMetrics.attendedGuardDeliveries += 1
+      else squadResourceMetrics.attendedGuardConfiscations += 1
+      earnReplacement(
+        'guardOrder',
+        'soldier',
+        at,
+        `guard-order:${outcome}:${String(
+          squadResourceMetrics.attendedGuardDeliveries +
+          squadResourceMetrics.attendedGuardConfiscations
+        )}`,
+      )
     },
     thinFinale: () => {
       const thinned = thinFinaleGarrison(finaleState, (spawnId) =>
@@ -4726,6 +4986,7 @@ export function runHarness(options: RunOptions): RunReport {
     if (squadOn && victim.budgetCategory === 'squad' && victim.allegiance === options.faction) {
       companionMetrics.lost += 1
       bump(companionMetrics.lostTo, killer === 'player' ? 'player' : (killer?.role ?? 'unknown'))
+      if (replenishmentOn) recordSquadCasualty(squadResourceState)
     }
     if (
       killer !== 'player' &&
@@ -4801,8 +5062,19 @@ export function runHarness(options: RunOptions): RunReport {
   const eatRation = (): void => {
     player.supplies -= 1
     sustainMetrics.rationsEaten += 1
-    heal(HARNESS_RATION_HEAL, 'ration')
-    stopBleeding(HARNESS_RATION_BLEED_RELIEF)
+    const playerNeedsRation =
+      player.health < player.maxHealth * HARNESS_RATION_HEALTH ||
+      (player.bleeding >= HARNESS_RATION_BLEED && player.health < player.maxHealth)
+    const companion = companionCareOn && !playerNeedsRation &&
+      (!rationReserveOn || player.supplies > 1)
+      ? nearbyWoundedCompanions()[0]
+      : null
+    if (companion) {
+      healCompanion(companion, RATION_COMPANION_HEAL, 'ration')
+    } else {
+      heal(HARNESS_RATION_HEAL, 'ration')
+      stopBleeding(HARNESS_RATION_BLEED_RELIEF)
+    }
   }
 
   /**
@@ -4817,6 +5089,25 @@ export function runHarness(options: RunOptions): RunReport {
    */
   const pressInteract = (activeNode: FactionObjectiveNode | null): void => {
     if (eventsFought && interactWithEvents()) return
+    if (
+      replenishmentOn &&
+      options.faction === 'villain' &&
+      Math.hypot(player.x - siteStart.x, player.z - siteStart.z) <= HARNESS_SITE_REACH &&
+      canVillainMuster({
+        state: squadResourceState,
+        faction: options.faction,
+        livingSquad: companions().length,
+        atOldFort: true,
+      })
+    ) {
+      earnReplacement(
+        'villainMuster',
+        'minion',
+        siteStart,
+        'squad:villain:muster:0',
+      )
+      return
+    }
     const site = nearbySite()
     const service = site ? services.find((entry) => entry.id === site.id) : undefined
     const choice = chooseGeneratedInteraction({
@@ -4845,14 +5136,21 @@ export function runHarness(options: RunOptions): RunReport {
         pressedObjectiveId = activeNode.id
       }
     }
-    if (choice.kind === 'ration') {
+    if (choice.kind === 'ration' || (companionCareOn && wantsRation())) {
       eatRation()
       return
     }
     if (service && sustainOn && (choice.kind === 'recovery' || choice.kind === 'shop' || choice.kind === 'treasure')) {
       visitService(service)
       const keepHealing =
-        service.kind === 'recovery' && healingOn && player.health < player.maxHealth
+        service.kind === 'recovery' &&
+        healingOn &&
+        (companionCareOn || recoveryLimitOn
+          ? (!recoveryLimitOn ||
+              recoveryTreatmentsRemaining(squadResourceState, service.id) > 0) &&
+            (player.health < player.maxHealth ||
+              (companionCareOn && nearbyWoundedCompanions().length > 0))
+          : player.health < player.maxHealth)
       if (!keepHealing) serviceCooldown.set(service.id, elapsed + HARNESS_SERVICE_COOLDOWN)
       recordTarget()
       return
@@ -4929,6 +5227,23 @@ export function runHarness(options: RunOptions): RunReport {
    */
   const chooseGoal = (activeNode: FactionObjectiveNode | null): W15Goal | null => {
     if (policy === 'idle') return null
+    if (
+      replenishmentOn &&
+      options.faction === 'villain' &&
+      canVillainMuster({
+        state: squadResourceState,
+        faction: options.faction,
+        livingSquad: companions().length,
+        atOldFort: true,
+      }) &&
+      Math.hypot(player.x - siteStart.x, player.z - siteStart.z) <= HARNESS_SERVICE_DETOUR
+    ) {
+      return {
+        point: siteStart,
+        actor: null,
+        pressWithin: HARNESS_SITE_REACH - 0.5,
+      }
+    }
     const service = chooseService()
     if (service && service.kind !== 'treasure') {
       return { point: service, actor: null, pressWithin: HARNESS_SITE_REACH - 0.5 }
@@ -5000,7 +5315,11 @@ export function runHarness(options: RunOptions): RunReport {
     player.supplies > 0 &&
     !doctrineEffects.rationOnBleed &&
     (player.health < player.maxHealth * HARNESS_RATION_HEALTH ||
-      (player.bleeding >= HARNESS_RATION_BLEED && player.health < player.maxHealth))
+      (player.bleeding >= HARNESS_RATION_BLEED && player.health < player.maxHealth) ||
+      (companionCareOn && (!rationReserveOn || player.supplies > 1) &&
+        nearbyWoundedCompanions().some(
+        (actor) => actor.hp < actor.maxHp * HARNESS_RATION_HEALTH,
+      )))
 
   // --- W1-5: `updateActors` for the shipped arms' bodies ----------------------------
 
@@ -6190,6 +6509,9 @@ export function runHarness(options: RunOptions): RunReport {
   while (elapsed < timeLimit) {
     frames += 1
     elapsed += delta
+    if (pendingReinforcementsOn && squadResourceState.pending.length > 0) {
+      materializePendingReinforcements()
+    }
     // W2-1 — the engine settles the tier before the draft. `time` keeps this file's
     // original order, so every pinned run is the run it was.
     if (escalation === 'time') advanceDoctrines()
@@ -7035,6 +7357,9 @@ export function runHarness(options: RunOptions): RunReport {
 
   // W1-5 — the balance block, closed out.
   companionMetrics.aliveAtEnd = companions().length
+  squadResourceMetrics.replacementsBySource = {
+    ...squadResourceState.reinforcements,
+  }
   sustainMetrics.goldAtEnd = player.gold
   sustainMetrics.rationsLeft = player.supplies
   feasibility.beyondReachShare =
@@ -7054,6 +7379,7 @@ export function runHarness(options: RunOptions): RunReport {
     deathSystem: outcome === 'defeat' ? (bledOut ? 'bleeding' : lastAttackerSystem) : null,
     companions: companionMetrics,
     sustain: sustainMetrics,
+    squadResource: squadResourceMetrics,
     events: eventMetrics,
     caravans: caravanMetrics,
     contracts: contractBalance,
@@ -7079,6 +7405,7 @@ export function runHarness(options: RunOptions): RunReport {
     contractOutcome,
     doctrinePolicy,
     squad: squadPolicy,
+    squadResource: squadResourceModel,
     sustain: sustainPolicy,
     eventModel,
     eventPolicy,
@@ -7808,6 +8135,17 @@ export interface BalanceCell {
   meanGoldSpent: number
   meanHealed: number
   healedBySource: Record<string, number>
+  squadResource: {
+    meanCompanionHealed: number
+    companionTreatmentsBySource: Record<string, number>
+    recoveryUses: number
+    replacementsBySource: Record<SquadReinforcementSource, number>
+    reducedSettlements: number
+    contributedBeyond40: number
+    goldWithheld: number
+    attendedGuardDeliveries: number
+    attendedGuardConfiscations: number
+  }
   /** W2-1 — the finale's pacing tier, run by run, as a histogram; `none` when no finale opened. */
   finaleTiers: Record<string, number>
   /** W2-2, PR B — the caravans, totalled over the cell's runs; null while the spine is off. */
@@ -7897,6 +8235,14 @@ function summarizeCell(
   const lengthHistogram: Record<string, number> = {}
   const damageBySystem: Record<string, number> = {}
   const healedBySource: Record<string, number> = {}
+  const companionTreatmentsBySource: Record<string, number> = {}
+  const replacementsBySource: Record<SquadReinforcementSource, number> = {
+    elfRescue: 0,
+    elfDefense: 0,
+    guardOrder: 0,
+    villainMuster: 0,
+    villainPress: 0,
+  }
   const abandonedBy: Record<string, number> = {}
   const victories: number[] = []
   const finale: number[] = []
@@ -7947,6 +8293,13 @@ function summarizeCell(
   let goldEarned = 0
   let goldSpent = 0
   let healed = 0
+  let companionHealed = 0
+  let recoveryUses = 0
+  let reducedSettlements = 0
+  let contributedBeyond40 = 0
+  let goldWithheld = 0
+  let attendedGuardDeliveries = 0
+  let attendedGuardConfiscations = 0
   for (const report of reports) {
     const balance = report.balance
     outcomes[report.outcome] += 1
@@ -8005,6 +8358,18 @@ function summarizeCell(
     goldSpent += balance.sustain.goldSpent
     healed += balance.sustain.healed
     addInto(healedBySource, balance.sustain.healedBySource, 1 / runs)
+    companionHealed += balance.squadResource.companionHealed
+    addInto(
+      companionTreatmentsBySource,
+      balance.squadResource.companionTreatmentsBySource,
+    )
+    addInto(replacementsBySource, balance.squadResource.replacementsBySource)
+    recoveryUses += balance.squadResource.recoveryUses
+    reducedSettlements += balance.squadResource.reducedSettlements
+    contributedBeyond40 += balance.squadResource.contributedBeyond40
+    goldWithheld += balance.squadResource.goldWithheld
+    attendedGuardDeliveries += balance.squadResource.attendedGuardDeliveries
+    attendedGuardConfiscations += balance.squadResource.attendedGuardConfiscations
   }
   rumours.beyondReachShare = rumours.offered > 0 ? rumours.beyondReach / rumours.offered : 0
   const finaleTiers: Record<string, number> = {}
@@ -8110,6 +8475,17 @@ function summarizeCell(
     meanGoldSpent: goldSpent / runs,
     meanHealed: healed / runs,
     healedBySource,
+    squadResource: {
+      meanCompanionHealed: companionHealed / runs,
+      companionTreatmentsBySource,
+      recoveryUses,
+      replacementsBySource,
+      reducedSettlements,
+      contributedBeyond40,
+      goldWithheld,
+      attendedGuardDeliveries,
+      attendedGuardConfiscations,
+    },
     finaleTiers,
     beats,
   }

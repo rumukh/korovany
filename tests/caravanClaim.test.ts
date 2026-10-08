@@ -880,6 +880,7 @@ test("a chronicle ambush of the player's own side's cart is defended, never robb
     onInteract(): boolean
     getPrompt(): string | null
     target: number
+    playerContributed?: boolean
   }
   assert.equal(event.lootSite?.defend, true)
   assert.equal(event.target, value.raiders.length)
@@ -896,6 +897,7 @@ test("a chronicle ambush of the player's own side's cart is defended, never robb
   assert.equal(event.state, 'succeeded')
   assert.deepEqual(event.handBack(), [], 'a defended cart rolls on with its cargo')
   assert.equal(value.chronicleState.caravans.length, 1)
+  event.playerContributed = true
   invoke(value.engine, 'finishEvent', event, true)
   assert.equal(value.tally.gold, 90, 'the owners pay the defenders, less than the cargo is worth')
   assert.equal(value.tally.robbed, 0, 'a defence is not a robbery')

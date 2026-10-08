@@ -19,33 +19,33 @@
  * ## The documented baseline
  *
  * `HARNESS_SHIPPED_ARMS`, 30 Hz, a 600 s limit, seeds `1 + 7919 n` for n = 0…39, every
- * faction under every policy — 360 runs on W3-4's branch (`main` at 04c1c7b with W3-4's
- * two commits), in the engine's streaming window, with W2-2's caravan spine, W3-5's errand
- * press and W3-4's remnants and streaming hold among the shipped arms — reproduced by
+ * faction under every policy — 360 runs on W3-1's branch over `main` at 6896062, in the
+ * engine's streaming window, with the caravan spine, errand press, remnants, held streaming
+ * and managed squad resources among the shipped arms — reproduced by
  * `KOROVANY_BALANCE_SEEDS=40 node --experimental-strip-types --test tests/runHarnessBalance.test.ts`
  * (that command uses the committed test's 480 s limit; the table used 600 s through
  * `sweepBalance` directly). Victories are win / defeat / timeout; length is the victories'
- * p10–p50–p90 in seconds. Re-published on 2026-10-08 when W3-4 joined the shipped arms; it
- * supersedes the tables measured with the errand press alone, on 191cda5 and on 29adca3,
+ * p10–p50–p90 in seconds. Re-published on 2026-10-08 when W3-1 joined the shipped arms; it
+ * supersedes the W3-4 table, the errand-press table, 191cda5 and 29adca3,
  * which `docs/run-harness.md` keeps for the record.
  *
  * ```text
  * policy · faction    win/def/timeout   won in p10–p50–p90   damage   companions at finale
- * beeline · elf        9 / 31 /  0       88–129–173 s        245      2.6 (36/39 with ≥ 1)
- * beeline · guard     18 / 22 /  0      103–140–210 s        169      2.4 (36/40)
- * beeline · villain   20 / 20 /  0       87–107–138 s        160      3.1 (39/40)
- * cautious · elf       9 / 10 / 21       88–129–173 s        220      2.6 (35/39)
- * cautious · guard    13 / 14 / 13      103–147–184 s        160      2.4 (36/40)
- * cautious · villain  10 / 12 / 18       84– 98–132 s        144      3.1 (39/40)
- * duelist · elf       36 /  4 /  0      103–141–189 s        187      3.3 (38/38)
- * duelist · guard     35 /  5 /  0      111–144–186 s        141      2.7 (39/40)
- * duelist · villain   25 / 15 /  0      102–129–171 s        153      3.3 (38/38)
+ * beeline · elf       13 / 27 /  0       88–133–152 s        188      2.8 (38/39 with ≥ 1)
+ * beeline · guard     16 / 24 /  0      102–131–178 s        158      3.6 (39/40)
+ * beeline · villain   25 / 15 /  0       89–111–150 s        147      3.2 (40/40)
+ * cautious · elf      13 /  7 / 20       88–133–159 s        166      2.8 (37/38)
+ * cautious · guard    13 / 12 / 15      102–127–157 s        146      3.6 (39/40)
+ * cautious · villain  13 / 11 / 16       87–107–159 s        138      3.2 (39/39)
+ * duelist · elf       35 /  5 /  0      103–140–189 s        183      3.3 (38/38)
+ * duelist · guard     34 /  6 /  0      109–147–187 s        134      3.8 (40/40)
+ * duelist · villain   27 / 13 /  0      101–129–171 s        148      3.3 (37/37)
  * ```
  *
  * What it says, in the review's terms:
  *
  * - **F5, inverted.** Fighting everything within 13 m wins 96 of 120 and walking past it
- *   47 of 120. The review's 0 of 60 was a harness with no squad and no healing: every
+ *   54 of 120. The review's 0 of 60 was a harness with no squad and no healing: every
  *   W1-5 arm off, with the review's `commit` rumours and 1 200 s limit, gives its 88 %
  *   against 0 % again (53/60 against 0/60), and one arm at a time each of the squad and
  *   healing more than halves the fighter's wins when taken away — `docs/run-harness.md`
@@ -65,8 +65,8 @@
  *   player can meet: 67 of 451 (15 %) on the same seeds and arms, every one an escort that
  *   this road-only estimate times to the cart's square rather than to where the player
  *   meets the cart. With the spine, the errand press and W3-4 it is 37 of 583 (6 %).
- * - **F4.** At least one companion reached 336 of 354 finales; the finale is still the
- *   single largest killer (62 of 133 defeats).
+ * - **F4.** At least one companion reached 347 of 351 finales, and every winning finale had
+ *   one. Care restores 12–37 companion HP a run by faction; no recovery site is used over twice.
  * - **W3-5.** The 191cda5 table's three beeline guard timeouts, and three of the cautious
  *   guard's, were the harness's errand stand-in waiting out an archer at a healer. Under the
  *   press no run stalls at its errand, and threat-wave damage over the 360 runs falls from
@@ -110,6 +110,7 @@ function pooled(cells: readonly BalanceCell[], pick: (cell: BalanceCell) => numb
 // ---------------------------------------------------------------------------
 
 test('the shipped baseline: three factions, three policies, inside the measured bands', () => {
+  assert.equal(HARNESS_SHIPPED_ARMS.squadResource, 'managed')
   const seeds = balanceSeeds()
   const report = sweepBalance({ seeds, timeLimit: 480 })
   assert.equal(report.cells.length, 9)
@@ -161,6 +162,23 @@ test('the shipped baseline: three factions, three policies, inside the measured 
   const opened = pooled(report.cells, (cell) => cell.companionsAtFinale.opened)
   const withOne = pooled(report.cells, (cell) => cell.companionsAtFinale.atLeastOne)
   assert.ok(opened > 0 && withOne / opened >= 0.6, `${withOne}/${opened} finales with a companion`)
+  for (const cell of report.cells) {
+    assert.ok(
+      cell.squadResource.recoveryUses <= cell.runs * 2,
+      `${cell.policy}/${cell.faction} used recovery ${cell.squadResource.recoveryUses} times`,
+    )
+  }
+  for (const faction of FACTIONS) {
+    const cells = report.cells.filter((cell) => cell.faction === faction)
+    const replacements = cells.reduce((sum, cell) =>
+      sum + Object.values(cell.squadResource.replacementsBySource)
+        .reduce((subtotal, count) => subtotal + count, 0), 0)
+    const factionRuns = pooled(cells, (cell) => cell.runs)
+    assert.ok(
+      replacements <= factionRuns * 1.5,
+      `${faction} recruited ${replacements} in ${factionRuns} runs`,
+    )
+  }
 
   // Contracts start where the player arrives (F2, corrected). In the engine's window the
   // actor budget has room for the builder, so the 40-seed baseline started every contract
@@ -352,6 +370,7 @@ test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never 
   ] as const).map(([seed, faction]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,
+      squadResource: 'legacy',
       eventPolicy: 'engage',
       seed,
       faction,
@@ -398,6 +417,7 @@ test('W1-6 in whole runs: the guard\'s own garrisons call for men only in a figh
   // stays in `tests/commanderReinforcements.test.ts`.
   const options = {
     ...HARNESS_SHIPPED_ARMS,
+    squadResource: 'legacy',
     seed: 1,
     faction: 'guard',
     policy: 'beeline',
@@ -425,6 +445,7 @@ test('W1-6 in whole runs: the guard\'s own idle soldiers step back for a contrac
   // back, and it comes home once the room is free and nobody would see it come.
   const options = {
     ...HARNESS_SHIPPED_ARMS,
+    squadResource: 'legacy',
     seed: 1,
     faction: 'guard',
     policy: 'beeline',

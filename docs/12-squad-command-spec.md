@@ -314,3 +314,21 @@ The feature-local samples above predate the combined build. Integrated `M`/`T`,
 bridge, defense, and finale observations are recorded in the parent milestone.
 These samples establish command behavior and collision/roster truth, not universal
 path reachability or a measured frame-rate guarantee.
+
+## 10. W3-1: care and replenishment
+
+The roster became the action surface for keeping that commanded squad alive. A nearby
+wounded member can receive an existing ration from the paused `T` panel; the action shows
+the player's health, the ration count after spending and an explicit last-ration warning.
+The shop's field medicine can target the player or one nearby member. A recovery site has
+two persisted treatments and tends every wounded member within the 14 m regroup distance.
+
+The living-plus-pending cap is four. Elf captives and wooden-house partisans, soldiers sent
+for attended guard caravan orders, the villain's existing press-gang and one casualty-gated
+old-fort muster all use the same membership and actor-budget predicates as commands and
+saving. Guards and villains still free captives, but do not recruit through the elf route.
+
+`directorState.squadResource` is separate from `squadCommand` and from W3-4's
+`encounterRemnants`. Companion HP remains canonical in the existing `companions` array.
+See [the full squad-resource specification](17-squad-resource.md) and
+[the managed harness baseline](run-harness.md#baseline).

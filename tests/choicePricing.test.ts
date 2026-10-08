@@ -28,6 +28,7 @@ import {
   describeChoiceTravel,
   describeContractKept,
   describeContractTimeLimit,
+  describeRandomEventSuccess,
   formatRegionGridLabel,
 } from '../src/game/content/gameCopy.ts'
 import {
@@ -108,6 +109,7 @@ interface Ledger {
   caravansRobbed: number
   loot: string[]
   notices: string[]
+  noticeMeta: Array<{ tone: string | undefined; origin: string | undefined }>
 }
 
 interface Payment {
@@ -130,7 +132,13 @@ function paymentProbe(faction: Faction, setup: {
   contracts?: CampaignContractState
   championDamageBonus?: number
 } = {}): { engine: object; ledger: Ledger } {
-  const ledger: Ledger = { goldEarned: [], caravansRobbed: 0, loot: [], notices: [] }
+  const ledger: Ledger = {
+    goldEarned: [],
+    caravansRobbed: 0,
+    loot: [],
+    notices: [],
+    noticeMeta: [],
+  }
   const engine: object = Object.create(GameEngine.prototype)
   Object.assign(engine, {
     faction,
@@ -149,7 +157,12 @@ function paymentProbe(faction: Faction, setup: {
       recordGoldEarned: (amount: number) => ledger.goldEarned.push(amount),
       recordCaravanRobbed: () => { ledger.caravansRobbed += 1 },
     },
-    callbacks: { onNotice: (message: string) => ledger.notices.push(message) },
+    callbacks: {
+      onNotice: (message: string, tone?: string, origin?: string) => {
+        ledger.notices.push(message)
+        ledger.noticeMeta.push({ tone, origin })
+      },
+    },
     playSound() {},
     releaseEvent() {},
     emitView() {},
@@ -176,6 +189,7 @@ function liveEvent(kind: WorldEventKind, contractNodeId: string | null = null) {
     regionId: 'region-1-1',
     markerPos: new THREE.Vector3(3, 0, 4),
     contractNodeId,
+    playerContributed: true,
     handBack: () => [],
     ownedActorIds: [],
     ownedProps: [],
@@ -194,6 +208,21 @@ function win(engine: object, ledger: Ledger, event: ReturnType<typeof liveEvent>
     goldEarned: ledger.goldEarned.reduce((sum, amount) => sum + amount, 0),
   }
 }
+
+test('an event settled without a player contribution pays half and says so', () => {
+  const { engine, ledger } = paymentProbe('elf')
+  const event = liveEvent('bounty')
+  event.playerContributed = false
+  const paid = win(engine, ledger, event)
+  assert.equal(paid.gold, Math.floor(WORLD_EVENT_REWARDS.bounty.gold * 0.5))
+  assert.match(ledger.notices[0], /без пользователя/i)
+  assert.deepEqual(ledger.noticeMeta[0], { tone: 'warning', origin: 'outcome' })
+
+  const contributed = paymentProbe('elf')
+  const full = win(contributed.engine, contributed.ledger, liveEvent('bounty'))
+  assert.equal(full.gold, WORLD_EVENT_REWARDS.bounty.gold)
+  assert.doesNotMatch(contributed.ledger.notices[0], /без пользователя/i)
+})
 
 /** Every way the engine's payment for a won event can disagree with `table`. */
 function paymentMismatches(table: Readonly<Record<WorldEventKind, EventReward>>): string[] {
@@ -341,6 +370,62 @@ test('a won rescue puts the captive in the squad, which is the companion the car
   assert.equal(contractPayout(CONTRACT_TEMPLATES.unshackle).companion, true)
 })
 
+test('guards and villains free a captive who goes home instead of joining their squad', () => {
+  for (const faction of ['guard', 'villain'] as const) {
+    const spawned: Array<Record<string, unknown> & {
+      id: string
+      role: string
+      mesh: THREE.Group
+    }> = []
+    let assigned = 0
+    const engine: object = Object.assign(Object.create(GameEngine.prototype), {
+      faction,
+      actors: [],
+      player: { position: new THREE.Vector3() },
+      eventPropTargets: new Map(),
+      reserveActorSlots: () => true,
+      nextEventId: () => `rescue-${faction}`,
+      pickEventPosition: () => new THREE.Vector3(1, 0, 1),
+      pickEventEnemyFaction: () => 'elf',
+      generatedRegionIdAt: () => 'region-1-1',
+      spawnActor: (allegiance: string, role: string, x: number, z: number, _index: number,
+        options: Record<string, unknown>) => {
+        const mesh = new THREE.Group()
+        mesh.position.set(x, 0, z)
+        const actor = {
+          ...options,
+          id: `${faction}-actor-${spawned.length}`,
+          allegiance,
+          role,
+          alive: true,
+          mesh,
+          home: new THREE.Vector3(),
+          wanderTarget: new THREE.Vector3(),
+        }
+        spawned.push(actor)
+        return actor
+      },
+      assignSquadSlot: () => { assigned += 1 },
+      unbindActorArms() {},
+    })
+    const event = invoke<{ state: string; companionJoined?: boolean; onInteract(): boolean }>(
+      engine,
+      'startRescueEvent',
+      new THREE.Vector3(1, 0, 1),
+    )
+    const captive = spawned.find((actor) => actor.role === 'captive')
+    assert.ok(captive)
+    assert.equal(event.onInteract(), true)
+    assert.equal(event.state, 'succeeded')
+    assert.equal(event.companionJoined, false)
+    assert.equal(captive.squadEligible, false)
+    assert.equal(assigned, 0)
+    const copy = describeRandomEventSuccess('rescue', { gold: 0, heal: 0 }, false)
+    assert.match(copy, /пошёл домой/)
+    assert.doesNotMatch(copy, /твоём отряде/)
+  }
+})
+
 // ---------------------------------------------------------------------------
 // Honest cards
 // ---------------------------------------------------------------------------
@@ -355,7 +440,10 @@ test('all ten contract cards quote the table, their clock and a walk, in plain w
     assert.equal(card.timeLimit, template.timeoutSeconds)
     assert.ok(card.travel && card.travel.meters > 0 && card.travel.seconds > 0, `${id} has no walk`)
     const line = describeChoicePayout(card.payout!)
-    assert.ok(line?.startsWith(`Плата: ${QUOTED_GOLD[id]} золот`), `${id}: ${String(line)}`)
+    assert.ok(line?.startsWith(`Плата: ${QUOTED_GOLD[id]} · без тебя`), `${id}: ${String(line)}`)
+    const withoutPlayer = Math.floor(template.reward * 0.5) +
+      Math.floor(WORLD_EVENT_REWARDS[template.eventKind].gold * 0.5)
+    assert.ok(line?.includes(`без тебя ${String(withoutPlayer)}`), `${id}: ${String(line)}`)
     assert.equal(line?.includes('свой в отряд'), template.eventKind === 'rescue', `${id}: ${String(line)}`)
     assert.equal(line?.includes('+6 к урону'), template.eventKind === 'champion', `${id}: ${String(line)}`)
     assert.equal(line?.includes('легендарный трофей'), template.eventKind === 'champion', `${id}: ${String(line)}`)

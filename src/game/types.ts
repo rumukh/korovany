@@ -319,6 +319,7 @@ export interface WorldEventView {
   progress?: number
   target?: number
   timeRemaining?: number
+  payout?: ChoicePayoutView | null
 }
 
 /**
@@ -338,6 +339,8 @@ export type CampaignContractStatus = 'offered' | 'active' | 'kept' | 'failed'
  */
 export interface ChoicePayoutView {
   gold: number
+  /** Personal gold when the fight is settled without a real player contribution. */
+  withoutPlayerGold?: number
   /** Rations added to the pack. */
   supplies: number
   /** Health restored on success. */
@@ -712,6 +715,7 @@ export interface GameView {
   shopPriceMultiplier: number
   squad: number
   squadCommand: SquadCommandView
+  squadResource: import('./world/SquadResource.ts').SquadResourceView
   elapsed: number
   pointerLocked: boolean
   paused: boolean

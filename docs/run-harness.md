@@ -37,15 +37,18 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `errand` (W3-5) | `clear`: waits for no hostile within 12 m | `press`: the engine's `E` at the errand | `clear` |
 | `encounterMemory` (W3-4) | `fresh`: a pack comes back whole | `remnants`: its dead and wounds stay | `fresh` |
 | `streaming` (W3-4) | `instant`: on the player's square | `held`: 16 m before a turn back recentres | `instant` |
+| `squadResource` (W3-1) | `legacy`: player-only care, old recruits, full pay | `managed` | component arms |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
   through `selectSquadIntent` and `getSquadFollowSpeed`, fight through the squad's own `selectThreat` pass and the
-  `CombatResolver` tables, and stay dead. A rescue recruits its captive, as `rescueCaptive` does.
+  `CombatResolver` tables, and stay dead. Under `squadResource: 'managed'`, only an elf rescue recruits its captive;
+  wooden-house defences, kept guard orders, villain press-gangs and the old-fort muster are the other embodied routes.
 - **Body and purse.** Hits roll `shouldInjurePlayer` and `injurePlayer`'s limb table; a lost limb bleeds and a lost leg
   slows. The starting boon ration is in the bag. The scripted player eats below half health, detours up to 90 m to a
   healer (+40, full stamina, wounds and bleeding cleared) or a trader (medicine +55, prostheses) when below 65 % or
   bleeding, and claims treasure. Gold comes from kills, loot, treasure, events, contracts and caravans at the
-  engine's rates; prices follow the square's supply.
+  engine's rates; prices follow the square's supply. W3-1's scripted policy treats a companion only while doing so
+  leaves one ration for the player. That is a harness policy, not a game rule.
 - **Events as fights.** The five player-anchored builders, the five located builders, the director's weights and
   cooldowns, the threat wave and the road caravan are copied as data in `tests/runHarnessEvents.ts`.
   `tests/runHarnessFidelity.test.ts` loads the shipped `GameEngine` class and calls its own builders with the same
@@ -141,6 +144,9 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   into the purse (`rewardGold`, `rewardRations`). The pay only lands while `sustain` models the purse. Kept and broken
   rumours are also counted by kind (`keptByKind`, `brokenByKind`), so an escort's keep rate reads on its own.
 - **Companions:** started, recruited, lost and to whom, standing when the finale opened and at the end, their kills.
+- **Squad resources (W3-1):** companion healing and treatment actions by source, recovery-site uses, replacements by
+  faction and source, attended guard deliveries and confiscations, reduced settlements, personal gold withheld, and
+  contributed fights that settled beyond 40 m without losing full pay.
 - **Doctrine drafts reached** and the **maximum threat tier**, whatever the doctrine arm.
 - **W2-1:** every tier rise with its cause (`time` or `progress`), when each draft actually opened and how many of
   them the 30 s ceiling opened outside a calm moment (`draftsForced`), the finale's pacing tier and the clock's tier
@@ -174,9 +180,84 @@ The committed file runs in about 20 s: its sweep takes three seeds per cell and 
 
 ## Baseline
 
-`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-4's branch, `main` at
-04c1c7b with W3-4's two commits, in the engine's streaming window. **This baseline supersedes the ones measured on
-02059ed with the errand press, on 191cda5 and on 29adca3**, kept below for the record. The shipped arms have taken in
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-1's branch over
+`main` at 6896062, in the engine's streaming window. The matched control is the same branch and arms with
+`squadResource: 'legacy'`. The shipped arms now include bounded companion care, faction replacements and honest
+personal credit, on top of W3-4's remnants and streaming hold.
+
+| Policy · faction | Managed win / defeat / timeout | Legacy | Won in p10-p50-p90 | Damage | Kills |
+| --- | --- | --- | --- | ---: | ---: |
+| beeline · elf | 13 / 27 / 0 | 9 / 31 / 0 | 88-133-152 s | 188 | 7.9 |
+| beeline · guard | 16 / 24 / 0 | 18 / 22 / 0 | 102-131-178 s | 158 | 10.5 |
+| beeline · villain | 25 / 15 / 0 | 20 / 20 / 0 | 89-111-150 s | 147 | 9.0 |
+| cautious · elf | 13 / 7 / 20 | 9 / 10 / 21 | 88-133-159 s | 166 | 7.5 |
+| cautious · guard | 13 / 12 / 15 | 13 / 14 / 13 | 102-127-157 s | 146 | 10.5 |
+| cautious · villain | 13 / 11 / 16 | 10 / 12 / 18 | 87-107-159 s | 138 | 8.4 |
+| duelist · elf | 35 / 5 / 0 | 36 / 4 / 0 | 103-140-189 s | 183 | 18.4 |
+| duelist · guard | 34 / 6 / 0 | 35 / 5 / 0 | 109-147-187 s | 134 | 20.2 |
+| duelist · villain | 27 / 13 / 0 | 25 / 15 / 0 | 101-129-171 s | 148 | 17.0 |
+
+| Policy · faction | Squad at finale | Drafts | Tier | Contracts s/k/a | Road | Late rumours | Carts |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| beeline · elf | 2.8 (38/39) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.0 | 4% | 2.02 |
+| beeline · guard | 3.6 (39/40) | 3 / 3 | 4 / 4 | 40 / 36 / 0 | 11.5 | 2% | 2.10 |
+| beeline · villain | 3.2 (40/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.7 | 4% | 2.10 |
+| cautious · elf | 2.8 (37/38) | 3 / 3 | 4 / 4 | 39 / 39 / 0 | 10.8 | 3% | 2.00 |
+| cautious · guard | 3.6 (39/40) | 3 / 3 | 4 / 4 | 40 / 36 / 0 | 10.9 | 3% | 2.10 |
+| cautious · villain | 3.2 (39/39) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.5 | 6% | 2.08 |
+| duelist · elf | 3.3 (38/38) | 3 / 3 | 4 / 4 | 40 / 39 / 0 | 9.9 | 13% | 2.00 |
+| duelist · guard | 3.8 (40/40) | 3 / 3 | 4 / 4 | 40 / 34 / 0 | 10.6 | 5% | 2.13 |
+| duelist · villain | 3.3 (37/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.9 | 5% | 2.10 |
+
+- **Wins.** Managed wins 189/360 against 175/360 under `legacy`: beeline 54 against 47, cautious 39 against 32,
+  duelist 96 against 96. Every one of the 189 winning runs reached its finale with at least one companion.
+- **Care.** Elves, guards and villains use 1.29, 1.08 and 0.53 companion treatments a run and restore 36.6, 25.9
+  and 12.0 companion HP. No site is used more than twice. The script spends a ration on a companion only above one
+  in the bag; without that reserve the duelist falls from 96 to 89 wins.
+- **Replacements.** Elves receive 46 (45 rescues, one house defence), guards 121 from kept caravan orders and
+  villains 49 from press-gang, or 0.38, 1.01 and 0.41 a run. No muster was collected by this straight-line policy.
+- **Credit.** Sixteen fights settled without a player contribution and withheld 716 personal gold. Twelve contributed
+  guard fights settled beyond 40 m and kept full pay, the negative control for the removed distance penalty.
+- **Economy.** Mean gold is 435.6 a run against 436.3 under `legacy`, within 0.2%. The credit rule, not an economy
+  collapse, accounts for the withheld amount.
+
+The caravans by side, measured on the managed arm. Timings are beeline / cautious / duelist:
+
+| Side | Verbs over 120 runs | Camp p50 | Gate p50 | W3-1 replacements; guards thinned |
+| --- | --- | --- | --- | --- |
+| Elves | take 105, give 135 | 25 / 25 / 25 s | 87 / 90 / 96 s | 46; - |
+| Palace guard | confiscate 104, deliver 68, release 79 | 18 / 18 / 18 s | 87 / 87 / 99 s | 121; - |
+| Villain | plunder 96, press 49, burn 104 | 17 / 17 / 19 s | 83 / 83 / 90 s | 49; 70 |
+
+### W3-1 attribution and policy control
+
+The care effect was isolated before the final panel. Wins over the moved cells:
+
+| Cell | Legacy | Care | Recovery limit | Replenishment | Credit |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| elf beeline | 9 | 20 | 9 | 9 | 9 |
+| elf cautious | 9 | 17 | 9 | 9 | 9 |
+| guard beeline | 18 | 16 | 18 | 13 | 18 |
+| guard cautious | 13 | 6 | 13 | 11 | 13 |
+| villain duelist | 25 | 26 | 25 | 25 | 25 |
+| duelist total | 96 | 86 | 96 | 96 | 96 |
+
+Care is the moving part. Unreserved, it removes elf road/finale deaths but spends the guard's last ration and moves
+guard deaths into bleeding and the finale. Reserving one ration changes elf beeline 19 to 13 wins, elf cautious 16
+to 13, guard beeline 13 to 16, guard cautious 6 to 13, villain duelist 26 to 27, and the duelist total 89 to 96.
+This is a scripted-player policy, not a game rule. The UI instead warns when the player chooses to spend the last one.
+
+The guard split found no cost from elf-only rescues: 18/40 wins, as legacy. Kept-order soldiers alone were 13/40
+on the first seed set but 22/40 against legacy's 11/40 on n=40..79. Pooled, guard soldiers win 35/80 against 29/80;
+the first set's five extra finale deaths reverse to seven fewer on the second. Distance is unchanged, so the harness
+is not detouring for the outcome. Villain beeline similarly wins 43/80 against 37/80 across both sets. These paired
+sets show why a +/-4/40 cell band is narrower than this harness's per-cell noise.
+
+### Superseded: the baseline on 08d0448 with W3-4
+
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0...39: 360 runs on `main` at
+08d0448, in the engine's streaming window. This baseline superseded the ones measured on
+02059ed with the errand press, on 191cda5 and on 29adca3, kept below for the record. The shipped arms have taken in
 W2-1's progress tier, W2-2's verbs and defended carts, W2-3's reachable rumours and meeting compass, W2-2's caravan
 spine (`caravanBeats: 'shipped'`), W3-5's errand press (`errand: 'press'`) and W3-4's remnants and streaming hold
 (`encounterMemory: 'remnants'`, `streaming: 'held'`): what a new run plays. "Spine off" is the same 360 runs with

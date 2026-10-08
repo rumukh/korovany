@@ -240,6 +240,13 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
     firstSighting: (view) => view.squad > 0,
   },
   {
+    hint: 'squadCare',
+    viewFields: ['squadCommand', 'squadResource'],
+    firstSighting: (view) =>
+      view.squadCommand.roster.some((member) => member.health < member.maxHealth) ||
+      view.squadResource.villainMuster?.available === true,
+  },
+  {
     hint: 'threat',
     viewFields: ['threatTier', 'elapsed'],
     // W2-1 — the first tier above 1 that the clock paid for. A tier the run earned first is
