@@ -584,6 +584,7 @@ import {
   eventCooldownRange,
   eventDamageGain,
   findContractTemplate,
+  findEscortMeeting,
   getContractNodes,
   getContractProgress,
   getContractStatus,
@@ -2243,6 +2244,12 @@ export class GameEngine {
   private scorchedMaterialAdopted = false
   private chronicleState: ChronicleState
   private chronicleAccumulator = 0
+  /**
+   * W2-3 — where the taken escort's cart is to be met, worked out once a chronicle tick (and
+   * again if another escort is taken), so the compass re-plans when that square changes and
+   * not on every frame the player moves. Derived, never saved: a continue works it out anew.
+   */
+  private escortMeeting: { rumourId: string; tick: number; regionId: string | null } | null = null
   private chronicleFeedSignature = ''
   private chronicleFeed: ChronicleEntryView[] = []
   /**
@@ -12161,7 +12168,34 @@ export class GameEngine {
       travel: (point) => this.expeditionPlanner.measureTravel(knowledge, player, point, walkSpeed),
       chronicle: this.chronicleState,
       sinceTick: this.chronicleAccumulator,
+      meeting: (rumour) => this.takenEscortMeeting(rumour, player, walkSpeed),
     })
+  }
+
+  /**
+   * W2-3 — the square the taken escort's cart is met in, timed like an offer: the exact walk
+   * from where the player stands, on the legs they have. Reads no stream and writes nothing
+   * but its own memo, which lasts until the next chronicle tick.
+   */
+  private takenEscortMeeting(
+    rumour: ChronicleRumour,
+    player: { x: number; z: number },
+    walkSpeed: number,
+  ): string | null {
+    const tick = this.chronicleState.tick
+    const remembered = this.escortMeeting
+    if (remembered && remembered.rumourId === rumour.id && remembered.tick === tick) {
+      return remembered.regionId
+    }
+    const regionId = findEscortMeeting(
+      rumour,
+      { blueprint: this.generatedBlueprint, state: this.chronicleState },
+      (point) => estimateWalkSeconds(this.generatedBlueprint, player, point, walkSpeed),
+      tick,
+      this.chronicleAccumulator,
+    )
+    this.escortMeeting = { rumourId: rumour.id, tick, regionId }
+    return regionId
   }
 
   private handleChronicleEvents(events: readonly ChronicleEvent[]): void {

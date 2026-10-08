@@ -296,6 +296,11 @@ export interface ChronicleRumourView {
   reach?: 'yes' | 'tight' | 'no' | null
   /** W2-3 — what keeping it pays. */
   reward?: ChoicePayoutView | null
+  /**
+   * W2-3 — the square a taken escort's cart is to be met in, e.g. `D2`, when it is not the
+   * square the cart is in now. `x`, `z` and `travel` then lead there.
+   */
+  meetLabel?: string | null
 }
 
 export interface WorldEventView {

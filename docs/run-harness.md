@@ -30,6 +30,7 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `staging` | `none`: nobody steps back | `friendly`: W1-6's own packs make room | `none` |
 | `escalation` (W2-1) | `time` | `progress`: pacing follows progress, enemy stats the clock | `time`; `progressAll` |
 | `caravanBeats` (W2-2) | `off` | `shipped`, in `HARNESS_SPINE_ARMS`: the spine | `beatPolicy`: `walk`, `ignore` |
+| `rumourSteering` (W2-3) | `cart`: an escort's cart's square | `meeting`: where its cart is met | `cart` |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
   through `selectSquadIntent` and `getSquadFollowSpeed`, fight through the squad's own `selectThreat` pass and the
@@ -123,7 +124,8 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
 - **Rumour feasibility:** for every offer, the atlas's road ETA from where the player stood against the time to its
   deadline, and the share beyond reach. W2-3 adds, per run, the candidates the board looked at while an offer was due
   and how many it turned down as beyond reach (`candidatesSeen`, `candidatesUnreachable`), and what kept rumours paid
-  into the purse (`rewardGold`, `rewardRations`). The pay only lands while `sustain` models the purse.
+  into the purse (`rewardGold`, `rewardRations`). The pay only lands while `sustain` models the purse. Kept and broken
+  rumours are also counted by kind (`keptByKind`, `brokenByKind`), so an escort's keep rate reads on its own.
 - **Companions:** started, recruited, lost and to whom, standing when the finale opened and at the end, their kills.
 - **Doctrine drafts reached** and the **maximum threat tier**, whatever the doctrine arm.
 - **W2-1:** every tier rise with its cause (`time` or `progress`), when each draft actually opened and how many of
@@ -447,7 +449,35 @@ offers. The guard's and the villain's kept rumours paid 10 to 12 gold a run, 3.0
 earned, and the elf's 0.42 to 0.53 rations a run against the 1.2 to 1.4 it ate. Here the scripted player's own goals
 take the wheel from a pinned rumour: a healer, a contract's fight, the road cart. It also chases a pinned escort from
 square to square, so 36 of the 45 rumours `beeline` broke were escorts. The `cautious` arm meets the same encounters
-again each time it retreats across a square's edge, as the window section above describes.
+again each time it retreats across a square's edge, as the window section above describes. These shipped-arm numbers
+walk escorts to the cart's square, `rumourSteering: 'cart'`; the follow-up below changed that.
+
+### W2-3 follow-up: the escort compass meets the cart
+
+A taken escort's compass used to lead to the square its cart was in, which the cart had usually left by the time the
+player got there. It now leads to the square the cart can be met in, `findEscortMeeting`: the cart's square at the
+earliest check the player can be there by the walk alone, and the cart's square again when no meeting fits. The engine
+works it out once a chronicle tick, so the compass re-plans when the meeting square changes, not on every frame.
+`rumourSteering: 'meeting'` walks the scripted player there, and `HARNESS_SHIPPED_ARMS` carries it; `cart`, the
+default, is the control. On `main` at 7c893a3:
+
+| Arms · policy | Escorts kept : broken | Escorts kept, broken | All kept : broken | Wins |
+| --- | --- | --- | --- | --- |
+| review · beeline | 1.19 → 1.41 | 80, 67 → 76, 54 | 5.17 → 5.97 | 224 → 219 |
+| review · cautious | 0.85 → 1.19 | 88, 104 → 74, 62 | 2.76 → 4.02 | 198 → 197 |
+| shipped · beeline | 0.58 → 1.03 | 21, 36 → 30, 29 | 1.64 → 2.28 | 38 → 37 |
+| shipped · cautious | 0.24 → 0.36 | 24, 101 → 33, 91 | 0.50 → 0.60 | 27 → 29 |
+
+The review arms are the panel above, 80 seeds per faction and 240 runs a row; the shipped arms are
+`HARNESS_SHIPPED_ARMS` with `commit`, 40 seeds per faction. Fewer escorts are broken in every row. In the review arms
+fewer are kept as well, because fewer are offered, 171 → 160 and 215 → 162: a player who meets a cart rather than
+chasing it down the road passes fewer other carts. Kept rumours of every kind fall from 1.55 a run to 1.47 and 1.46
+there, and rise from 0.62 to 0.68 and from 0.69 to 0.76 on the shipped arms.
+
+Meeting with the offer's margin, ×1.5 + 8 s, was measured too and rejected: 1.31 and 1.06 on the review arms, but 0.41
+and 0.17 on the shipped arms, worse than the cart's square. Its 8 s rules out the very next check even for a player
+already beside the cart, so it led players away from carts they were walking with. Counting the square the player
+stands in as no walk at all changed no run in either panel.
 
 ## What it still does not model
 

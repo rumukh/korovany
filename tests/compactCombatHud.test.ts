@@ -293,3 +293,26 @@ test('W2-3: a priced contract card shows its price in Full, Compact, the journal
   for (const line of lines) assert.ok(atlas.includes(line), `the atlas detail lost «${line}»`)
   assert.equal((atlas.match(/class="expedition-price"/g) ?? []).length, 1, 'only the priced destination quotes a price')
 })
+
+test('W2-3: a taken escort’s card says where its cart is met, in Full and Compact; an untaken rumour does not', () => {
+  const card = (id: string, extra: Record<string, unknown>) => ({
+    id, kind: 'escort' as const, title: 'Корован без охраны', task: 'Идти рядом с корованом.',
+    stake: 'Не пойдёшь — корован ляжет по дороге.', regionLabel: 'B3', timeRemaining: 40, pinned: false,
+    progress: 0, x: 0, z: 0, outcome: null, outcomeText: null,
+    travel: { meters: 160, seconds: 20, basis: 'road' as const, danger: [], unscouted: 0 },
+    reach: 'yes' as const, reward: null, meetLabel: null, ...extra,
+  })
+  const line = 'встретить в C3 · идти ~20 с · осталось 40 с · успеешь'
+  for (const mode of ['full', 'compact'] as const) {
+    const props = fixture(mode, 'guard')
+    props.view.rumours = [
+      card('rumour:escort:taken', { pinned: true, meetLabel: 'C3' }),
+      card('rumour:defend:offered', { kind: 'defend', title: 'На домики собираются' }),
+    ]
+    const html = renderToStaticMarkup(createElement(GameScreen, props))
+    assert.ok(html.includes(line), `${mode} lost «${line}»`)
+    // Control: the untaken card quotes its walk and clock but names no meeting.
+    assert.equal((html.match(/встретить в /g) ?? []).length, mode === 'compact' ? 2 : 1, mode)
+    assert.ok(html.includes('идти ~20 с · осталось 40 с · успеешь'))
+  }
+})

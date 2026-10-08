@@ -15,6 +15,7 @@ import {
   buildExpeditionGuidance,
   buildExpeditionKnowledge,
   estimateChoiceTravel,
+  estimateWalkSeconds,
   ExpeditionPlanner,
   normalizeExpeditionState,
   DIRECT_APPROACH_DETOUR_METERS,
@@ -35,8 +36,10 @@ import { buildCampaignContractViews, buildChronicleRumourViews, buildInitialGame
 import {
   createCampaignContractState,
   createGeneratedObjectives,
+  findEscortMeeting,
   pinObjective,
   resolveActiveObjectiveNode,
+  rumourTargetPoint,
   serializeChronicleCommitmentState,
   type ChronicleCommitmentState,
 } from '../src/game/world/CampaignDirector.ts'
@@ -991,6 +994,67 @@ test('a save in the middle of a taken rumour resumes on that rumour and falls ba
   assert.equal(expired.target?.id, input.activeObjectiveId)
   assert.equal(expired.notice, null)
   assert.equal(expired.targets.some((target) => target.kind === 'rumour'), false)
+})
+
+test('a save in the middle of a taken escort resumes on the square its cart is met in', () => {
+  const { blueprint, save, input } = saveFixture()
+  const start = blueprint.regions.find((region) => region.id === save.currentLocation.regionId)
+  assert.ok(start)
+  // A cart two squares along the player's row, rolling toward them.
+  const step = start.coordinate.x >= 2 ? 1 : -1
+  const along = (offset: number): string => {
+    const region = blueprint.regions.find((entry) =>
+      entry.coordinate.x === start.coordinate.x - step * offset && entry.coordinate.y === start.coordinate.y)
+    assert.ok(region)
+    return region.id
+  }
+  const path = [along(2), along(1), along(0)]
+  save.chronicleState = createChronicleState()
+  save.chronicleState.caravans.push({
+    id: 'caravan-saved', ownerFaction: input.faction, fromSiteId: 'site-from', toSiteId: 'site-to',
+    regionPath: path, progress: 0, intact: true,
+  })
+  const escort = {
+    id: 'rumour:escort:caravan-saved', kind: 'escort' as const, regionId: path[0], targetRegionId: path[2],
+    sourceRegionId: null, siteId: null, caravanId: 'caravan-saved', faction: null, raisedTick: 0, deadlineTick: 5,
+    progress: 0, actioned: false,
+  }
+  const commitments: ChronicleCommitmentState = {
+    rumours: [escort], pinnedRumourId: escort.id, nextOfferTick: 10, verdict: null,
+  }
+  save.directorState.chronicleCommitments = serializeChronicleCommitmentState(commitments) as JsonValue
+  save.directorState.expedition = new ExpeditionPlanner(blueprint).serialize()
+  const restored = normalizeActiveRunSaveV3(JSON.parse(JSON.stringify(save)))
+  assert.ok(restored)
+  const resumed = buildInitialGameView({ blueprint, config: save.config, restored }).expedition
+
+  // The meeting the engine's first frame works out from the same place at the same tick.
+  const meeting = findEscortMeeting(escort, { blueprint, state: save.chronicleState },
+    (point) => estimateWalkSeconds(blueprint, input.player, point, PLAYER_WALK_SPEED), 0)
+  assert.ok(meeting, 'the fixture must be a cart the player can meet')
+  assert.notEqual(meeting, escort.regionId, 'the fixture must be met somewhere other than where it is')
+  assert.equal(resumed.target?.id, escort.id)
+  assert.deepEqual(resumed.target?.position,
+    rumourTargetPoint(blueprint, { kind: 'escort', regionId: meeting, siteId: null }))
+
+  const knowledge = buildExpeditionKnowledge({
+    faction: input.faction, discoveredRegionIds: input.discoveredRegionIds,
+    chronicleRegions: new Map(), contestedRegionIds: new Set(),
+  }, blueprint)
+  const live = new ExpeditionPlanner(blueprint).buildView({
+    ...input, chronicleRegions: new Map(),
+    rumours: buildChronicleRumourViews(blueprint, commitments, 0, {
+      faction: input.faction, chronicle: save.chronicleState,
+      travel: (point) => estimateChoiceTravel(blueprint, input.player, point, knowledge, PLAYER_WALK_SPEED),
+      meeting: () => meeting,
+    }),
+  })
+  assert.deepEqual(resumed, live, 'the first restored frame agrees with the live compass')
+  // Control: without the meeting, the restored compass would lead to the cart's square.
+  const unmet = new ExpeditionPlanner(blueprint).buildView({
+    ...input, chronicleRegions: new Map(), rumours: buildChronicleRumourViews(blueprint, commitments, 0),
+  })
+  assert.notDeepEqual(unmet.target?.position, resumed.target?.position)
 })
 
 test('restored live rumours share the same position and deadline builder, and expired ones stay out', () => {

@@ -93,6 +93,7 @@ import {
   createGeneratedObjectives,
   estimateRumourReach,
   findContractTemplate,
+  findEscortMeeting,
   getContractProgress,
   getReadyObjectiveNodes,
   isVerdictFresh,
@@ -121,6 +122,7 @@ import {
   ExpeditionPlanner,
   buildExpeditionKnowledge,
   estimateChoiceTravel,
+  estimateWalkSeconds,
   type ExpeditionView,
 } from './ExpeditionPlanner.ts'
 import {
@@ -527,6 +529,12 @@ export interface RumourViewOptions {
   chronicle?: ChronicleState
   /** Seconds since the last chronicle tick, so the verdict counts the next check right. */
   sinceTick?: number
+  /**
+   * W2-3 — the square the taken escort's cart is met in (`findEscortMeeting`), or null to
+   * lead to the cart's square. Asked only for the taken escort; the caller decides when to
+   * work it out again, which is what keeps the compass from re-planning on every frame.
+   */
+  meeting?: (rumour: ChronicleRumour) => string | null
 }
 
 /** Shared by the live board and restored atlas; expired offers are never destinations. */
@@ -553,12 +561,15 @@ export function buildChronicleRumourViews(
     .filter((rumour) => rumourSecondsRemaining(rumour, tick) > 0)
     .map((rumour) => {
       const copy = copyFor(rumour)
-      const position = rumourTargetPoint(blueprint, rumour)
+      const pinned = commitments.pinnedRumourId === rumour.id
+      const meetId = pinned && rumour.kind === 'escort' ? options.meeting?.(rumour) ?? null : null
+      const position = rumourTargetPoint(blueprint,
+        meetId === null ? rumour : { kind: 'escort', regionId: meetId, siteId: null })
       return {
         id: rumour.id, kind: rumour.kind, title: describeRumourTitle(rumour.kind),
         task: describeRumourTask(rumour.kind, copy), stake: describeRumourStake(rumour.kind, copy),
         regionLabel: copy.regionLabel, timeRemaining: rumourSecondsRemaining(rumour, tick),
-        pinned: commitments.pinnedRumourId === rumour.id, progress: rumourProgressShare(rumour),
+        pinned, progress: rumourProgressShare(rumour),
         x: position?.x ?? null, z: position?.z ?? null, outcome: null, outcomeText: null,
         travel: position && travel ? travel(position) : null,
         // The same rules the offer used, so a card that said «успеешь» meant it.
@@ -567,6 +578,7 @@ export function buildChronicleRumourViews(
             (point) => travel(point)?.seconds ?? null, tick, options.sinceTick ?? 0)
           : null,
         reward: reward ? { ...reward } : null,
+        meetLabel: meetId !== null && meetId !== rumour.regionId ? gridLabel(meetId) : null,
       }
     })
   const verdict = commitments.verdict
@@ -951,6 +963,11 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
         travel: (point) => estimateChoiceTravel(blueprint, { x: position[0], z: position[2] }, point,
           travelKnowledge, walkSpeed),
         chronicle: restored?.chronicleState ?? createChronicleState(),
+        // The engine's first frame works the meeting out from the same place, at the tick.
+        meeting: (rumour) => findEscortMeeting(rumour,
+          { blueprint, state: restored?.chronicleState ?? createChronicleState() },
+          (point) => estimateWalkSeconds(blueprint, { x: position[0], z: position[2] }, point, walkSpeed),
+          restored?.chronicleState.tick ?? 0),
       }),
     activeObjectiveId: resolveActiveObjectiveNode(blueprint, config.faction, objectives,
       normalizeCampaignContractState(restored?.directorState.campaignContracts).pinnedNodeId, gate)?.id ?? null,
