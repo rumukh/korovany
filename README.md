@@ -73,7 +73,7 @@ faction-colored cloth, warm skin, neutral steel, and dark leather remain distinc
 | `Space` | Jump |
 | Mouse / world drag | Camera while captured; drag the world to look if capture is unavailable |
 | Left click / world tap / touch attack | Three-beat melee, or fire while aiming the bow; a look drag does not attack |
-| `C` / touch **Уворот** | Directional evasive step (25 stamina); without movement, step backward |
+| `C` / touch **Уворот** | Directional evasive step (19 stamina); without movement, step backward |
 | Right click / `R` / touch ability | Hold to aim the elf's bow or raise the guard's shield; villain uses the rush |
 | `E` / touch `E` | Interact |
 | `Q` / touch `Q` | Toggle squad Follow / Hold |
@@ -102,6 +102,12 @@ inputs. Paid recovery, cooldowns, stamina, and committed finishers are preserved
 The three melee beats have alternating wind-ups and follow-through, with a stronger
 full-body finisher. Poses and weapon trails follow the actual combat clock rather
 than a separate animation timer; cancelling a swing also cancels its visual strike.
+Each accepted melee beat, arrow or villain cleave holds stamina regeneration for
+0.50 seconds. Raising the guard's shield and landing a perfect guard do not.
+Ordinary enemy melee locks to the shape it draws: ticks for the final 33.3% of the
+wind-up, and commander chevrons and heavy wedges for the final 35%. Scouts, minions
+and beasts use the same pooled tick as soldiers; direct and nearby threats take the
+eight slots first. Reduced motion keeps the full tell visible and its opacity clock.
 The guard braces the shield with the offhand, including while moving or attacking.
 The elf's held bow and shot recovery use the shared manual-aim presentation in both
 the enhanced and legacy renderers. Releasing aim restores the melee equipment.
@@ -287,7 +293,7 @@ you kill stays dead across walking away and a continue until its replacement is 
 seconds later. Guard aid is a bounded reward for defending the cart, not healing for
 repeated inspections.
 
-Evasion protects only 0.06–0.18 seconds of its 0.30-second step, respects collision and
+Evasion costs 19 stamina and protects only 0.06–0.18 seconds of its 0.30-second step, respects collision and
 leg injuries, and cannot cancel a committed finisher. A guard's first frontal contact
 within 0.12 seconds of raising the shield can spend 12 stamina instead of health;
 the timing reward rearms no sooner than 0.65 seconds. Arrows never stun their shooter.

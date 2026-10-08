@@ -26,12 +26,20 @@ import { deriveSeed } from '../src/game/random/seed.ts'
 import { BEAST_ROLES, isBeastRole, type ActorRole } from '../src/game/types.ts'
 import { BEAST_PROFILES } from '../src/game/world/Fauna.ts'
 import {
+  ACTOR_BRUTE_WEDGE_WIDTH,
+  ACTOR_CHAMPION_WEDGE_WIDTH,
+  ACTOR_COMMANDER_LOCK_SHARE,
+  ACTOR_COMMANDER_WIDTH,
+  ACTOR_TICK_LOCK_SHARE,
+  ACTOR_TICK_WIDTH,
+  ACTOR_WEDGE_LOCK_SHARE,
   ARCHER_FIRE_COOLDOWN,
   CONTACT_RANGE_FORGIVENESS,
   MELEE_DAMAGE,
   actionCooldown,
   actionRecovery,
   actionWindup,
+  actorTelegraphSpec,
   actorMaxPoise,
   actorStaggerDuration,
   advanceReaction,
@@ -39,6 +47,7 @@ import {
   canStartAction,
   isLargeBody,
   isWithinContact,
+  isWithinLockedMeleeShape,
   killReward,
   knockbackMagnitude,
   meleeDamageSpec,
@@ -48,6 +57,7 @@ import {
   rollMeleeDamage,
   rollPropBite,
   selectDeathStyle,
+  shouldLockActorMeleeHeading,
   shouldInjurePlayer,
   type CombatActionKind,
   type CombatActor,
@@ -455,6 +465,91 @@ test('contact forgiveness is the slack the engine applied inline', () => {
     comparisons += 1
   }
   assert.ok(comparisons >= 4_000)
+})
+
+test('ordinary melee contact matches each drawn tell and its role lock share', () => {
+  assert.deepEqual(actorTelegraphSpec('soldier'), {
+    kind: 'tick', width: ACTOR_TICK_WIDTH, lockShare: ACTOR_TICK_LOCK_SHARE,
+  })
+  assert.deepEqual(actorTelegraphSpec('commander'), {
+    kind: 'commander', width: ACTOR_COMMANDER_WIDTH, lockShare: ACTOR_COMMANDER_LOCK_SHARE,
+  })
+  assert.deepEqual(actorTelegraphSpec('brute'), {
+    kind: 'wedge', width: ACTOR_BRUTE_WEDGE_WIDTH, lockShare: ACTOR_WEDGE_LOCK_SHARE,
+  })
+  assert.deepEqual(actorTelegraphSpec('champion'), {
+    kind: 'wedge', width: ACTOR_CHAMPION_WEDGE_WIDTH, lockShare: ACTOR_WEDGE_LOCK_SHARE,
+  })
+  assert.equal(shouldLockActorMeleeHeading('soldier', 0.173, 0.26), false)
+  assert.equal(shouldLockActorMeleeHeading('soldier', 0.174, 0.26), true)
+  assert.equal(shouldLockActorMeleeHeading('brute', 0.363, 0.56), false)
+  assert.equal(shouldLockActorMeleeHeading('brute', 0.3641, 0.56), true)
+
+  const contact = {
+    role: 'soldier' as const,
+    offsetX: 0,
+    offsetZ: 2.4,
+    headingX: 0,
+    headingZ: 1,
+    contactRange: 2.55,
+    targetRadius: 0.64,
+  }
+  assert.equal(isWithinLockedMeleeShape(contact), true)
+  assert.equal(
+    isWithinLockedMeleeShape({
+      ...contact,
+      offsetX: contact.targetRadius + ACTOR_TICK_WIDTH / 2 + 0.01,
+    }),
+    false,
+    'a target outside the widened tick must miss',
+  )
+  const commanderClearance = contact.targetRadius + ACTOR_COMMANDER_WIDTH / 2
+  assert.equal(isWithinLockedMeleeShape({
+    ...contact, role: 'commander', offsetX: commanderClearance,
+  }), true)
+  assert.equal(isWithinLockedMeleeShape({
+    ...contact, role: 'commander', offsetX: commanderClearance + 0.01,
+  }), false)
+  for (const [role, width] of [
+    ['brute', ACTOR_BRUTE_WEDGE_WIDTH],
+    ['champion', ACTOR_CHAMPION_WEDGE_WIDTH],
+  ] as const) {
+    const clearance = contact.targetRadius + width / 2
+    assert.equal(isWithinLockedMeleeShape({
+      ...contact, role, offsetX: clearance, offsetZ: contact.contactRange,
+    }), true, `${role} missed inside its contact-width wedge`)
+    assert.equal(isWithinLockedMeleeShape({
+      ...contact, role, offsetX: clearance + 0.01, offsetZ: contact.contactRange,
+    }), false, `${role} hit outside its contact-width wedge`)
+  }
+  assert.equal(isWithinLockedMeleeShape({
+    ...contact,
+    role: 'brute',
+    offsetX: contact.targetRadius + ACTOR_BRUTE_WEDGE_WIDTH / 4,
+    offsetZ: contact.contactRange / 2,
+  }), true, 'the brute wedge did not widen linearly')
+
+  const trackedLength = Math.hypot(1, contact.offsetZ)
+  assert.equal(
+    isWithinLockedMeleeShape({
+      ...contact,
+      offsetX: 1,
+      headingX: 1 / trackedLength,
+      headingZ: contact.offsetZ / trackedLength,
+    }),
+    true,
+    'the same target still connects under the old live-tracking control',
+  )
+  assert.equal(
+    isWithinLockedMeleeShape({ ...contact, offsetZ: -1 }),
+    false,
+    'the locked strike does not wrap behind its attacker',
+  )
+  assert.equal(
+    isWithinLockedMeleeShape({ ...contact, offsetZ: 3.3 }),
+    false,
+    'heading lock does not replace the existing forward reach',
+  )
 })
 
 // ---------------------------------------------------------------------------

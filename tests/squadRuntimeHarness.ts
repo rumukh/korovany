@@ -168,7 +168,7 @@ export function squadField(
     // windup/contact, reactions, separation, steering, collision and pathfinding are real.
     updateActorIndicators() {}, updateActorDeathMotion() {},
     animateActorCharacter() {}, updateChampionAura() {},
-    acquireActorTelegraph() {}, updateActorTelegraph() {}, releaseActorTelegraph() {},
+    syncActorTelegraphs() {}, updateActorTelegraph() {}, releaseActorTelegraph() {},
     playSound() {}, resumeAudio() {}, emitView() {}, unbindActorArms() {},
     damageActor(target: FieldActor) { contacts.push(target.id) },
     spawnActor(

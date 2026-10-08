@@ -278,6 +278,7 @@ import {
   actionCooldown,
   actionRecovery,
   actionWindup,
+  actorTelegraphSpec,
   actorBaseHealth,
   actorMaxPoise,
   advancePlayerMelee,
@@ -288,6 +289,7 @@ import {
   createPlayerMeleeState,
   isPlayerMeleeCommitted,
   isWithinContact,
+  isWithinLockedMeleeShape,
   killReward,
   nextPlayerMeleeBeat,
   PLAYER_MELEE_BEATS,
@@ -298,6 +300,7 @@ import {
   rollMeleeDamage,
   rollPropBite,
   selectMeleeTarget,
+  shouldLockActorMeleeHeading,
   shouldInjurePlayer,
   type CombatActor,
   type MeleeArcCandidate,
@@ -360,7 +363,11 @@ import {
   type SquadCommandState,
 } from '../src/game/world/SquadCommand.ts'
 import { chooseGeneratedInteraction } from '../src/game/world/GeneratedInteraction.ts'
-import { missingPlayerLegs, playerLegMobility } from '../src/game/world/CombatMastery.ts'
+import {
+  OFFENCE_STAMINA_REGEN_DELAY,
+  missingPlayerLegs,
+  playerLegMobility,
+} from '../src/game/world/CombatMastery.ts'
 import {
   cancelCaravanLoot,
   createCaravanClaimState,
@@ -551,6 +558,8 @@ export const HARNESS_AIM_TURN_RATE = 6.5
 export const HARNESS_DUEL_RANGE = 13
 /** How long before contact the duelist notices a telegraph and answers it. */
 export const HARNESS_REACTION_WINDOW = 0.32
+/** Human reaction latency for newly readable W3-2 ground tells. */
+export const HARNESS_TELL_REACTION_LATENCY = 0.25
 /** Wind-up at or above this reads as a heavy: commander 0.38, champion 0.48, brute 0.56. */
 export const HARNESS_HEAVY_WINDUP = 0.32
 /** Player stamina regeneration while not sprinting. Matches the engine's `+16/s`. */
@@ -668,6 +677,8 @@ export type MeleeModel = 'legacy' | 'honest'
  * exercise the whole 0.18–0.56 s band the roadmap's third signal names.
  */
 export type MeleeDefence = 'none' | 'heavy' | 'all'
+/** W3-2's stamina delay and ordinary-melee heading lock, or the matched prior rule. */
+export type CombatEconomy = 'legacy' | 'shipped'
 
 /**
  * Roadmap 1.3 — how the scripted player treats the chronicle's rumours.
@@ -1172,6 +1183,10 @@ export interface MeleeMetrics {
   /** Stances the finisher broke. The third beat's reason to exist. */
   poiseBreaks: number
   staminaSpent: number
+  /** Requested finishers that fell back to beat one because stamina was short. */
+  staminaStarvedMoments: number
+  /** Starved requests over resolved plus starved finisher attempts. */
+  staminaStarvedRate: number
   /** Sequences abandoned by sprint, jump or the faction ability. */
   cancels: number
   /** Melee wind-ups a heavy role started against the player. */
@@ -1554,6 +1569,8 @@ export interface RunReport {
   meleeModel: MeleeModel
   /** How much of a telegraph the scripted player answered. */
   meleeDefence: MeleeDefence
+  /** W3-2's shipped combat economy, or the prior matched control. */
+  combatEconomy: CombatEconomy
   /** Roadmap 1.3 — which rumour arm this run was. */
   rumourPolicy: RumourPolicy
   /** W2-3 — where that arm walked an escort to. */
@@ -1684,6 +1701,10 @@ export interface RunOptions {
    * claim.
    */
   meleeDefence?: MeleeDefence
+  /** Defaults to `legacy`, preserving every pinned pre-W3-2 run. */
+  combatEconomy?: CombatEconomy
+  /** W3-2 sensitivity arm for newly readable tells; the shipped value is 0.25 s. */
+  tellReactionLatency?: number
   /** Defaults to `off`, which is the pre-1.3 world every pinned number describes. */
   rumourPolicy?: RumourPolicy
   /** W2-3 — defaults to `cart`, the square every pinned number walked an escort to. */
@@ -1817,9 +1838,9 @@ export interface RunOptions {
 /**
  * W1-5 — every shipped arm at once: the configuration the balance baseline is measured in.
  *
- * Honest melee answering heavies, the nearest arm of the fork and seeded drafts are the
- * gameplay review's sweep; the seven W1-5 arms are what that sweep lacked, and W2-1's
- * `progress` escalation is the tier the game ships with since. Rumours are
+ * Honest melee answering every now-visible ordinary tell, the nearest arm of the fork and
+ * seeded drafts are the gameplay review's sweep; the seven W1-5 arms are what that sweep
+ * lacked, and W2-1's `progress` escalation is the tier the game ships with since. Rumours are
  * offered, measured for feasibility and resolved, but not chased: the review's `commit`
  * arm pins every rumour within reach and, with the shipped arms on, measured as a player
  * standing in one square for minutes at a time while the campaign waits, which is a fact
@@ -1845,6 +1866,10 @@ export interface RunOptions {
  * is up, instead of waiting until nothing hostile is within 12 m of its site. Pass
  * `errand: 'clear'` for the stand-in every baseline before W3-5 was measured with.
  *
+ * `combatEconomy: 'shipped'` is W3-2's 0.50-second regeneration delay and ordinary-melee
+ * heading lock. The default stays `legacy` for pinned runs; the matched control spreads
+ * `legacy` and restores `meleeDefence: 'heavy'`.
+ *
  * `encounterMemory: 'remnants'` is W3-4's ledger: a square that streams back in fields what is
  * left of its packs, not the packs whole again. `encounterMemory: 'fresh'` is the run before it.
  * `streaming: 'held'` is W3-4's hold on the window's centre: turning back into the square just
@@ -1853,6 +1878,8 @@ export interface RunOptions {
 export const HARNESS_SHIPPED_ARMS = {
   meleeModel: 'honest',
   meleeDefence: 'heavy',
+  combatEconomy: 'shipped',
+  tellReactionLatency: HARNESS_TELL_REACTION_LATENCY,
   rumourPolicy: 'ignore',
   rumourSteering: 'meeting',
   contractPolicy: 'nearest',
@@ -1951,6 +1978,9 @@ export interface HarnessActor extends AiActor, CombatActor {
   actionKind: 'melee' | 'arrow' | 'prop'
   actionAimX: number
   actionAimZ: number
+  actionHeadingX: number
+  actionHeadingZ: number
+  actionHeadingLocked: boolean
   /** The finale boss: its death completes this node. */
   objectiveId: string | null
   /** True once the player has landed a blow on it. */
@@ -1995,6 +2025,9 @@ type W15ActorFields = Pick<
   | 'actionKind'
   | 'actionAimX'
   | 'actionAimZ'
+  | 'actionHeadingX'
+  | 'actionHeadingZ'
+  | 'actionHeadingLocked'
   | 'objectiveId'
   | 'struckByPlayer'
   | 'orderX'
@@ -2031,6 +2064,9 @@ function legacyActorDefaults(homeX: number, homeZ: number): W15ActorFields {
     actionKind: 'melee',
     actionAimX: 0,
     actionAimZ: 0,
+    actionHeadingX: 0,
+    actionHeadingZ: 1,
+    actionHeadingLocked: false,
     objectiveId: null,
     struckByPlayer: false,
     orderX: null,
@@ -2080,6 +2116,12 @@ export function runHarness(options: RunOptions): RunReport {
   const timeLimit = options.timeLimit ?? HARNESS_TIME_LIMIT
   const meleeModel = options.meleeModel ?? 'legacy'
   const meleeDefence = options.meleeDefence ?? 'heavy'
+  const combatEconomy: CombatEconomy = options.combatEconomy ?? 'legacy'
+  const shippedCombatEconomy = combatEconomy === 'shipped'
+  const tellReactionLatency = options.tellReactionLatency ?? HARNESS_TELL_REACTION_LATENCY
+  if (!Number.isFinite(tellReactionLatency) || tellReactionLatency < 0) {
+    throw new RangeError('Tell reaction latency must be finite and non-negative')
+  }
   const rumourPolicy = options.rumourPolicy ?? 'off'
   const rumourSteering = options.rumourSteering ?? 'cart'
   const contractPolicy = options.contractPolicy ?? 'firstReady'
@@ -2348,6 +2390,7 @@ export function runHarness(options: RunOptions): RunReport {
     // --- roadmap 1.1 ---------------------------------------------------------
     stamina: 100,
     maxStamina: 100,
+    staminaRegenDelay: 0,
     /** Where the camera points. `(sin, cos)` of it is the aim vector the arc tests. */
     aimYaw: 0,
     melee: createPlayerMeleeState() as PlayerMeleeState,
@@ -2367,6 +2410,8 @@ export function runHarness(options: RunOptions): RunReport {
     finishersLanded: 0,
     poiseBreaks: 0,
     staminaSpent: 0,
+    staminaStarvedMoments: 0,
+    staminaStarvedRate: 0,
     cancels: 0,
     telegraphedHeavies: 0,
     telegraphedHeaviesAvoided: 0,
@@ -5235,6 +5280,12 @@ export function runHarness(options: RunOptions): RunReport {
     actor.actionTargetId = target?.id ?? null
     actor.actionAimX = aim.x
     actor.actionAimZ = aim.z
+    const headingX = aim.x - actor.x
+    const headingZ = aim.z - actor.z
+    const headingLength = Math.hypot(headingX, headingZ)
+    actor.actionHeadingX = headingLength > 1e-9 ? headingX / headingLength : 0
+    actor.actionHeadingZ = headingLength > 1e-9 ? headingZ / headingLength : 1
+    actor.actionHeadingLocked = false
     actor.clearAttempted = false
     actor.telegraphHeavy =
       targetIsPlayer && kind === 'melee' && actionWindup(actor.role) >= HARNESS_HEAVY_WINDUP
@@ -5242,7 +5293,11 @@ export function runHarness(options: RunOptions): RunReport {
   }
 
   /** `resolveActorActionContact`: the swing lands on what is still in reach, or on air. */
-  const resolveAction = (actor: HarnessActor, playerCommitted: boolean): void => {
+  const resolveAction = (
+    actor: HarnessActor,
+    playerCommitted: boolean,
+    sampledTarget: PlanPoint | null = null,
+  ): void => {
     const rage = actor.rageTimer > 0 ? HARNESS_RAGE_DAMAGE : 0
     if (actor.actionKind === 'arrow') {
       const target = actorById(actor.actionTargetId)
@@ -5268,10 +5323,22 @@ export function runHarness(options: RunOptions): RunReport {
       return
     }
     if (actor.actionTargetIsPlayer) {
+      const offsetX = (sampledTarget?.x ?? player.x) - actor.x
+      const offsetZ = (sampledTarget?.z ?? player.z) - actor.z
       const connected =
         player.health > 0 &&
         actor.hostileToPlayer &&
-        isWithinContact(Math.hypot(player.x - actor.x, player.z - actor.z), 2.55)
+        (shippedCombatEconomy
+          ? isWithinLockedMeleeShape({
+              role: actor.role,
+              offsetX,
+              offsetZ,
+              headingX: actor.actionHeadingX,
+              headingZ: actor.actionHeadingZ,
+              contactRange: 2.55,
+              targetRadius: HARNESS_PLAYER_RADIUS,
+            })
+          : isWithinContact(Math.hypot(offsetX, offsetZ), 2.55))
       if (actor.telegraphHeavy && !connected) melee.telegraphedHeaviesAvoided += 1
       if (actor.clearAttempted && !connected) {
         melee.windupClears[actor.role] = (melee.windupClears[actor.role] ?? 0) + 1
@@ -5287,7 +5354,17 @@ export function runHarness(options: RunOptions): RunReport {
     if (
       target?.alive &&
       areAllegiancesHostile(actor.allegiance, target.allegiance) &&
-      isWithinContact(Math.hypot(target.x - actor.x, target.z - actor.z), 2.45)
+      (shippedCombatEconomy
+        ? isWithinLockedMeleeShape({
+            role: actor.role,
+            offsetX: (sampledTarget?.x ?? target.x) - actor.x,
+            offsetZ: (sampledTarget?.z ?? target.z) - actor.z,
+            headingX: actor.actionHeadingX,
+            headingZ: actor.actionHeadingZ,
+            contactRange: 2.45,
+            targetRadius: actorRadius(target.role),
+          })
+        : isWithinContact(Math.hypot(target.x - actor.x, target.z - actor.z), 2.45))
     ) {
       const base = rollMeleeDamage(actor.role, 'actor', () => combatRng.next())
       strikeActor(actor, target, base + rage, 'allyMelee')
@@ -5684,11 +5761,72 @@ export function runHarness(options: RunOptions): RunReport {
       }
     }
 
+    let sampledTarget: PlanPoint | null = null
     if (actor.actionPhase !== 'idle') {
+      if (actor.actionPhase === 'windup') {
+        const target = actorById(actor.actionTargetId)
+        const live = actor.actionTargetIsPlayer
+          ? player.health > 0 && actor.hostileToPlayer
+            ? player
+            : null
+          : target?.alive && areAllegiancesHostile(actor.allegiance, target.allegiance)
+            ? target
+            : actor.actionKind === 'prop' && actor.propOwnerId
+              ? eventProps.get(actor.propOwnerId) ?? null
+              : null
+        if (live && (!shippedCombatEconomy || !actor.actionHeadingLocked)) {
+          const duration = actionWindup(actor.role)
+          const previousElapsed = duration - actor.actionRemaining
+          const nextElapsed = previousElapsed + delta
+          const spec = actorTelegraphSpec(actor.role)
+          const lockAt =
+            actor.actionKind === 'melee' && spec && spec.lockShare > 0
+              ? duration * (1 - spec.lockShare)
+              : Number.POSITIVE_INFINITY
+          const lockFraction =
+            shippedCombatEconomy && nextElapsed >= lockAt
+              ? Math.max(0, Math.min(1, (lockAt - previousElapsed) / delta))
+              : 1
+          const headingTargetX =
+            actor.actionAimX + (live.x - actor.actionAimX) * lockFraction
+          const headingTargetZ =
+            actor.actionAimZ + (live.z - actor.actionAimZ) * lockFraction
+          const headingX = headingTargetX - actor.x
+          const headingZ = headingTargetZ - actor.z
+          const headingLength = Math.hypot(headingX, headingZ)
+          if (headingLength > 1e-9) {
+            actor.actionHeadingX = headingX / headingLength
+            actor.actionHeadingZ = headingZ / headingLength
+          }
+          if (shippedCombatEconomy && nextElapsed >= lockAt) {
+            actor.actionHeadingLocked = true
+          }
+        }
+        if (live) {
+          const duration = actionWindup(actor.role)
+          const previousElapsed = duration - actor.actionRemaining
+          const nextElapsed = previousElapsed + delta
+          if (
+            shippedCombatEconomy &&
+            actor.actionKind === 'melee' &&
+            nextElapsed >= duration
+          ) {
+            const fraction = Math.max(0, Math.min(1, (duration - previousElapsed) / delta))
+            sampledTarget = {
+              x: actor.actionAimX + (live.x - actor.actionAimX) * fraction,
+              z: actor.actionAimZ + (live.z - actor.actionAimZ) * fraction,
+            }
+          }
+          if (shippedCombatEconomy) {
+            actor.actionAimX = live.x
+            actor.actionAimZ = live.z
+          }
+        }
+      }
       actor.actionRemaining -= delta
       if (actor.actionRemaining > 0) return
       if (actor.actionPhase === 'windup') {
-        resolveAction(actor, playerCommitted)
+        resolveAction(actor, playerCommitted, sampledTarget)
         if (!actor.alive || actor.reaction === 'stagger' || actor.actionPhase !== 'windup') return
         if (actor.role === 'scout') actor.retreatTimer = HARNESS_SCOUT_RETREAT
         actor.actionPhase = 'recovery'
@@ -6368,7 +6506,16 @@ export function runHarness(options: RunOptions): RunReport {
     // moves so the answer is a reaction to this frame rather than to the last one.
     const inbound =
       policy === 'duelist' && meleeDefence !== 'none'
-        ? inboundWindup(actors, player, meleeDefence === 'heavy')
+        ? inboundWindup(actors, player, {
+            heavyOnly: meleeDefence === 'heavy',
+            combatEconomy,
+            reactionLatency: tellReactionLatency,
+            clearSpeed:
+              player.stamina > 2 &&
+              (!sustainOn || missingPlayerLegs(player.body) === 0)
+                ? walkSpeed() * HARNESS_SPRINT_MULTIPLIER
+                : 0,
+          })
         : null
     if (inbound) {
       // The defensive verb, exactly as the engine spends it: sprint/jump/ability drop the
@@ -6393,6 +6540,9 @@ export function runHarness(options: RunOptions): RunReport {
     const rumourSite = steering ? steeringTarget(steering) : null
     const travelSite = goal?.point ?? beatGoal?.point ?? rumourSite ??
       (campHeld ? undefined : objectiveSite)
+    const staminaRegenDelayed = player.staminaRegenDelay > 0
+    player.staminaRegenDelay = Math.max(0, player.staminaRegenDelay - delta)
+    let staminaRegeneratedThisFrame = 0
 
     if (policy !== 'idle' && (travelSite || fightTarget)) {
       const retreating =
@@ -6457,11 +6607,16 @@ export function runHarness(options: RunOptions): RunReport {
         if (!doctrineEffects.forcedMarch) {
           player.stamina = Math.max(0, player.stamina - delta * HARNESS_SPRINT_DRAIN)
         }
-      } else if (!doctrineEffects.forcedMarch || moving) {
+      } else if (
+        (!shippedCombatEconomy || !staminaRegenDelayed) &&
+        (!doctrineEffects.forcedMarch || moving)
+      ) {
+        const staminaBefore = player.stamina
         player.stamina = Math.min(
           player.maxStamina,
           player.stamina + delta * HARNESS_STAMINA_REGEN,
         )
+        staminaRegeneratedThisFrame = player.stamina - staminaBefore
       }
 
       if (moving) {
@@ -6615,6 +6770,7 @@ export function runHarness(options: RunOptions): RunReport {
       collision,
       damageTaken,
       melee,
+      combatEconomy,
       playerCommitted,
       onKill: () => {
         kills += 1
@@ -6697,10 +6853,18 @@ export function runHarness(options: RunOptions): RunReport {
       const reachable = nearestHostileWithin(actors, player, pending.reach)
       if (reachable && !inbound) bufferPlayerMelee(player.melee)
 
-      const step = advancePlayerMelee(player.melee, { delta, stamina: player.stamina })
+      const staminaForMelee = shippedCombatEconomy
+        ? player.stamina - staminaRegeneratedThisFrame
+        : player.stamina
+      const step = advancePlayerMelee(player.melee, { delta, stamina: staminaForMelee })
       if (step.startedBeat > 0) {
+        if (shippedCombatEconomy) {
+          player.stamina = Math.max(0, player.stamina - staminaRegeneratedThisFrame)
+          player.staminaRegenDelay = OFFENCE_STAMINA_REGEN_DELAY
+        }
         player.stamina = Math.max(0, player.stamina - step.staminaSpent)
         melee.staminaSpent += step.staminaSpent
+        if (step.finisherStalled) melee.staminaStarvedMoments += 1
       }
       if (step.contactBeat > 0) {
         const spec = playerBeatSpec(step.contactBeat)
@@ -7011,6 +7175,11 @@ export function runHarness(options: RunOptions): RunReport {
     melee.telegraphedHeavies > 0
       ? melee.telegraphedHeaviesAvoided / melee.telegraphedHeavies
       : 0
+  melee.staminaStarvedRate =
+    melee.beatsByIndex[2] + melee.staminaStarvedMoments > 0
+      ? melee.staminaStarvedMoments /
+        (melee.beatsByIndex[2] + melee.staminaStarvedMoments)
+      : 0
   for (const [role, times] of killTimes) {
     melee.timeToKillByRole[role] = median(times)
     melee.killsByRole[role] = times.length
@@ -7072,6 +7241,7 @@ export function runHarness(options: RunOptions): RunReport {
     policy,
     meleeModel,
     meleeDefence,
+    combatEconomy,
     rumourPolicy,
     rumourSteering,
     contractPolicy,
@@ -7317,7 +7487,12 @@ function nearestHostileWithin(
 function inboundWindup(
   actors: readonly HarnessActor[],
   player: { x: number; z: number },
-  heavyOnly: boolean,
+  options: {
+    heavyOnly: boolean
+    combatEconomy: CombatEconomy
+    reactionLatency: number
+    clearSpeed: number
+  },
 ): { actor: HarnessActor; remaining: number } | null {
   let best: { actor: HarnessActor; remaining: number } | null = null
   for (const actor of actors) {
@@ -7325,7 +7500,31 @@ function inboundWindup(
     if (actor.actionPhase !== 'windup' || !actor.actionTargetIsPlayer) continue
     // W1-5 — an archer's draw is not a melee telegraph, and stepping back does not dodge it.
     if (actor.actionKind === 'arrow') continue
-    if (heavyOnly && actionWindup(actor.role) < HARNESS_HEAVY_WINDUP) continue
+    const windup = actionWindup(actor.role)
+    const heavy = windup >= HARNESS_HEAVY_WINDUP
+    if (options.heavyOnly && !heavy) {
+      const newlyReadable =
+        actor.role === 'scout' || actor.role === 'minion' || isBeastRole(actor.role)
+      if (options.combatEconomy !== 'shipped' || !newlyReadable) continue
+      const age = windup - actor.actionRemaining
+      if (age + 1e-9 < options.reactionLatency || options.clearSpeed <= 0) continue
+      const offsetX = player.x - actor.x
+      const offsetZ = player.z - actor.z
+      const distance = Math.hypot(offsetX, offsetZ)
+      if (distance <= 1e-9) continue
+      const travel = options.clearSpeed * actor.actionRemaining
+      if (isWithinLockedMeleeShape({
+        role: actor.role,
+        offsetX: offsetX + offsetX / distance * travel,
+        offsetZ: offsetZ + offsetZ / distance * travel,
+        headingX: actor.actionHeadingX,
+        headingZ: actor.actionHeadingZ,
+        contactRange: HARNESS_PLAYER_CONTACT,
+        targetRadius: HARNESS_PLAYER_RADIUS,
+      })) {
+        continue
+      }
+    }
     if (actor.actionRemaining > HARNESS_REACTION_WINDOW) continue
     if (
       Math.hypot(actor.x - player.x, actor.z - player.z) >
@@ -7359,6 +7558,7 @@ interface StepContext {
   collision: CollisionWorld
   damageTaken: DamageBySource
   melee: MeleeMetrics
+  combatEconomy: CombatEconomy
   /** True while the finisher has the player rooted, so a hit taken then is attributable. */
   playerCommitted: boolean
   onKill: () => void
@@ -7385,6 +7585,7 @@ interface StepContext {
  */
 function stepActors(context: StepContext): void {
   const { actors, player, delta, elapsed, combatRng, collision } = context
+  const shippedCombatEconomy = context.combatEconomy === 'shipped'
   const living = actors.filter((actor) => actor.alive)
   const playerPoint: AiPoint = { x: player.x, y: 0, z: player.z }
 
@@ -7462,11 +7663,47 @@ function stepActors(context: StepContext): void {
     const contactRange = targetIsPlayer ? HARNESS_PLAYER_CONTACT : 2.45
 
     if (actor.actionPhase !== 'idle') {
+      if (
+        actor.actionPhase === 'windup' &&
+        (!shippedCombatEconomy || !actor.actionHeadingLocked)
+      ) {
+        const headingLength = Math.hypot(targetX - actor.x, targetZ - actor.z)
+        if (headingLength > 1e-9) {
+          actor.actionHeadingX = (targetX - actor.x) / headingLength
+          actor.actionHeadingZ = (targetZ - actor.z) / headingLength
+        }
+      }
       actor.actionRemaining -= delta
+      if (
+        shippedCombatEconomy &&
+        actor.actionPhase === 'windup' &&
+        shouldLockActorMeleeHeading(
+          actor.role,
+          actionWindup(actor.role) - actor.actionRemaining,
+          actionWindup(actor.role),
+        )
+      ) {
+        actor.actionHeadingLocked = true
+      }
       if (actor.actionRemaining <= 0) {
         if (actor.actionPhase === 'windup') {
           const connected =
-            isWithinContact(distance, contactRange) && actor.reaction !== 'stagger'
+            (shippedCombatEconomy
+              ? isWithinLockedMeleeShape({
+                  role: actor.role,
+                  offsetX: targetX - actor.x,
+                  offsetZ: targetZ - actor.z,
+                  headingX: actor.actionHeadingX,
+                  headingZ: actor.actionHeadingZ,
+                  contactRange,
+                  targetRadius: targetIsPlayer
+                    ? HARNESS_PLAYER_RADIUS
+                    : target
+                      ? actorRadius(target.role)
+                      : HARNESS_ACTOR_RADIUS,
+                })
+              : isWithinContact(distance, contactRange)) &&
+            actor.reaction !== 'stagger'
           // Roadmap 1.1's signal 2 and signal 3, both counted at the one moment that can
           // answer them: a telegraph either reached the player or it did not.
           if (actor.actionTargetIsPlayer) {
@@ -7531,6 +7768,10 @@ function stepActors(context: StepContext): void {
       // here, at the one place a wind-up begins.
       actor.actionTargetIsPlayer = targetIsPlayer
       actor.actionTargetId = target?.id ?? null
+      const headingLength = Math.hypot(targetX - actor.x, targetZ - actor.z)
+      actor.actionHeadingX = headingLength > 1e-9 ? (targetX - actor.x) / headingLength : 0
+      actor.actionHeadingZ = headingLength > 1e-9 ? (targetZ - actor.z) / headingLength : 1
+      actor.actionHeadingLocked = false
       actor.clearAttempted = false
       actor.telegraphHeavy =
         targetIsPlayer && actionWindup(actor.role) >= HARNESS_HEAVY_WINDUP
@@ -7739,6 +7980,13 @@ export interface BalanceCell {
   deathCauses: Record<DeathCause, number>
   deathSystems: Record<string, number>
   meanDamageTaken: number
+  meanDamageDealt: number
+  combat: {
+    playerWhiffRate: number
+    heavyAvoidRate: number
+    meanStaminaStarvedMoments: number
+    staminaStarvedFinisherRate: number
+  }
   /** Mean damage taken per run, by the system that spawned the hand. */
   damageBySystem: Record<string, number>
   meanKills: number
@@ -7941,6 +8189,13 @@ function summarizeCell(
     meanPursuersStreamedOut: 0,
   }
   let damage = 0
+  let damageDealt = 0
+  let beatsResolved = 0
+  let beatsWhiffed = 0
+  let telegraphedHeavies = 0
+  let telegraphedHeaviesAvoided = 0
+  let finishersResolved = 0
+  let staminaStarvedMoments = 0
   let kills = 0
   let companionsAtEnd = 0
   let companionKills = 0
@@ -7957,6 +8212,13 @@ function summarizeCell(
     const bucket = minute >= 10 ? '10+' : `${minute}-${minute + 1}`
     lengthHistogram[bucket] = (lengthHistogram[bucket] ?? 0) + 1
     damage += report.damageTaken.total
+    damageDealt += report.damageDealt.total
+    beatsResolved += report.melee.beatsResolved
+    beatsWhiffed += report.melee.beatsWhiffed
+    telegraphedHeavies += report.melee.telegraphedHeavies
+    telegraphedHeaviesAvoided += report.melee.telegraphedHeaviesAvoided
+    finishersResolved += report.melee.beatsByIndex[2]
+    staminaStarvedMoments += report.melee.staminaStarvedMoments
     kills += report.kills
     addInto(damageBySystem, balance.damageBySystem, 1 / runs)
     if (balance.companions.aliveAtFinale !== null) finale.push(balance.companions.aliveAtFinale)
@@ -8090,6 +8352,17 @@ function summarizeCell(
     deathCauses,
     deathSystems,
     meanDamageTaken: damage / runs,
+    meanDamageDealt: damageDealt / runs,
+    combat: {
+      playerWhiffRate: beatsResolved > 0 ? beatsWhiffed / beatsResolved : 0,
+      heavyAvoidRate:
+        telegraphedHeavies > 0 ? telegraphedHeaviesAvoided / telegraphedHeavies : 0,
+      meanStaminaStarvedMoments: staminaStarvedMoments / runs,
+      staminaStarvedFinisherRate:
+        finishersResolved + staminaStarvedMoments > 0
+          ? staminaStarvedMoments / (finishersResolved + staminaStarvedMoments)
+          : 0,
+    },
     damageBySystem,
     meanKills: kills / runs,
     companionsAtFinale: {

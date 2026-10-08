@@ -193,9 +193,9 @@ describe the combined code rather than assuming that four standalone passes comp
 ### Shared behavior
 
 The initial and live views supply all four feature fields. The same run save carries
-version-one `combatMastery`, `squadCommand`, and `expedition` blocks alongside
-version-two `finale`. Saved decisions, paid stamina, remaining action timers, stable
-companion identities, and boss wounds survive together.
+version-two `combatMastery` (migrating version one), version-one `squadCommand` and
+`expedition` blocks, and version-two `finale`. Saved decisions, paid stamina, remaining
+action timers, stable companion identities, and boss wounds survive together.
 
 One App-owned overlay state arbitrates end, achievements, shop, atlas, orders, and
 pause. Blocking happens synchronously with input/capture cancellation; Escape
