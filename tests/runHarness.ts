@@ -58,6 +58,9 @@
  *   engine simulates. That is the five-square plus around the player's square, not the 3x3
  *   it shows. This follows W1-6's finding, and the fidelity test walks a real runtime over
  *   the whole map to hold it.
+ * - W3-4's `world/StreamingCentre.ts` and `world/EncounterRemnants.ts`, shared with the
+ *   engine: the window holds its centre for 16 m when the player turns back into the square
+ *   just left, and a square that streams back in fields what is left of its packs.
  * - `world/StagingRoom.ts` — W1-6's rule for making room: when a contract the player stands
  *   on is short of it, the player's own idle packs out of the camera's sight step back into
  *   their squares and come home later (`StagingModel`). The camera is the third-person one
@@ -315,7 +318,7 @@ import {
   type AiPositionOf,
   type MoraleBreak,
 } from '../src/game/world/ActorAi.ts'
-import type { FactionObjectiveNode, Territory, WorldBlueprint } from '../src/game/world/worldTypes.ts'
+import type { FactionObjectiveNode, RegionId, Territory, WorldBlueprint } from '../src/game/world/worldTypes.ts'
 import {
   BEAST_PROFILES,
   BEAST_LEASH_RANGE,
@@ -366,6 +369,21 @@ import {
   type CaravanClaimState,
   type CaravanLooterKind,
 } from '../src/game/world/CaravanClaim.ts'
+import {
+  createEncounterRemnants,
+  forgetRemnant,
+  isRemnantFallen,
+  noteRemnantDeparture,
+  noteRemnantFall,
+  remnantSignature,
+  takeRemnantWound,
+} from '../src/game/world/EncounterRemnants.ts'
+import {
+  STREAMING_RETURN_HOLD_METRES,
+  advanceStreamingCentre,
+  createStreamingCentreState,
+  recentreStreaming,
+} from '../src/game/world/StreamingCentre.ts'
 import { getStartingBoonEffects } from '../src/game/run/profile.ts'
 import {
   FINALE_ARENA_RADIUS,
@@ -901,6 +919,18 @@ export const HARNESS_ENGINE_REGION_STREAMING = {
 } as const
 
 /**
+ * W3-4 — where the engine's window is centred.
+ *
+ * `instant` (the default) is the engine before W3-4, which every pinned number was measured
+ * with: the centre is the square under the player's feet, frame by frame, so a player crossing
+ * an edge back and forth recentres the window on every crossing. `held` is the shipped rule,
+ * `world/StreamingCentre.ts`, which the harness shares with `GeneratedWorldRuntime`: turning
+ * back into the square just left keeps the centre for `STREAMING_RETURN_HOLD_METRES`. Read only
+ * in the `engine` window.
+ */
+export type StreamingModel = 'instant' | 'held'
+
+/**
  * W1-6 — what a `commander` does besides swing.
  *
  * `inert` (the default) is this file's commander until W1-6: a body with its role's swing,
@@ -1013,6 +1043,31 @@ export type ErrandModel = 'clear' | 'press'
 /** W3-5 — the errand: the campaign's «interact» or «claim» node that runs no contract. */
 export function isErrandNode(node: Pick<FactionObjectiveNode, 'kind' | 'contract'>): boolean {
   return node.contract === undefined && (node.kind === 'interact' || node.kind === 'claim')
+}
+
+/**
+ * W3-4 — what a square that streams back in fields of a pack the player met and did not beat.
+ *
+ * `fresh` (the default) is the engine before W3-4, which every pinned number was measured with:
+ * every member of an uncleared encounter, at full health, the dead included. `remnants` is the
+ * engine's ledger (`world/EncounterRemnants.ts`, shared with the engine): members that fell stay
+ * dead and a member that left the field hurt comes back on its post with the health it left with.
+ * Read only under the shipped encounters, whose packs are the ones that stream.
+ */
+export type EncounterMemory = 'fresh' | 'remnants'
+
+/** W3-4 — a body that came back within this many seconds of leaving the field was churned. */
+export const HARNESS_REFIELD_CHURN_SECONDS = 30
+
+/** W3-4 — one entry of the opt-in encounter trace: a member fielded, leaving alive, or falling. */
+export interface EncounterTraceEvent {
+  at: number
+  kind: 'field' | 'leave' | 'fall'
+  spawnId: string
+  /** Whose people: `remnantSignature` of the plan it was fielded or recorded under. */
+  signature: string
+  hp: number
+  maxHp: number
 }
 
 /** W1-6 — the screen the staging arm's camera is measured on: a desktop's 16:9. */
@@ -1413,6 +1468,26 @@ export interface EncounterMetrics {
   packsReturned: number
   /** W1-6 — of those, the ones the player called home by walking up to their empty post. */
   packsCalledHome: number
+  /** W3-4 — survivors fielded again with the wounds they left with (`encounterMemory: 'remnants'`). */
+  remnantSurvivorsRestored: number
+  /** W3-4 — members not fielded again because they fell on an earlier visit. */
+  remnantFallenSkipped: number
+  /**
+   * W3-4 — bodies fielded within `HARNESS_REFIELD_CHURN_SECONDS` of the same member leaving the
+   * field alive with its square: the churn of a player crossing back and forth.
+   */
+  refieldedWithin30s: number
+  /** W3-4 — times the window moved its centre (`streaming`). */
+  centreSwitches: number
+  /** W3-4 — squares that entered the simulated plus after the first frame. */
+  simulatedActivations: number
+  /** W3-4 — squares that entered the visible 3x3 after the first frame: scene squares built. */
+  visibleActivations: number
+  /**
+   * W3-4 — hostile members chasing the player (`playerAggro`) that left the field because their
+   * square streamed out: pursuers the player shed by crossing a square's edge.
+   */
+  pursuersStreamedOut: number
 }
 
 /**
@@ -1512,6 +1587,12 @@ export interface RunReport {
   staging: StagingModel
   /** W3-5 — how the errand was finished: waited out until clear, or pressed. */
   errand: ErrandModel
+  /** W3-4 — whether a pack's dead and wounds outlived its square streaming out. */
+  encounterMemory: EncounterMemory
+  /** W3-4 — where the engine window was centred. */
+  streaming: StreamingModel
+  /** W3-4 — the opt-in encounter trace, present only when `encounterTrace` asked for it. */
+  encounterTrace?: EncounterTraceEvent[]
   /** Frames per simulated second the run was driven at. */
   hz: number
   outcome: RunOutcome
@@ -1712,6 +1793,25 @@ export interface RunOptions {
    * `press` is the engine's `E` at the errand, and the shipped arms carry it.
    */
   errand?: ErrandModel
+  /**
+   * W3-4 — defaults to `fresh`, the engine before W3-4: a square that streams back in fields
+   * its uncleared packs whole. `remnants` is the shipped ledger. Read only under the shipped
+   * encounters.
+   */
+  encounterMemory?: EncounterMemory
+  /** W3-4 — records every encounter member fielded, leaving alive or falling, for the invariant test. */
+  encounterTrace?: boolean
+  /**
+   * W3-4 — defaults to `instant`, the engine before W3-4: the window is centred on the square
+   * under the player's feet. `held` is the shipped `StreamingCentre` hold. Read only in the
+   * `engine` window.
+   */
+  streaming?: StreamingModel
+  /**
+   * W3-4 — the hold under `streaming: 'held'`, in metres. Defaults to the shipped
+   * `STREAMING_RETURN_HOLD_METRES`; other values exist to measure that constant.
+   */
+  streamingHoldMetres?: number
 }
 
 /**
@@ -1744,6 +1844,11 @@ export interface RunOptions {
  * W3-5's `errand: 'press'` finishes the errand with the engine's `E`, the moment its prompt
  * is up, instead of waiting until nothing hostile is within 12 m of its site. Pass
  * `errand: 'clear'` for the stand-in every baseline before W3-5 was measured with.
+ *
+ * `encounterMemory: 'remnants'` is W3-4's ledger: a square that streams back in fields what is
+ * left of its packs, not the packs whole again. `encounterMemory: 'fresh'` is the run before it.
+ * `streaming: 'held'` is W3-4's hold on the window's centre: turning back into the square just
+ * left does not recentre the window for 16 m. `streaming: 'instant'` is the run before it.
  */
 export const HARNESS_SHIPPED_ARMS = {
   meleeModel: 'honest',
@@ -1764,6 +1869,8 @@ export const HARNESS_SHIPPED_ARMS = {
   escalation: 'progress',
   caravanBeats: 'shipped',
   errand: 'press',
+  encounterMemory: 'remnants',
+  streaming: 'held',
 } as const satisfies Partial<RunOptions>
 
 // ---------------------------------------------------------------------------
@@ -2005,6 +2112,12 @@ export function runHarness(options: RunOptions): RunReport {
   const stagingModel: StagingModel = options.staging ?? 'none'
   // W1-6 — only the generator's own packs can step back, so only its shipped encounters can.
   const stagingOn = stagingModel === 'friendly' && shippedEncounters
+  // W3-4 — likewise only the shipped encounters' packs stream, so only they leave remnants.
+  const encounterMemory: EncounterMemory = options.encounterMemory ?? 'fresh'
+  const remnantsOn = encounterMemory === 'remnants' && shippedEncounters
+  const encounterTrace: EncounterTraceEvent[] | null = options.encounterTrace ? [] : null
+  // W3-4 — where the engine window is centred; the pinned 3x3 has no centre to hold.
+  const streamingModel: StreamingModel = options.streaming ?? 'instant'
   // W3-5 — the errand's stand-in, or the engine's press.
   const errandModel: ErrandModel = options.errand ?? 'clear'
 
@@ -2323,8 +2436,11 @@ export function runHarness(options: RunOptions): RunReport {
   // The streaming window. `simulatedRegionIds` is what the engine would be simulating:
   // encounters, materialization, the chronicle's freeze and navigation all read it. The
   // pinned `square` window simulates its whole visible block, so there the two are one.
-  const windowAt = createRegionWindow(blueprint, terrain, regionWindow)
-  let simulatedRegionIds = new Set(windowAt(player.x, player.z).simulated)
+  const windowAt = createRegionWindow(blueprint, terrain, regionWindow, streamingModel, options.streamingHoldMetres)
+  const firstWindow = windowAt(player.x, player.z)
+  let simulatedRegionIds = new Set(firstWindow.simulated)
+  /** W3-4 — the visible squares on the last frame, for the streaming cost. */
+  let visibleRegionIds = new Set(firstWindow.visible)
   navigation.setActiveRegions(simulatedRegionIds)
   discoveredRegionIds.add(regionIdAt(player.x, player.z))
 
@@ -2421,6 +2537,13 @@ export function runHarness(options: RunOptions): RunReport {
     packsSteppedBack: 0,
     packsReturned: 0,
     packsCalledHome: 0,
+    remnantSurvivorsRestored: 0,
+    remnantFallenSkipped: 0,
+    refieldedWithin30s: 0,
+    centreSwitches: 0,
+    simulatedActivations: 0,
+    visibleActivations: 0,
+    pursuersStreamedOut: 0,
   }
   const fieldedEncounterIds = new Set<string>()
   /** Live encounter bodies times seconds, divided out into `meanOnField` at the end. */
@@ -2506,9 +2629,14 @@ export function runHarness(options: RunOptions): RunReport {
     actorBudget.sync(budgetUsage())
     return actorBudget.availableFor(category)
   }
+  // W3-4 — `removeActorById`'s `captureEncounterRemnant`. Assigned once the generator's plans
+  // below exist, because only one of their members leaves a remnant.
+  let beforeRemoval: (actor: HarnessActor) => void = () => {}
   const removeActor = (actorId: string): void => {
     const index = actors.findIndex((actor) => actor.id === actorId)
-    if (index >= 0) actors.splice(index, 1)
+    if (index < 0) return
+    beforeRemoval(actors[index])
+    actors.splice(index, 1)
   }
   /** `claimActorSlot`: the hard gate, evicting the cheapest lower-priority body if full. */
   const claimSlot = (category: ActorBudgetCategory): void => {
@@ -4179,6 +4307,33 @@ export function runHarness(options: RunOptions): RunReport {
     encounterPlanCache.set(key, plans)
     return plans
   }
+  /** W3-4 — the engine's own ledger of what is left of every pack met and not beaten. */
+  const remnants = createEncounterRemnants()
+  /** W3-4 — when each member last left the field alive with its square: the churn count. */
+  const leftFieldAt = new Map<string, number>()
+  const encounterRegionIds = new Map(
+    blueprint.encounters.map((slot) => [slot.id, String(slot.regionId)] as const),
+  )
+  const spawnIdOf = (actor: HarnessActor): string => actor.id.slice('generated:'.length)
+  /** `remnantPlanFor`: one of the generator's own packs, never the finale or an event's actors. */
+  const remnantPlanOf = (actor: HarnessActor): GeneratedEncounterPlan | null => {
+    if (actor.model !== 'engine' || actor.encounterId === '' || actor.eventOwnerId !== null) return null
+    if (actor.encounterId === finaleIdentity.encounterId || !actor.id.startsWith('generated:')) return null
+    const regionId = encounterRegionIds.get(actor.encounterId)
+    if (regionId === undefined) return null
+    return encounterPlansFor(regionId).find((plan) => plan.encounterId === actor.encounterId) ?? null
+  }
+  // `captureEncounterRemnant`: whoever leaves the field alive leaves its wounds with its pack.
+  beforeRemoval = (actor) => {
+    if (!actor.alive) return
+    const plan = remnantPlanOf(actor)
+    if (!plan) return
+    const spawnId = spawnIdOf(actor)
+    encounterTrace?.push({
+      at: elapsed, kind: 'leave', spawnId, signature: remnantSignature(plan), hp: actor.hp, maxHp: actor.maxHp,
+    })
+    if (remnantsOn) noteRemnantDeparture(remnants, plan, spawnId, actor.hp, actor.maxHp)
+  }
   /** `spawnGeneratedRegionEncounters`, every frame, for every square that is streamed in. */
   const spawnShippedEncounters = (regionId: string): void => {
     const activated = encounterActivated.get(regionId)
@@ -4207,6 +4362,12 @@ export function runHarness(options: RunOptions): RunReport {
         }
         if ((entry.unique || isFinal) && defeatedUniqueIds.has(entry.id)) {
           activated.add(entry.id)
+          continue
+        }
+        // W3-4 — a member that fell on an earlier visit is done, like a defeated unique.
+        if (remnantsOn && !isFinal && isRemnantFallen(remnants, plan, entry.id)) {
+          activated.add(entry.id)
+          encounterMetrics.remnantFallenSkipped += 1
           continue
         }
         if (!reserveSlots('campaign', 1)) {
@@ -4242,6 +4403,24 @@ export function runHarness(options: RunOptions): RunReport {
         actor.id = `generated:${entry.id}`
         actor.playerAggro = plan.hostileToPlayer
         activated.add(entry.id)
+        if (!isFinal) {
+          // W3-4 — a survivor comes back as the same body, with the health it left with.
+          const wound = remnantsOn ? takeRemnantWound(remnants, plan, entry.id) : null
+          if (wound) {
+            actor.maxHp = wound.maxHealth
+            actor.hp = Math.min(wound.health, wound.maxHealth)
+            encounterMetrics.remnantSurvivorsRestored += 1
+          }
+          const left = leftFieldAt.get(entry.id)
+          if (left !== undefined && elapsed - left <= HARNESS_REFIELD_CHURN_SECONDS) {
+            encounterMetrics.refieldedWithin30s += 1
+          }
+          leftFieldAt.delete(entry.id)
+          encounterTrace?.push({
+            at: elapsed, kind: 'field', spawnId: entry.id, signature: remnantSignature(plan),
+            hp: actor.hp, maxHp: actor.maxHp,
+          })
+        }
         if (boss && finaleTier === null) {
           finaleTier = threatTier
           finaleScalingTier = scalingTier()
@@ -4262,6 +4441,9 @@ export function runHarness(options: RunOptions): RunReport {
       if (actor.model !== 'engine' || actor.regionId !== regionId) continue
       if (squadOn && isSquadMember(actor, options.faction)) continue
       if (actor.encounterId === '' && actor.eventOwnerId !== null) continue
+      // W3-4 — when a member last left alive with its square, for the churn count.
+      if (actor.alive && remnantPlanOf(actor)) leftFieldAt.set(spawnIdOf(actor), elapsed)
+      if (actor.alive && actor.hostileToPlayer && actor.playerAggro) encounterMetrics.pursuersStreamedOut += 1
       removeActor(actor.id)
     }
     encounterActivated.delete(regionId)
@@ -4275,6 +4457,14 @@ export function runHarness(options: RunOptions): RunReport {
     const spawnId = actor.id.startsWith('generated:') ? actor.id.slice('generated:'.length) : null
     const isFinal = actor.encounterId === finaleIdentity.encounterId
     if (spawnId && (isFinal || uniqueSpawnIds.has(spawnId))) defeatedUniqueIds.add(spawnId)
+    // W3-4 — the fallen stay fallen when their square streams back in.
+    const remnantPlan = remnantPlanOf(actor)
+    if (remnantPlan && spawnId) {
+      encounterTrace?.push({
+        at: elapsed, kind: 'fall', spawnId, signature: remnantSignature(remnantPlan), hp: 0, maxHp: actor.maxHp,
+      })
+      if (remnantsOn) noteRemnantFall(remnants, remnantPlan, spawnId)
+    }
     if (actor.objectiveId && isFinal) {
       finaleDefeated = true
       finaleState.defeated = true
@@ -4298,6 +4488,8 @@ export function runHarness(options: RunOptions): RunReport {
     const away = [...parkedSpawns.values()].some((parked) => spawnIds.some((id) => parked.has(id)))
     if (!living && !away && activated && spawnIds.every((id) => activated.has(id))) {
       clearedEncounterIds.add(actor.encounterId)
+      // W3-4 — beaten: nothing of it is left to remember.
+      forgetRemnant(remnants, actor.encounterId)
     }
   }
 
@@ -6357,7 +6549,16 @@ export function runHarness(options: RunOptions): RunReport {
       simulatedRegionIds = nextActive
       navigation.setActiveRegions(simulatedRegionIds)
       encounterScanCooldown = 0
+      // W3-4 — the streaming cost: the window moved, and what it had to bring in.
+      encounterMetrics.centreSwitches += 1
+      for (const regionId of nextActive) if (!previous.has(regionId)) encounterMetrics.simulatedActivations += 1
       w15Streamed(previous)
+    }
+    if (streamWindow.visible.some((regionId) => !visibleRegionIds.has(regionId))) {
+      for (const regionId of streamWindow.visible) {
+        if (!visibleRegionIds.has(regionId)) encounterMetrics.visibleActivations += 1
+      }
+      visibleRegionIds = new Set(streamWindow.visible)
     }
     // Streamed-in regions count as discovered here, which is **not** what the engine does
     // and is stated rather than assumed. `GeneratedWorldRuntime` builds its `RegionManager`
@@ -6891,6 +7092,9 @@ export function runHarness(options: RunOptions): RunReport {
     beatPolicy,
     staging: stagingModel,
     errand: errandModel,
+    encounterMemory,
+    streaming: streamingModel,
+    ...(encounterTrace ? { encounterTrace } : {}),
     hz,
     outcome,
     elapsed,
@@ -6946,11 +7150,18 @@ export interface RegionWindowSets {
  * `HARNESS_ENGINE_REGION_STREAMING`, and returns the squares in the order its getters
  * return them, which is the order `syncGeneratedRegions` spawns in. When the player
  * stands on no square it keeps the last sets, as `GeneratedWorldRuntime.update` does.
+ *
+ * W3-4 — `streaming` says where the `engine` window is centred. `instant` centres it on the
+ * player's square, as the engine did before W3-4; `held` advances the same
+ * `world/StreamingCentre.ts` state `GeneratedWorldRuntime.update` does, so the window holds for
+ * the first `STREAMING_RETURN_HOLD_METRES` back into the square just left.
  */
 export function createRegionWindow(
   blueprint: WorldBlueprint,
   terrain: TerrainSystem,
   window: RegionWindow,
+  streaming: StreamingModel = 'instant',
+  holdMetres = STREAMING_RETURN_HOLD_METRES,
 ): (x: number, z: number) => RegionWindowSets {
   if (window === 'square') {
     return (x, z) => {
@@ -6969,13 +7180,19 @@ export function createRegionWindow(
     }
   }
   const manager = new RegionManager(blueprint, undefined, HARNESS_ENGINE_REGION_STREAMING)
-  let currentId: string | null = null
+  const centre = createStreamingCentreState<RegionId>()
+  let centreId: string | null = null
   let sets: RegionWindowSets = { visible: [], simulated: [] }
   return (x, z) => {
-    const regionId = terrain.getRegionIdAt(x, z)
-    if (regionId === undefined || String(regionId) === currentId) return sets
-    manager.update(regionId)
-    currentId = String(regionId)
+    const square = terrain.getRegionAt(x, z)
+    if (square === undefined) return sets
+    if (streaming === 'held') {
+      advanceStreamingCentre(centre, square, { x, z }, (id) => terrain.getRegion(id), holdMetres)
+    } else recentreStreaming(centre, square.id)
+    const next = centre.centre ?? square.id
+    if (String(next) === centreId) return sets
+    manager.update(next)
+    centreId = String(next)
     sets = {
       visible: manager.getVisibleRegionIds().map(String),
       simulated: manager.getSimulatedRegionIds().map(String),
@@ -7572,6 +7789,20 @@ export interface BalanceCell {
     meanReinforcements: number
     /** W1-6 — the player's own packs that stepped back for a staging, per run. */
     meanPacksSteppedBack: number
+    /** W3-4 — survivors fielded again with their wounds, per run. */
+    meanRemnantSurvivorsRestored: number
+    /** W3-4 — members not fielded again because they had fallen, per run. */
+    meanRemnantFallenSkipped: number
+    /** W3-4 — bodies fielded within 30 s of leaving with their square, per run: the churn. */
+    meanRefieldedWithin30s: number
+    /** W3-4 — the window's centre moves per minute of run, averaged over the runs. */
+    meanCentreSwitchesPerMinute: number
+    /** W3-4 — squares entering the simulated plus per minute of run, averaged over the runs. */
+    meanSimulatedActivationsPerMinute: number
+    /** W3-4 — squares entering the visible 3x3 per minute of run, averaged over the runs. */
+    meanVisibleActivationsPerMinute: number
+    /** W3-4 — pursuers shed by crossing a square's edge, per run. */
+    meanPursuersStreamedOut: number
   }
   meanGoldEarned: number
   meanGoldSpent: number
@@ -7701,6 +7932,13 @@ function summarizeCell(
     meanRefusedSeconds: 0,
     meanReinforcements: 0,
     meanPacksSteppedBack: 0,
+    meanRemnantSurvivorsRestored: 0,
+    meanRemnantFallenSkipped: 0,
+    meanRefieldedWithin30s: 0,
+    meanCentreSwitchesPerMinute: 0,
+    meanSimulatedActivationsPerMinute: 0,
+    meanVisibleActivationsPerMinute: 0,
+    meanPursuersStreamedOut: 0,
   }
   let damage = 0
   let kills = 0
@@ -7755,6 +7993,14 @@ function summarizeCell(
     encounters.meanRefusedSeconds += balance.encounters.refusedSeconds / runs
     encounters.meanReinforcements += balance.encounters.reinforcementsCalled / runs
     encounters.meanPacksSteppedBack += balance.encounters.packsSteppedBack / runs
+    encounters.meanRemnantSurvivorsRestored += balance.encounters.remnantSurvivorsRestored / runs
+    encounters.meanRemnantFallenSkipped += balance.encounters.remnantFallenSkipped / runs
+    encounters.meanRefieldedWithin30s += balance.encounters.refieldedWithin30s / runs
+    const minutes = Math.max(1 / 60, report.elapsed / 60)
+    encounters.meanCentreSwitchesPerMinute += balance.encounters.centreSwitches / minutes / runs
+    encounters.meanSimulatedActivationsPerMinute += balance.encounters.simulatedActivations / minutes / runs
+    encounters.meanVisibleActivationsPerMinute += balance.encounters.visibleActivations / minutes / runs
+    encounters.meanPursuersStreamedOut += balance.encounters.pursuersStreamedOut / runs
     goldEarned += balance.sustain.goldEarned
     goldSpent += balance.sustain.goldSpent
     healed += balance.sustain.healed

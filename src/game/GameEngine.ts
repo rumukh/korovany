@@ -319,6 +319,7 @@ import {
   FINALE_COPY,
   describeFinaleDefeat,
   FINALE_RESTORE_WARNING,
+  ENCOUNTER_REMNANTS_SAVE_WARNING,
   type LocatedEventCopyContext,
   type ContractCopyContext,
   type ContractStartBlock,
@@ -680,6 +681,20 @@ import {
   type CaravanBeatsView,
 } from './world/CaravanBeats'
 import { createCaravanSpine, restoreCaravanSpine } from './world/CaravanSpine'
+import {
+  createEncounterRemnants,
+  forgetRemnant,
+  isRemnantFallen,
+  normalizeEncounterRemnants,
+  noteRemnantDeparture,
+  noteRemnantFall,
+  reconcileEncounterRemnants,
+  serializeEncounterRemnants,
+  takeRemnantWound,
+  type EncounterRemnants,
+  type EncounterRemnantsSave,
+  type LiveRemnantBody,
+} from './world/EncounterRemnants'
 import { chooseGeneratedInteraction } from './world/GeneratedInteraction'
 import {
   FINALE_ATTACKS,
@@ -2213,6 +2228,12 @@ export class GameEngine {
   private readonly parkedPacksCalledHome = new Map<string, Set<string>>()
   /** W1-6 — no pack that stepped back comes back before this, while a staging still asks. */
   private parkHoldUntil = 0
+  /**
+   * W3-4 — «Недобитые»: who fell and who is hurt in every pack the player met and has not beaten.
+   * A square that streams back in, or a continue, fields what is left of a pack rather than the
+   * whole pack again. Saved as `directorState.encounterRemnants`.
+   */
+  private encounterRemnants: EncounterRemnants = createEncounterRemnants()
   private readonly simulatedGeneratedRegions = new Set<string>()
   /** §5.1 — the single gate every actor spawn passes through. */
   private readonly actorBudget = new ActorBudget((category, count) =>
@@ -2946,6 +2967,7 @@ export class GameEngine {
     this.finale = finaleRestore.state
     if (restoredRun) prepareFinaleResume(this.finale)
     if (finaleRestore.rejected) this.callbacks.onNotice(FINALE_RESTORE_WARNING, 'warning')
+    this.restoreEncounterRemnants(restoredRun?.directorState.encounterRemnants)
     this.body = generatedPlayer ? { ...generatedPlayer.body } : createHealthyBody()
     this.upgrades = normalizeUpgradeLevels(generatedPlayer?.upgrades)
     const baseMaxHealth = getMaxHealth(this.upgrades)
@@ -4291,6 +4313,9 @@ export class GameEngine {
         caravanBeats: this.caravanBeats
           ? serializeCaravanBeatsState(this.caravanBeats)
           : null,
+        // W3-4 — what is left of every pack met and not beaten, the field's own wounds included,
+        // so a continue fields no more of a pack than a walk out of its square would.
+        encounterRemnants: this.serializeEncounterRemnantsForSave(),
         pendingHints: this.hints.pending(),
         combatMastery: serializeCombatMastery(
           this.combatMastery, this.melee, this.abilityCooldown, this.attackCooldown, this.shieldActive,
@@ -4698,7 +4723,7 @@ export class GameEngine {
       return { actor, position: entry.position }
     })
     if (request.player) this.player.position.copy(request.player)
-    this.generatedWorld.update({ focus: this.player.position, deltaSeconds: 0 })
+    this.generatedWorld.update({ focus: this.player.position, deltaSeconds: 0, recentre: true })
     this.syncGeneratedRegions()
     this.refreshGeneratedCameraObstacles()
     for (const { actor, position } of companions) {
@@ -4895,12 +4920,82 @@ export class GameEngine {
     }
   }
 
+  /**
+   * W3-4 — the plan an actor's remnant is kept against: one of the generator's own packs in its
+   * square. Not the player's finale, whose bodies `FinaleDirector` saves, nor a caravan beat's or
+   * an event's actors, nor a soldier a commander called, which keep their own rules.
+   */
+  private remnantPlanFor(actor: Actor): GeneratedEncounterPlan | null {
+    const regionId = actor.generatedRegionId
+    const encounterId = actor.generatedEncounterId
+    if (!regionId || !encounterId || !actor.generatedSpawnId || actor.eventOwnerId !== null) return null
+    if (encounterId === this.finale?.identity.encounterId) return null
+    return (this.generatedEncounterPlans?.get(regionId) ?? []).find(
+      (plan) => plan.encounterId === encounterId,
+    ) ?? null
+  }
+
+  /**
+   * W3-4 — a living member leaving the field, for whatever reason — its square streamed out, the
+   * budget made it yield, it stepped back for a staging — leaves its wounds with its pack.
+   */
+  private captureEncounterRemnant(actor: Actor): void {
+    if (!actor.alive || !actor.generatedSpawnId || !this.encounterRemnants) return
+    const plan = this.remnantPlanFor(actor)
+    if (plan) noteRemnantDeparture(this.encounterRemnants, plan, actor.generatedSpawnId, actor.hp, actor.maxHp)
+  }
+
+  /** W3-4 — the remnants a save carries: the ledger, and the wounds of every member on the field. */
+  private serializeEncounterRemnantsForSave(): EncounterRemnantsSave {
+    const live: LiveRemnantBody[] = []
+    for (const actor of this.actors) {
+      if (!actor.alive || !actor.generatedSpawnId) continue
+      const plan = this.remnantPlanFor(actor)
+      if (plan) live.push({ plan, spawnId: actor.generatedSpawnId, health: actor.hp, maxHealth: actor.maxHp })
+    }
+    // Read defensively: headless fixtures build a partial engine.
+    return serializeEncounterRemnants(this.encounterRemnants ?? createEncounterRemnants(), live)
+  }
+
+  /**
+   * W3-4 — the saved remnants, held to this world. A save from before W3-4 has none, and every
+   * pack it met is fielded whole, as it was then. A block that cannot be trusted is dropped with
+   * a warning, and so is a remnant this world could not have written; a square the chronicle
+   * gave to another side since fields its new owners fresh, without a word.
+   */
+  private restoreEncounterRemnants(value: unknown): void {
+    const restored = normalizeEncounterRemnants(value)
+    const plans = new Map<string, GeneratedEncounterPlan>()
+    for (const list of this.generatedEncounterPlans.values()) {
+      for (const plan of list) plans.set(plan.encounterId, plan)
+    }
+    const reconciled = reconcileEncounterRemnants(restored.remnants, {
+      plan: (encounterId) => plans.get(encounterId),
+      cleared: (encounterId) => {
+        const plan = plans.get(encounterId)
+        return plan !== undefined &&
+          (this.generatedWorld.regions.getSavedDelta(String(plan.regionId))?.clearedEncounterIds
+            .includes(encounterId) ?? false)
+      },
+      finale: (encounterId) => encounterId === this.finale.identity.encounterId,
+    })
+    this.encounterRemnants = restored.remnants
+    if (restored.rejected || reconciled.dropped > 0) {
+      this.callbacks.onNotice(ENCOUNTER_REMNANTS_SAVE_WARNING, 'warning')
+    }
+  }
+
   private recordGeneratedActorDeath(actor: Actor): void {
     const regionId = actor.generatedRegionId
     const encounterId = actor.generatedEncounterId
     if (!regionId || !encounterId) return
     const spawnId = actor.generatedSpawnId
     const ownedFinale = finaleOwnsActor(this.finale.identity, actor)
+    // W3-4 — the fallen stay fallen when their square streams back in, and after a continue.
+    const remnantPlan = this.remnantPlanFor(actor)
+    if (remnantPlan && spawnId && this.encounterRemnants) {
+      noteRemnantFall(this.encounterRemnants, remnantPlan, spawnId)
+    }
     if ((actor.generatedUnique || ownedFinale) && spawnId) {
       this.mutateGeneratedRegionDelta(regionId, (delta) => {
         if (!delta.defeatedActorIds.includes(spawnId)) {
@@ -4957,6 +5052,8 @@ export class GameEngine {
         delta.clearedEncounterIds.push(encounterId)
       }
     })
+    // W3-4 — beaten: nothing of it is left to remember.
+    if (this.encounterRemnants) forgetRemnant(this.encounterRemnants, encounterId)
   }
 
   private syncGeneratedRegions(): void {
@@ -5181,6 +5278,8 @@ export class GameEngine {
         encounter.siteId === finaleSiteId,
     )?.id
     reconcileFinale(this.finale, this.finaleAuthority())
+    // W3-4 — read defensively: headless fixtures build a partial engine.
+    const remnants = this.encounterRemnants ?? null
     const orderedPlans = [...(this.generatedEncounterPlans.get(regionId) ?? [])].sort(
       (left, right) => Number(right.encounterId === finalEncounterId) - Number(left.encounterId === finalEncounterId),
     )
@@ -5201,6 +5300,11 @@ export class GameEngine {
           continue
         }
         if (spawn.unique && delta.defeatedActorIds.includes(spawn.id)) {
+          activationSpawns.add(spawn.id)
+          continue
+        }
+        // W3-4 — a member that fell on an earlier visit is done, like a defeated unique.
+        if (!isFinalEncounter && remnants && isRemnantFallen(remnants, plan, spawn.id)) {
           activationSpawns.add(spawn.id)
           continue
         }
@@ -5243,6 +5347,14 @@ export class GameEngine {
           if (ownedBoss && Math.hypot(actor.mesh.position.x - savedBody.x, actor.mesh.position.z - savedBody.z) > 0.1) {
             interruptFinale(this.finale)
           }
+        }
+        // W3-4 — a survivor comes back to its post as the same body: the maximum it had and the
+        // health it left with. Taken only now that the slot was granted, so no wound is lost.
+        const wound = !isFinalEncounter && remnants ? takeRemnantWound(remnants, plan, spawn.id) : null
+        if (wound) {
+          actor.maxHp = wound.maxHealth
+          actor.hp = Math.min(wound.health, wound.maxHealth)
+          this.drawActorHealthBar(actor)
         }
         if (isFinalEncounter) {
           actor.home.set(
@@ -14280,6 +14392,7 @@ export class GameEngine {
     if (index < 0) return
     this.captureCaravanBeatActor(this.actors[index])
     this.captureFinaleActor(this.actors[index])
+    this.captureEncounterRemnant(this.actors[index])
     if (this.actors[index].generatedSpawnId === this.finale.identity.bossId) {
       suspendFinale(this.finale)
       this.clearFinaleThreats()
