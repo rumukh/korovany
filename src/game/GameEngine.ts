@@ -245,7 +245,6 @@ import {
   describeCaravanBeatSecuredNotice,
   describeCaravanBeatStagingGaveUp,
   describeCaravanBeatTitle,
-  describeCaravanCampHeld,
   describeCaravanOfferChosen,
   describeCaravanOffersDeclined,
   describeCaravanPlundered,
@@ -2197,11 +2196,6 @@ export class GameEngine {
    * Null until the first frame reads it; never saved, so a continue says nothing.
    */
   private caravanGateWasOpen: boolean | null = null
-  /**
-   * PR B — whether this session has said that the camp is not where its caravan is chosen.
-   * Never saved: a continue that lands at the camp may say it once more.
-   */
-  private campHoldNoticed = false
   private readonly caravanBeatRuntime = new Map<string, CaravanBeatRuntime>()
   private readonly generatedEncounterPlans = new Map<string, GeneratedEncounterPlan[]>()
   private readonly generatedActivationSpawns = new Map<string, Set<string>>()
@@ -10727,7 +10721,8 @@ export class GameEngine {
     )
     // W2-2, PR B — in a spine run the camp is not reached, it is decided: standing at it
     // closes nothing while its two caravans wait.
-    const campHeld = node !== null && this.holdCampArrival(node)
+    const campHeld = node !== null && node.id === this.campNode()?.id &&
+      caravanSpineHoldsCamp(this.caravanBeatPlans ?? [], this.caravanBeats ?? null)
     if (
       node && !campHeld && node.id !== this.finale.identity.objectiveId &&
       (node.kind === 'arrive' || failedForward)
@@ -10764,28 +10759,6 @@ export class GameEngine {
     const graph = this.generatedBlueprint.objectives[this.faction]
     return graph.nodes.find((node) =>
       graph.rootNodeIds.includes(node.id) && node.siteId === this.generatedBlueprint.starts[this.faction]) ?? null
-  }
-
-  /**
-   * W2-2, PR B — whether arriving at `node` must close nothing: it is the camp of a spine run
-   * still choosing its caravan. W1-3's launch compass points at the camp, so the first time
-   * the player stands there with nothing taken it says, once, where the choice is made.
-   */
-  private holdCampArrival(node: FactionObjectiveNode): boolean {
-    if (
-      node.id !== this.campNode()?.id ||
-      !caravanSpineHoldsCamp(this.caravanBeatPlans ?? [], this.caravanBeats ?? null)
-    ) {
-      return false
-    }
-    if (!this.campHoldNoticed && this.caravanBeats?.chosenOfferId === null) {
-      const site = this.generatedWorld.getSitePosition(node.siteId)
-      if (site && isWithinObjectiveArrival(this.player.position.x, this.player.position.z, site.x, site.z)) {
-        this.campHoldNoticed = true
-        this.callbacks.onNotice(describeCaravanCampHeld(this.faction), 'info')
-      }
-    }
-    return true
   }
 
   /**

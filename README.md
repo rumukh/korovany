@@ -188,8 +188,10 @@ with your own side's verb from the letter.
   the walk there, the danger already known, and the side's other verbs. «Взяться» points the
   compass at one, but walking up to either cart is the choice. The cart you meet first is
   the one you took, and the other goes its own way. The camp's objective closes when that
-  cart settles, however it ends. The launch compass still points at the camp, so standing
-  there with nothing taken says once where the choice is made. The few worlds with one
+  cart settles, however it ends. Until an offer is taken, the compass leads to the nearer
+  one by road and says the other is in the card («ближний · второй — в карточке»);
+  «Взяться» on the other retargets it. A run saved before the spine still launches straight
+  at its camp. The few worlds with one
   offer, or whose other cart could not be staged, say «один корован», not two. On the
   field the card is short (the rule, each cart's guard, pay and walk, and «Взяться»), so
   both offers fit above the fold at 768 px; the journal's card adds the side's lead, its
@@ -278,7 +280,8 @@ within 0.12 seconds of raising the shield can spend 12 stamina instead of health
 the timing reward rearms no sooner than 0.65 seconds. Arrows never stun their shooter.
 
 Without opening the atlas, the compass follows the road itinerary to a taken live rumour,
-then to the camp's chosen caravan, then to the active objective, and when nothing is left
+then to the camp's caravan (the one taken with «Взяться», or before that the nearer offer
+by road), then to the active objective, and when nothing is left
 before a shut finale, to the nearest caravan; it crosses rivers on actual bridges. A target within
 60 m on a dry straight line, or within 80 m when the road would double the walk, is
 approached straight instead and labelled as an unchecked approach. The atlas selects

@@ -719,10 +719,13 @@ function openingCommitted(plans: readonly CaravanBeatPlan[], beats: readonly Car
 }
 
 /**
- * The caravans the compass follows on its own: the camp's chosen offer, which leads ahead of
- * the active objective while the choice is open, and the gate's next cart, which follows it
- * when no objective is left before the shut finale. An atlas choice and a taken rumour still
- * come first (`ExpeditionPlanner`).
+ * The caravans the compass follows on its own. While the camp's choice is open, the offer
+ * the player took with «Взяться» leads ahead of the active objective; before one is taken,
+ * the nearest offer still waiting does, by the distance the caller measures (the road, for
+ * the engine and the launch view), because the camp itself is no place to go: its choice
+ * is made at a cart. Ties keep the plan's order. The gate's next cart follows the active
+ * objective once none is left before the shut finale. An atlas choice and a taken rumour
+ * still come first (`ExpeditionPlanner`).
  */
 export function caravanSpineLeads(
   plans: readonly CaravanBeatPlan[],
@@ -730,12 +733,25 @@ export function caravanSpineLeads(
   distanceTo: (point: CaravanBeatPoint) => number,
 ): { leading: string | null; trailing: string | null } {
   if (!state?.spine) return { leading: null, trailing: null }
-  const chosen = state.chosenOfferId === null
-    ? undefined
-    : state.beats.find((beat) => beat.id === state.chosenOfferId)
-  const leading = caravanSpineHoldsCamp(plans, state) && chosen !== undefined && !isCaravanBeatClosed(chosen)
-    ? chosen.id
-    : null
+  let leading: string | null = null
+  if (caravanSpineHoldsCamp(plans, state)) {
+    const chosen = state.chosenOfferId === null
+      ? undefined
+      : state.beats.find((beat) => beat.id === state.chosenOfferId)
+    if (chosen !== undefined && !isCaravanBeatClosed(chosen)) {
+      leading = chosen.id
+    } else {
+      let nearest = Infinity
+      for (const beat of state.beats) {
+        if (beat.phase !== 'approach' || !isOfferBeat(plans, beat)) continue
+        const away = distanceTo({ x: beat.cargoX, z: beat.cargoZ })
+        if (away < nearest) {
+          nearest = away
+          leading = beat.id
+        }
+      }
+    }
+  }
   return { leading, trailing: caravanSpineNextBeat(plans, state, distanceTo) }
 }
 
@@ -1144,10 +1160,13 @@ export function buildCaravanBeatView(
   const near = distance(player, cargo) <= CARAVAN_BEAT_ACTIVATION_RADIUS
   // A spine run meets several carts, so one waiting on the road takes the field card only
   // when the player is at it or the compass leads there; otherwise the compass keeps the
-  // objective's road and the cart waits in the journal and the atlas. A run without a spine
-  // has the one bridge, which leads from the camp on, as it always did.
+  // objective's road and the cart waits in the journal and the atlas. The camp's offers wait
+  // for «Взяться»: before it the compass leads to the nearest on its own, but the field keeps
+  // the camp's card, where the choice is. A run without a spine has the one bridge, which
+  // leads from the camp on, as it always did.
+  const untakenOffer = plan.slot === 'offer' && spine?.state.chosenOfferId === null
   const awaitedOnRoad = spine?.state.spine === true
-    ? led
+    ? led && !untakenOffer
     : rootCompleted(blueprint, faction, context.objectives)
   const automatic = !settled && (state.phase !== 'approach' || near || awaitedOnRoad)
   const active = (tracked || automatic) &&

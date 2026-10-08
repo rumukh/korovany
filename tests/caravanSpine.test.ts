@@ -259,12 +259,20 @@ test('the camp holds the run until a caravan is met: choice, decline, dormancy a
   assert.equal(isCaravanBeatDormant(first, plans, state), false)
   assert.deepEqual(caravanSpineGate(state), { open: false, settled: 0, required: 2 })
 
+  // Before a choice the nearest offer leads, by whatever the caller measures (the road, for the
+  // engine): the camp is no place to go. Ties keep the plan's order.
+  assert.deepEqual(caravanSpineLeads(plans, state, (point) => distance(point, second.cargoStart)),
+    { leading: second.id, trailing: null })
+  assert.equal(caravanSpineLeads(plans, state, (point) => distance(point, first.cargoStart)).leading, first.id)
+  assert.equal(caravanSpineLeads(plans, state, () => 0).leading, first.id, 'a tie keeps the plan order')
+
   // «Взяться»: only an offer waiting at an open camp, and once.
   assert.equal(chooseCaravanOffer(plans, state, crossing.id), false)
   assert.equal(chooseCaravanOffer(plans, state, second.id), true)
   assert.equal(chooseCaravanOffer(plans, state, second.id), false)
   const leads = caravanSpineLeads(plans, state, (point) => distance(point, first.cargoStart))
-  assert.deepEqual(leads, { leading: second.id, trailing: null }, 'the gate leads nowhere while the camp does')
+  assert.deepEqual(leads, { leading: second.id, trailing: null },
+    'the offer taken leads over the nearer one, and the gate leads nowhere while the camp does')
 
   // Walking up to the other one takes that one instead: met first is chosen.
   beat(first.id).phase = 'fighting'
@@ -281,8 +289,8 @@ test('the camp holds the run until a caravan is met: choice, decline, dormancy a
   assert.equal(caravanSpineProgressBeats(state), 0, 'two met carts make one step of progress')
   // The declined offer is neither counted nor required.
   assert.deepEqual(caravanSpineGate(state), { open: false, settled: 1, required: 2 })
-  assert.equal(caravanSpineLeads(plans, state, (point) => distance(point, crossing.cargoStart)).trailing,
-    crossing.id, 'the gate leads to the nearest cart left')
+  assert.deepEqual(caravanSpineLeads(plans, state, (point) => distance(point, crossing.cargoStart)),
+    { leading: null, trailing: crossing.id }, 'the camp settled: the gate leads to the nearest cart left')
   settle(beat(crossing.id), 'unavailable')
   assert.equal(caravanSpineGate(state).open, true, 'an unstageable cart still counts')
   assert.equal(caravanSpineMetCount(state), 1, '…but nobody met it')

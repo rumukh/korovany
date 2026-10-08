@@ -151,9 +151,10 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
   {
     hint: 'expedition',
     viewFields: ['expedition'],
-    // The first explicit atlas choice, or the first frame the default compass takes up a road
-    // itinerary — normally just after the camp, which is itself a short straight approach.
-    // Change-detecting, so it never fires on the launch frame even when that is a road.
+    // The first explicit atlas choice, or the first frame the default compass takes up a new
+    // road itinerary. A spine run launches already on the road to the camp's nearest offer,
+    // and a legacy run's camp is itself a short straight approach. Change-detecting, so it
+    // never fires on the launch frame even when that is a road.
     firstSighting: (view, previous) => view.expedition.mode === 'selected' ||
       (previous !== null && followsDefaultRoad(view) && (!followsDefaultRoad(previous) ||
         previous.expedition.target?.key !== view.expedition.target?.key)),

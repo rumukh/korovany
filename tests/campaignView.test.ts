@@ -930,6 +930,7 @@ test('initial squad views preserve legacy orders, anchored commands, living heal
 test('launch and restored views chart the active objective without an atlas choice', () => {
   let straight = 0
   let launches = 0
+  let offerLaunches = 0
   let charted = 0
   let bearingsIntoWater = 0
   for (let index = 0; index < 40; index += 1) {
@@ -949,7 +950,15 @@ test('launch and restored views chart the active objective without an atlas choi
         const context = `${index}/${faction}/${launch ? 'launch' : 'restored'}`
         assert.equal(expedition.mode, 'campaign')
         if (!expedition.target) continue
-        assert.equal(expedition.target.kind, 'objective')
+        // W2-2, PR B — a spine launch's camp is decided at a cart, so its compass charts the
+        // camp's nearest offer instead; these restored saves predate the spine.
+        const offers = view.caravanBeats.opening?.offers ?? []
+        const offer = launch && offers.length > 0
+        assert.equal(expedition.target.kind, offer ? 'caravanBeat' : 'objective', context)
+        if (offer) {
+          assert.ok(offers.some((entry) => entry.id === expedition.target?.id), context)
+          offerLaunches += 1
+        }
         const player = { x: view.markers[0].x, z: view.markers[0].z }
         const target = expedition.target.position
         const reach = Math.hypot(target.x - player.x, target.z - player.z)
@@ -960,10 +969,10 @@ test('launch and restored views chart the active objective without an atlas choi
           assert.deepEqual(expedition.guidance?.next && [expedition.guidance.next.x, expedition.guidance.next.z],
             [target.x, target.z], context)
           straight += 1
-          if (launch) launches += 1
+          if (launch && !offer) launches += 1
           continue
         }
-        assert.equal(launch, false, `${context}: every launch camp is a short dry approach`)
+        assert.ok(!launch || offer, `${context}: every launch camp is a short dry approach`)
         const known = new Set(view.worldMap.regions.filter((region) => region.discovered).map((region) => region.id))
         const planned = planExpeditionRoute(graph, player, target, { discoveredRegionIds: known, risks: new Map() })
         if (planned.status !== 'road' || (dry && reach <= DIRECT_APPROACH_DETOUR_METERS)) continue
@@ -977,7 +986,8 @@ test('launch and restored views chart the active objective without an atlas choi
       }
     }
   }
-  assert.equal(launches, 120, 'every launch should approach its camp in a straight line')
+  assert.equal(launches + offerLaunches, 120, 'every launch leads to its camp in a straight line or to an offer')
+  assert.ok(offerLaunches >= 115, `almost every spine launch has an offer to lead to, got ${offerLaunches}`)
   assert.ok(straight >= launches, `${straight}`)
   assert.ok(charted >= 60, `expected most restored views to be charted by road, got ${charted}`)
   assert.ok(bearingsIntoWater >= 25, `expected some straight bearings into water, got ${bearingsIntoWater}`)

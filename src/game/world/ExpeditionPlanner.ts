@@ -168,8 +168,8 @@ export interface ExpeditionInput {
     travel?: ChoiceTravelView | null
   }[]
   /**
-   * W2-2, PR B — the camp's chosen caravan, which the compass follows ahead of the active
-   * objective while the camp's choice is open.
+   * W2-2, PR B — while the camp's choice is open, the caravan the compass follows ahead of the
+   * active objective: the one taken with «Взяться», or before that the camp's nearest offer.
    */
   leadingCaravanBeatId?: string | null
   /** …and the gate's next caravan, which it follows when no objective is left before it. */
@@ -841,8 +841,8 @@ export class ExpeditionPlanner {
     const target = this.state.mode === 'selected'
       ? targets.find((entry) => selected !== null && entry.key === expeditionTargetKey(selected)) ?? null
       // A taken live rumour is a time-boxed commitment, so it leads until it resolves. W2-2,
-      // PR B — then the camp's chosen caravan, then the active objective, then the caravan the
-      // finale's gate still waits on.
+      // PR B — then the camp's caravan (taken, or else the nearest), then the active objective,
+      // then the caravan the finale's gate still waits on.
       : targets.find((entry) => entry.kind === 'rumour' && entry.committed) ??
         caravan(input.leadingCaravanBeatId) ??
         targets.find((entry) => entry.kind === 'objective' && entry.id === input.activeObjectiveId) ??

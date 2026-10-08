@@ -1295,11 +1295,13 @@ export function describeCaravanOfferChosen(title: string, regionLabel: string): 
   return `Взялся: «${title}» в ${regionLabel}. Компас ведёт к телеге.`
 }
 
-/** Said once when the launch compass has brought the player to a camp still choosing. */
-export function describeCaravanCampHeld(faction: Faction): string {
-  return faction === 'guard'
-    ? 'Приказ сам себя не выберет: жми «Взяться» в карточке или иди прямо к обозу — к какому подойдёшь, тот и твой.'
-    : 'Суть такова: корован тут не выбирают. Жми «Взяться» в карточке или иди прямо к телеге — к какой подойдёшь, та и твоя.'
+/**
+ * The compass's second line while it leads to one of the camp's offers on its own, before
+ * «Взяться»: the nearest by road, and the other one is in the card. The line above already
+ * says «Корован…» or «Приказ…», so this one fits the compass at 1366 px.
+ */
+export function describeCaravanOfferCompassNote(offers: number): string {
+  return offers > 1 ? 'ближний · второй — в карточке' : 'выбирать не из чего'
 }
 
 export function describeCaravanOffersDeclined(faction: Faction): string {

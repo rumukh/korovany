@@ -23,7 +23,6 @@ import {
 import {
   CARAVAN_BEAT_PROMPTS,
   describeCaravanBeatOutcome,
-  describeCaravanCampHeld,
   formatPriceFactor,
   formatRegionGridLabel,
 } from '../src/game/content/gameCopy.ts'
@@ -2389,7 +2388,7 @@ test('PR B — the staging seam makes way for a cart as W1-1 does, and never for
   assert.deepEqual(Reflect.get(value.engine, 'activeEvents'), [engaged])
 })
 
-test('PR B — «Взяться» points the compass at the chosen caravan, after an atlas choice', () => {
+test('PR B — the compass leads to the camp\'s nearest offer by road, and «Взяться» retargets it', () => {
   const value = harness('villain', 20_260_909, { spine: true })
   const { slot } = spineOf(value)
   const [first, second] = slot('offer')
@@ -2399,29 +2398,44 @@ test('PR B — «Взяться» points the compass at the chosen caravan, afte
   value.player.position.set(start.x, 0, start.z)
   const input = () => invoke<ExpeditionInput>(value.engine, 'buildExpeditionInput')
   const planner = Reflect.get(value.engine, 'expeditionPlanner') as ExpeditionPlanner
-  assert.equal(input().leadingCaravanBeatId, null)
-  assert.equal(planner.buildView(input()).target?.kind, 'objective', 'the camp leads until a choice')
+  // Before a choice the camp is no place to go: the nearer offer by the road its card quotes leads.
+  const road = (id: string) => input().caravanBeats?.find((target) => target.id === id)?.travel?.meters
+  const [firstRoad, secondRoad] = [road(first.id), road(second.id)]
+  assert.ok(firstRoad !== undefined && secondRoad !== undefined && firstRoad !== secondRoad)
+  const [nearest, other] = firstRoad < secondRoad ? [first, second] : [second, first]
+  assert.equal(input().leadingCaravanBeatId, nearest.id)
+  const before = planner.buildView(input())
+  assert.equal(before.target?.kind, 'caravanBeat', 'the camp no longer leads')
+  assert.equal(before.target?.id, nearest.id)
   // Controls first: a road beat is no camp offer.
   assert.equal(invoke<boolean>(value.engine, 'chooseCaravanOffer', crossing.id), false)
-  assert.equal(invoke<boolean>(value.engine, 'chooseCaravanOffer', second.id), true)
+  assert.equal(invoke<boolean>(value.engine, 'chooseCaravanOffer', other.id), true)
   // Both offers often share a road's name, so the notice names the square.
-  const square = value.blueprint.regions.find((region) => region.id === second.regionId)
+  const square = value.blueprint.regions.find((region) => region.id === other.regionId)
   assert.ok(square)
   const label = formatRegionGridLabel(square.coordinate.x, square.coordinate.y)
   assert.ok(value.notices.some((notice) => notice.startsWith('Взялся:') && notice.includes(`» в ${label}.`)))
-  assert.equal(input().leadingCaravanBeatId, second.id)
+  assert.equal(input().leadingCaravanBeatId, other.id)
   const led = planner.buildView(input())
   assert.equal(led.target?.kind, 'caravanBeat')
-  assert.equal(led.target?.id, second.id)
+  assert.equal(led.target?.id, other.id, '«Взяться» on the farther card retargets the compass')
   assert.ok(led.target?.payout && led.target.travel, 'the atlas prices the cart it leads to')
   // An atlas choice still comes first.
-  assert.equal(planner.select({ kind: 'caravanBeat', id: first.id }, input()), true)
-  assert.equal(planner.buildView(input()).target?.id, first.id)
+  assert.equal(planner.select({ kind: 'caravanBeat', id: nearest.id }, input()), true)
+  assert.equal(planner.buildView(input()).target?.id, nearest.id)
   // The dormant bridge is not charted while the camp chooses.
   assert.equal(input().caravanBeats?.some((target) => target.id === crossing.id), false)
+  // Control: a run without a spine keeps W1-3's camp rule.
+  const legacy = harness('villain')
+  legacy.player.position.set(start.x, 0, start.z)
+  const legacyInput = invoke<ExpeditionInput>(legacy.engine, 'buildExpeditionInput')
+  assert.equal(legacyInput.leadingCaravanBeatId, null)
+  const legacyView = (Reflect.get(legacy.engine, 'expeditionPlanner') as ExpeditionPlanner).buildView(legacyInput)
+  assert.equal(legacyView.target?.kind, 'objective')
+  assert.equal(legacyView.target?.id, invoke<{ id: string } | null>(legacy.engine, 'campNode')?.id)
 })
 
-test('PR B — standing at the camp closes nothing, and says once where the choice is made', () => {
+test('PR B — standing at the camp closes nothing, and a run without a spine still closes it there', () => {
   /** The player on the camp's site, on a frame whose zone is the one already recorded. */
   const atCamp = (value: ReturnType<typeof harness>) => {
     const camp = invoke<{ siteId: string } | null>(value.engine, 'campNode')
@@ -2436,22 +2450,13 @@ test('PR B — standing at the camp closes nothing, and says once where the choi
   atCamp(value)
   invoke(value.engine, 'updateMission')
   invoke(value.engine, 'updateMission')
-  assert.equal(campDone(value), false, 'the launch compass led here, and the camp still waits')
-  assert.equal(value.notices.filter((notice) => notice === describeCaravanCampHeld('elf')).length, 1,
-    'said once, not every frame')
-  // Control: with a caravan taken, the compass leads to its cart; a walk to the camp is the player's own.
-  const taken = harness('elf', 20_260_909, { spine: true })
-  assert.equal(invoke<boolean>(taken.engine, 'chooseCaravanOffer', spineOf(taken).slot('offer')[0].id), true)
-  atCamp(taken)
-  invoke(taken.engine, 'updateMission')
-  assert.equal(campDone(taken), false)
-  assert.equal(taken.notices.includes(describeCaravanCampHeld('elf')), false)
-  // Control: a run without a spine closes its camp on the same arrival and says nothing of it.
+  assert.equal(campDone(value), false, 'the camp waits for its caravan')
+  assert.equal(value.tally.objectives, 0)
+  // Control: a run without a spine closes its camp on the same arrival.
   const legacy = harness('elf')
   atCamp(legacy)
   invoke(legacy.engine, 'updateMission')
   assert.equal(campDone(legacy), true)
-  assert.equal(legacy.notices.includes(describeCaravanCampHeld('elf')), false)
 })
 
 test('PR B — no random event is rolled while the camp chooses its caravan', () => {

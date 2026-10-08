@@ -220,15 +220,27 @@ test('PR B — the camp\'s two caravans are priced on the field and in the journ
   // The field says the rule in one line; the journal's card keeps the side's lead.
   assert.match(card, /Возьмёшься за один — второй уйдёт\./)
   assert.doesNotMatch(card, /Мимо домиков деревяных/)
+  // Nothing taken yet: the compass leads to the nearer offer on its own, and says so.
+  const compass = (markup: string) => {
+    const from = markup.indexOf('class="expedition-compass"')
+    return markup.slice(from, markup.indexOf('</button>', from))
+  }
+  assert.equal(view.expedition.target?.kind, 'caravanBeat')
+  assert.ok(opening.offers.some((offer) => offer.id === view.expedition.target?.id))
+  assert.match(compass(playing), /ближний · второй — в карточке/)
+  assert.doesNotMatch(compass(playing), /по прямой/)
   // A world with one offer left says one, not two (control: the card above says «второй»).
   const single = renderToStaticMarkup(createElement(GameScreen, {
     ...gameProps,
-    view: { ...view, caravanBeats: { ...view.caravanBeats, opening: { ...opening, offers: [opening.offers[0]] } } },
+    view: { ...view, caravanBeats: { ...view.caravanBeats, opening: {
+      ...opening, offers: opening.offers.filter((offer) => offer.id === view.expedition.target?.id),
+    } } },
   }))
   const lone = single.slice(single.indexOf('class="bridge-encounter caravan-opening"'))
   assert.match(lone, /Суть такова: один корован/)
   assert.match(lone, /Корован один — с него и начнёшь\./)
   assert.doesNotMatch(lone.slice(0, lone.indexOf('</section>')), /второй|два корована/)
+  assert.match(compass(single), /выбирать не из чего/)
   // The finale's line says what it waits on; the gate is the view's, on the finale's own row.
   assert.equal(view.caravanBeats.gate?.open, false)
   assert.match(playing, /Штурм после корованов: 0\/2/)
@@ -240,6 +252,9 @@ test('PR B — the camp\'s two caravans are priced on the field and in the journ
   }))
   assert.equal((chosen.match(/aria-pressed="true"/g) ?? []).length, 1)
   assert.match(chosen, /class="caravan-offer chosen"/)
+  // Control: once one is taken the compass follows it as the player's own, with no «второй».
+  assert.doesNotMatch(compass(chosen), /второй — в карточке/)
+  assert.match(compass(chosen), /по прямой/)
 
   // The journal reads the same card with its walk and danger kept.
   const journal = renderToStaticMarkup(createElement(GameScreen, {
