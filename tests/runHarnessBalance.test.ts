@@ -337,6 +337,9 @@ test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never 
   //
   // W3-5's errand press was checked against the same rule and moves neither: both seeds still
   // start a load under it, with the same loads and losses.
+  //
+  // W3-4's remnants were checked against it too, and move neither: both seeds still start a
+  // load under them, with the same loads and losses.
   const reports = ([
     [118786, 'elf'],
     [1, 'guard'],
@@ -452,6 +455,7 @@ test('the arms leave the pinned run alone, and the shipped kit walks the engine\
     commanders: 'inert',
     staging: 'none',
     errand: 'clear',
+    encounterMemory: 'fresh',
   })
   assert.deepEqual(explicit, omitted, 'the declared defaults must be the defaults')
   assert.equal(omitted.balance.companions.started, 0)

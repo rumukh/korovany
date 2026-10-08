@@ -34,6 +34,7 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `caravanBeats` (W2-2) | `off`: before the spine | `shipped`: the caravan spine | `beatPolicy`: `walk`, `ignore` |
 | `rumourSteering` (W2-3) | `cart`: an escort's cart's square | `meeting`: where its cart is met | `cart` |
 | `errand` (W3-5) | `clear`: waits for no hostile within 12 m | `press`: the engine's `E` at the errand | `clear` |
+| `encounterMemory` (W3-4) | `fresh`: a pack comes back whole | `remnants`: its dead and wounds stay | `fresh` |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
   through `selectSquadIntent` and `getSquadFollowSpeed`, fight through the squad's own `selectThreat` pass and the
@@ -108,12 +109,13 @@ The 3x3 put 17.2 encounter bodies on the road at once against the plus's 11.1, a
 45 s a run, which is what refused the contract builders. With `regionWindow: 'square'`, the shipped arms give #106's
 baseline back exactly, cell for cell.
 
-**Known engine behaviour, mirrored rather than fixed.** When a square streams back into the plus, the engine refields
-every encounter in it that was not cleared, at full health. Only uniques and cleared encounters are remembered, in the
-region's delta. A player who crosses back and forth over a square's edge meets the same encounter again each time,
-unhurt, and the damage they dealt is erased. The harness does the same, so its numbers include it: a `cautious` run,
-whose retreats cross edges, spawns 477 to 1 080 encounter bodies against about 70 for the other policies. It is
-logged for wave 3 as a streaming-hysteresis and encounter-persistence item.
+**Known engine behaviour, mirrored rather than fixed — until W3-4.** When a square streamed back into the plus, the
+engine refielded every encounter in it that was not cleared, at full health. Only uniques and cleared encounters were
+remembered, in the region's delta. A player who crossed back and forth over a square's edge met the same encounter
+again each time, unhurt, and the damage they dealt was erased. The harness did the same, so its numbers included it: a
+`cautious` run, whose retreats cross edges, spawned 477 to 1 080 encounter bodies against about 70 for the other
+policies. W3-4 keeps what is left of a pack (`encounterMemory`, below); the churn of the crossing itself is the
+streaming half of the same item.
 
 ## Metrics
 
@@ -140,6 +142,10 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   average, and the seconds in which the actor budget refused one. The report's `regionWindow` names the window. Also
   the soldiers commanders called (W1-6), which count on the road once called, the packs that stepped back to make
   room for a contract and came home again, and how many of those the player called home from their posts (W1-6).
+  W3-4 adds the survivors fielded again with their wounds (`remnantSurvivorsRestored`), the fallen passed over
+  (`remnantFallenSkipped`), and the bodies fielded within 30 s of the same member leaving with its square
+  (`refieldedWithin30s`), which is the churn of a crossing. `encounterTrace: true` records every member fielded,
+  leaving alive and falling, for the invariant test.
 - `sweepBalance` aggregates them per faction and policy, with the run-length distribution.
 - **The errand's site (W3-5), per run only:** when the player first stood within 6 m of it while the errand was the
   active node, when the errand completed, and for how long before that something hostile stood within 12 m
@@ -784,6 +790,53 @@ reached, with a hostile within 12 m, and the beeline runs end long before the li
 completes in 300 s. `tests/runHarnessEscalation.test.ts` keeps `errand: 'clear'` for its fight that never ends. W1-2's
 whole-run test in `tests/runHarnessBalance.test.ts` was checked against its own rule and keeps its seeds: under the
 press the elf on 118786 and the guard on 1 are still the first seeds in the stride on which a raider starts a load.
+
+## W3-4: what is left of a pack («Недобитые»)
+
+`encounterMemory: 'remnants'` runs the engine's ledger, `world/EncounterRemnants.ts`, on the harness's own spawner,
+deaths and removals. A member that fell is passed over when its square streams back in, and a member that left the
+field hurt comes back on its post with the health and maximum it left with. `HARNESS_SHIPPED_ARMS` carries it. With
+`fresh`, the default and the engine before W3-4, every one of the baseline's 360 runs hashes to main's full report
+byte for byte (main at 04c1c7b, the new fields left out).
+
+`HARNESS_SHIPPED_ARMS` with the spine and the errand press, 30 Hz, 600 s, seeds `1 + 7919 n` for n = 0…39, `fresh`
+against `remnants`:
+
+| Policy · faction | Win / defeat / timeout | Bodies | Churned | Back hurt | Dead skipped | Median win | Damage |
+| --- | --- | --- | ---: | ---: | ---: | --- | --- |
+| beeline · elf | 11 / 29 / 0 → 11 / 29 / 0 | 86.7 → 87.4 | 32.2 | 3.1 | 0.8 | 130 → 130 s | 243 → 244 |
+| beeline · guard | 18 / 22 / 0 → 18 / 22 / 0 | 91.8 → 91.2 | 33.0 | 1.8 | 0.6 | 130 → 130 s | 167 → 168 |
+| beeline · villain | 20 / 20 / 0 → 21 / 19 / 0 | 90.6 → 91.9 | 34.7 | 1.5 | 0.4 | 110 → 111 s | 159 → 162 |
+| cautious · elf | 11 / 8 / 21 → 11 / 7 / 22 | 2 035 → 2 194 | 2 127 | 120 | 99.7 | 130 → 130 s | 217 → 220 |
+| cautious · guard | 17 / 11 / 12 → 15 / 12 / 13 | 134 → 131 | 68.2 | 3.9 | 6.2 | 147 → 147 s | 158 → 159 |
+| cautious · villain | 10 / 12 / 18 → 9 / 12 / 19 | 649 → 2 361 | 2 300 | 474 | 153 | 98 → 98 s | 144 → 145 |
+| duelist · elf | 34 / 6 / 0 → 34 / 6 / 0 | 80.5 → 81.9 | 26.6 | 0.1 | 0.4 | 141 → 141 s | 180 → 185 |
+| duelist · guard | 33 / 7 / 0 → 32 / 8 / 0 | 84.1 → 83.6 | 25.5 | 0.3 | 0.3 | 142 → 137 s | 144 → 146 |
+| duelist · villain | 26 / 14 / 0 → 26 / 14 / 0 | 90.1 → 89.9 | 31.4 | 0.5 | 0.1 | 130 → 130 s | 149 → 149 |
+
+Churned, back hurt and dead skipped are per run under `remnants`. Churned is `refieldedWithin30s`: bodies fielded
+within 30 s of the same member leaving with its square.
+
+- 111 of the 360 runs change at all and 7 change their outcome. Wins go from 180 to 177, and on the second seed set
+  (n = 40…79) from 180 to 180. Contracts move by one run in two cells, a duelist elf living to start and keep its
+  contract and a duelist guard keeping one fewer, and `crowded` stays at zero.
+- The scripted players seldom come back to a pack they hurt, so the ledger is a rule of fairness rather than a balance
+  lever: it closes the refill and the kill gold paid twice for the same men, and moves no cell's median win by more
+  than 5 s.
+- The churn is not touched, and the new count shows how much of the road it is: a third of every beeline or duelist
+  run's bodies, and nearly all of a thrashing cautious run's. The cautious bodies go from 939 to 1 562 a run (564 to
+  514 on the second set), and that is the script, not the game: at low health it flees whatever hostile is nearest,
+  at any distance, and when that pinned it against a square's edge the window recentred on every crossing. One run,
+  the cautious villain on seed 269 247, fields 73 467 bodies in its 600 s, four a frame. The ledger leaves different
+  bodies on the posts, which changes which runs fall into that thrash. The real game's churn is the crossing itself,
+  which the streaming half of W3-4 takes up.
+- `tests/runHarnessRemnants.test.ts` reads the opt-in encounter trace of whole shipped-arm runs: no fallen member is
+  fielded again, every survivor comes back at the health it left with, and a square handed to another side fields
+  its new owners whole; `fresh` breaks the first two on the same seeds.
+- W1-2's whole-run test in `tests/runHarnessBalance.test.ts` and W3-5's stalled runs in `tests/errandPress.test.ts`
+  were checked against their own rules and keep their seeds: under the remnants the elf on 118 786 and the guard on 1
+  are still the first seeds in the stride on which a raider starts a load, and the errand stand-in stalls the same
+  guard runs it did.
 
 ## What it still does not model
 

@@ -147,7 +147,8 @@ never step back, and neither do the squad, a stronghold's garrison, a unique, an
 finale or anyone an event put down. Stepping back is not losing: the pack is not counted as
 beaten, and it drops and pays nothing. It comes home to its stations once nothing has asked for
 room for 4 seconds and the whole pack fits, at the first moment none of its stations is in view
-and all are at least 60 m from you, or with its square when that streams back in. Walk up to an
+and all are at least 60 m from you, or with its square when that streams back in, without the
+members it lost. Walk up to an
 empty post, within 25 m of one of its stations, and the pack is called home: from then on it
 only waits for you to look away. Seed 1's guard used to lose «Зверьё у домиков», beside the
 palace's two strongholds, as crowded every time.
@@ -310,6 +311,24 @@ defended, never robbed: there is no «Забрать груз», the event is wo
 down with the cargo still on the cart, and the owners pay 90 gold. An emptied road cart says
 who emptied it. The claim and the channel are not saved, so a continue brings an ambush's
 raiders back; the road cart's dead escorts are saved, as described above.
+
+## Packs you leave half-beaten («Недобитые»)
+
+A pack you walk away from stays the way you left it. The generator's packs live with their
+squares, and a square that streamed back in used to field every pack that was not beaten whole
+and at full health: the men you had killed stood up again on their posts and your wounds were
+gone. Now the members who fell stay dead, and a member who left the field hurt comes back to
+its post, calm, with the health it left with and its own maximum. Nobody heals while you are
+away, and a pack is beaten only when its last man falls. Killing two of three, stepping out of
+the square and back in no longer pays for the same two again.
+
+The same holds across a save and a continue: a pack on the field when the run is saved keeps its
+wounds, and its survivors are back on their posts when you continue. A square the chronicle hands
+to another side fields its new owners' people, fresh. A pack of your own side that stepped back
+for a contract comes home without the members it lost. The finale, caravan beats, events, the
+road cart's escort and the soldiers a commander calls keep their own rules. A save from before
+this fields every pack it met whole, as it did then; a damaged record is dropped with a warning,
+and those packs are fielded whole.
 
 ## Threat, doctrines and night
 
