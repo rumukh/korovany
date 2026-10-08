@@ -4,7 +4,16 @@ import { extname } from 'node:path'
 import test, { after } from 'node:test'
 import * as THREE from 'three'
 import type { ActorRole } from '../src/game/types.ts'
-import { actionWindup } from '../src/game/world/CombatResolver.ts'
+import {
+  actionWindup,
+  actorTelegraphSpec,
+  isWithinContact,
+} from '../src/game/world/CombatResolver.ts'
+import {
+  EVADE_DISTANCE,
+  EVADE_DURATION,
+  PLAYER_WALK_SPEED,
+} from '../src/game/world/CombatMastery.ts'
 import {
   createFinaleIdentity,
   createFinaleState,
@@ -54,6 +63,7 @@ interface ActorProbe {
   hostileToPlayer: boolean
   targetId: string | null
   retreatTimer: number
+  allegiance: 'guard' | 'villain'
 }
 
 interface TelegraphProbe {
@@ -82,7 +92,12 @@ interface EngineProbe {
   syncActorTelegraphs(): void
 }
 
-function makeActor(id: string, role: ActorRole, z = -2): ActorProbe {
+function makeActor(
+  id: string,
+  role: ActorRole,
+  z = -2,
+  allegiance: 'guard' | 'villain' = 'villain',
+): ActorProbe {
   const mesh = new THREE.Group()
   mesh.position.set(0, 0, z)
   return {
@@ -97,6 +112,7 @@ function makeActor(id: string, role: ActorRole, z = -2): ActorProbe {
     hostileToPlayer: true,
     targetId: null,
     retreatTimer: 0,
+    allegiance,
   }
 }
 
@@ -105,6 +121,7 @@ function fixture(reducedMotion = false) {
   const player = new THREE.Group()
   const world = generateWorld(20260905)
   let contacts = 0
+  let actorContacts = 0
   const engine = Object.assign(Object.create(GameEngine.prototype), {
     player,
     actors: [] as ActorProbe[],
@@ -126,12 +143,15 @@ function fixture(reducedMotion = false) {
     actorAttackPlayer: () => {
       contacts += 1
     },
-    actorAttackActor() {},
+    actorAttackActor: () => {
+      actorContacts += 1
+    },
     groundHeightAt: () => 0,
   }) as EngineProbe
   return {
     engine,
     contacts: () => contacts,
+    actorContacts: () => actorContacts,
     dispose() {
       for (const entry of engine.telegraphPool) {
         entry.mesh.geometry.dispose()
@@ -233,62 +253,141 @@ test('reduced motion keeps a static full-length tell instead of hiding informati
     const movingMesh = moving.engine.telegraphPool[0].mesh
     assert.equal(reducedMesh.visible, true)
     assert.equal(reducedMesh.scale.z, 2.55)
-    assert.equal(reducedMesh.material.opacity, 0.72)
+    assert.equal(reducedMesh.material.opacity, movingMesh.material.opacity)
+    assert.equal(reducedMesh.material.opacity, 0.34)
     assert.equal(movingMesh.scale.z, 0.08, 'the animated negative control started fully grown')
-    assert.ok(movingMesh.material.opacity < reducedMesh.material.opacity)
+    const reducedActor = reduced.engine.actors[0]
+    const movingActor = moving.engine.actors[0]
+    assert.ok(reducedActor.action && movingActor.action)
+    reducedActor.action.elapsed = movingActor.action.elapsed = actionWindup('scout') / 2
+    reduced.engine.syncActorTelegraphs()
+    moving.engine.syncActorTelegraphs()
+    assert.equal(reducedMesh.scale.z, 2.55)
+    assert.ok(movingMesh.scale.z > 0.08 && movingMesh.scale.z < 2.55)
+    assert.equal(reducedMesh.material.opacity, movingMesh.material.opacity)
+    assert.ok(reducedMesh.material.opacity > 0.34, 'reduced motion lost the timing ramp')
   } finally {
     reduced.dispose()
     moving.dispose()
   }
 })
 
-test('the final 40 percent locks heading and a perpendicular sidestep beats actual contact', () => {
-  for (const hz of [30, 60, 144]) {
-    const value = fixture()
-    try {
-      value.engine.player.position.set(0, 0, 2.4)
-      const actor = makeActor(`soldier-${String(hz)}`, 'soldier', 0)
-      value.engine.actors = [actor]
-      const action = startAgainstPlayer(value.engine, actor)
-      const lockAt = actionWindup('soldier') * 0.6
-      value.engine.updateActorAction(actor, Math.max(0, lockAt - 1.1 / hz))
-      assert.equal(action.headingLocked, false)
-      value.engine.player.position.x = 0.2
-      value.engine.updateActorAction(actor, 0.25 / hz)
-      assert.ok(action.headingX > 0, `${String(hz)} Hz did not track before the lock`)
-      value.engine.player.position.x = 0
-      while (!action.headingLocked) value.engine.updateActorAction(actor, 1 / hz)
-      assert.ok(action.elapsed >= lockAt && action.elapsed < lockAt + 1 / hz + 1e-9)
-      const lockedHeading = { x: action.headingX, z: action.headingZ }
+const MAX_WALK_SPEED = PLAYER_WALK_SPEED * 1.14
+const SPRINT_SPEED = PLAYER_WALK_SPEED * 1.65
+const EVADE_SPEED = EVADE_DISTANCE / EVADE_DURATION
 
-      value.engine.player.position.x = 1
-      while (action.phase === 'windup') value.engine.updateActorAction(actor, 1 / hz)
-      assert.equal(value.contacts(), 0, `${String(hz)} Hz sidestep was still hit`)
-      assert.deepEqual(
-        { x: action.headingX, z: action.headingZ },
-        lockedHeading,
-        `${String(hz)} Hz heading kept tracking after the lock`,
-      )
+function shapeClearance(role: ActorRole, forward: number, contactRange: number): number {
+  const spec = actorTelegraphSpec(role)
+  assert.ok(spec && spec.kind !== 'aim')
+  const halfWidth = spec.kind === 'wedge'
+    ? spec.width / 2 * forward / contactRange
+    : spec.width / 2
+  return 0.64 + halfWidth
+}
+
+function playerContactAtSpeed(
+  role: ActorRole,
+  hz: number,
+  speed: number,
+): { contacts: number; action: ActionProbe } {
+  const value = fixture()
+  const forward = 2.55
+  value.engine.player.position.set(0, 0, forward)
+  const actor = makeActor(`${role}-${String(hz)}-${String(speed)}`, role, 0)
+  value.engine.actors = [actor]
+  const action = startAgainstPlayer(value.engine, actor)
+  const spec = actorTelegraphSpec(role)
+  assert.ok(spec)
+  const lockAt = action.duration * (1 - spec.lockShare)
+  const lockDuration = action.duration - lockAt
+  const effectiveSpeed = speed > MAX_WALK_SPEED
+    ? Math.min(speed, (shapeClearance(role, forward, action.contactRange) + 0.001) / lockDuration)
+    : speed
+  value.engine.updateActorAction(actor, lockAt)
+  assert.equal(action.headingLocked, true)
+  while (action.phase === 'windup') {
+    const nextElapsed = action.elapsed + 1 / hz
+    value.engine.player.position.x = effectiveSpeed * Math.max(0, nextElapsed - lockAt)
+    value.engine.updateActorAction(actor, 1 / hz)
+  }
+  const result = {
+    contacts: value.contacts(),
+    action,
+  }
+  value.dispose()
+  return result
+}
+
+test('walking stays inside each tell while sprint and evade clear it at 30/60/144 Hz', () => {
+  for (const role of ['scout', 'soldier', 'commander', 'brute', 'champion'] as const) {
+    for (const hz of [30, 60, 144]) {
+      const walking = playerContactAtSpeed(role, hz, MAX_WALK_SPEED)
+      assert.equal(walking.contacts, 1, `${role}/${String(hz)}: walking dodged`)
+      const sprinting = playerContactAtSpeed(role, hz, SPRINT_SPEED)
+      assert.equal(sprinting.contacts, 0, `${role}/${String(hz)}: sprint was hit`)
+      const evading = playerContactAtSpeed(role, hz, EVADE_SPEED)
+      assert.equal(evading.contacts, 0, `${role}/${String(hz)}: evade movement was hit`)
 
       const control = fixture()
       try {
-        control.engine.player.position.set(1, 0, 2.4)
-        const controlActor = makeActor('tracking-control', 'soldier', 0)
-        control.engine.actors = [controlActor]
-        const controlAction = startAgainstPlayer(control.engine, controlActor)
-        const length = Math.hypot(1, 2.4)
-        controlAction.headingX = 1 / length
-        controlAction.headingZ = 2.4 / length
-        controlAction.headingLocked = false
-        control.engine.resolveActorActionContact(controlActor, controlAction)
-        assert.equal(control.contacts(), 1, 'the live-tracking negative control did not hit')
+        const controlForward = 2.3
+        const controlX = shapeClearance(role, controlForward, 2.55) + 0.001
+        control.engine.player.position.set(controlX, 0, controlForward)
+        const actor = makeActor(`tracking-${role}-${String(hz)}`, role, 0)
+        control.engine.actors = [actor]
+        const action = startAgainstPlayer(control.engine, actor)
+        const length = Math.hypot(controlX, controlForward)
+        action.headingX = controlX / length
+        action.headingZ = controlForward / length
+        control.engine.resolveActorActionContact(actor, action)
+        assert.equal(control.contacts(), 1, `${role}/${String(hz)}: tracking control missed`)
       } finally {
         control.dispose()
       }
-    } finally {
-      value.dispose()
     }
   }
+})
+
+test('ordinary NPC walking creates no actor-vs-actor shape misses in the engine sample', () => {
+  let formerContacts = 0
+  let shapeMisses = 0
+  for (const role of ['scout', 'soldier', 'commander', 'brute', 'champion'] as const) {
+    for (const hz of [30, 60, 144]) {
+      const value = fixture()
+      try {
+        const attacker = makeActor(`attacker-${role}-${String(hz)}`, role, 0, 'guard')
+        const target = makeActor(`target-${role}-${String(hz)}`, 'soldier', 2.3, 'villain')
+        value.engine.actors = [attacker, target]
+        value.engine.startActorAction(
+          attacker,
+          'meleeActor',
+          { kind: 'actor', id: target.id },
+          target.mesh.position,
+          2.55,
+        )
+        assert.ok(attacker.action)
+        const spec = actorTelegraphSpec(role)
+        assert.ok(spec)
+        const lockAt = attacker.action.duration * (1 - spec.lockShare)
+        value.engine.updateActorAction(attacker, lockAt)
+        assert.equal(attacker.action.headingLocked, true)
+        while (attacker.action.phase === 'windup') {
+          const nextElapsed = attacker.action.elapsed + 1 / hz
+          target.mesh.position.x = 5.4 * Math.max(0, nextElapsed - lockAt)
+          value.engine.updateActorAction(attacker, 1 / hz)
+        }
+        const oldDistance = Math.hypot(target.mesh.position.x, target.mesh.position.z)
+        if (isWithinContact(oldDistance, 2.55)) {
+          formerContacts += 1
+          if (value.actorContacts() === 0) shapeMisses += 1
+        }
+      } finally {
+        value.dispose()
+      }
+    }
+  }
+  assert.equal(formerContacts, 15)
+  assert.equal(shapeMisses, 0, `shape missed ${String(shapeMisses)}/${String(formerContacts)}`)
 })
 
 test('arrows keep tracking through their wind-up', () => {

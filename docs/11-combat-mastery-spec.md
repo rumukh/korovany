@@ -350,52 +350,76 @@ camera observations are recorded separately in the parent milestone.
 
 ## 10. W3-2 combat economy and ordinary tells
 
-W3-2 adds a 0.55-second stamina-regeneration delay when a melee beat actually starts,
+W3-2 adds a 0.50-second stamina-regeneration delay when a melee beat actually starts,
 an arrow is actually fired or the villain's cleave is accepted. Refused input, bow aim,
 shield raise and perfect guard do not start it. Sprint, shield and evasion retain their
 own drain/no-regeneration rules while the timer elapses on gameplay time. Version-2
 saves retain its exact remainder; repeated continue cannot renew or erase it.
 
-The first candidate was 0.60 seconds; the shipped value is the lower 0.55-second
-candidate. On the final W3-5 arms it produces 3.15, 3.70 and 1.65 starved finisher
-moments per duelist run for elf, guard and villain: 12.1%, 14.3% and 8.1% of
-resolved-plus-starved attempts. A bow at its 0.9-second cadence can regenerate for
-0.35 seconds, 5.6 stamina, so a shot still costs 9.4 net. A cleave still has 2.95
-seconds of its cooldown left after the delay.
+The first candidates were 0.60 and 0.55 seconds. On the final W3-4 arms both exceeded
+the policy-loss band, so the shipped value is the allowed 0.50-second floor. It produces
+3.40, 3.50 and 1.50 starved finisher moments per duelist run for elf, guard and villain:
+13.1%, 12.9% and 7.1% of resolved-plus-starved attempts. A bow at its 0.9-second
+cadence can regenerate for 0.40 seconds, 6.4 stamina, so a shot still costs 8.6 net.
+A cleave still has 3 seconds of its cooldown left after the delay.
 
-Ordinary `meleePlayer` and `meleeActor` actions follow their target for 60% of the
-wind-up and lock a world-space heading for the final 40%. Contact keeps the existing
-forward reach and 0.35 forgiveness, then checks a lane with 0.17 units around the
-target's real collider radius. The existing tick is 0.34 units wide to show that lane.
-Arrows, event props, boar charges and finale signatures keep their own rules.
+`actorTelegraphSpec` is the single shape table used by presentation, engine contact and
+the harness:
+
+- a tick is a 0.34-unit lane and locks for the final 33.3% of wind-up;
+- a commander's two chevrons use a conservative 2.1-unit envelope spanning both lobes
+  and lock for the final 35%;
+- brute and champion wedges are triangles that widen from the actor to 2.5 and 2.8
+  units at contact range, and lock for the final 35%.
+
+Every footprint is widened by the target collider. Forward reach adds the greater of
+that collider or the existing 0.35 forgiveness, never both. Arrows, event props, boar
+charges and finale signatures keep their own rules.
+
+The lock shares are bounded by movement at contact range. With two good legs, the
+largest walk is the elf's forest pace, 8.2 × 1.14 = 9.348 units/s; base sprint is
+8.2 × 1.65 = 13.53 and a healthy evade moves at 14. The resulting lateral travel is:
+
+| Tell | Widened half-width | Max walk | Sprint | Evade |
+| --- | ---: | ---: | ---: | ---: |
+| Scout/minion tick | 0.810 | 0.560 | 0.811 | 0.839 |
+| Soldier/beast tick | 0.810 | 0.809 | 1.171 | 1.212 |
+| Commander envelope | 1.69 | 1.24 | 1.80 | 1.86 |
+| Brute wedge | 1.89 | 1.83 | 2.65 | 2.74 |
+| Champion wedge | 2.04 | 1.57 | 2.27 | 2.35 |
+
+Engine schedules at 30, 60 and 144 Hz confirm walking remains inside every tell while
+sprint and evade clear it; the live-tracking control hits. Circling close to a brute can
+still beat its widening wedge, which is deliberate angular skill play. An actor-vs-actor
+engine sample across five attacker roles and three frame rates records 0 shape misses in
+15 contacts that the prior range rule admitted.
 
 Scouts, minions, wolves, boars, bears and trolls now receive that pooled tick. Direct
 attacks on the player rank first, then nearest attackers, role severity and stable actor
 id; the pool remains capped at eight. Reduced motion shows the full static tell instead
-of removing information.
+of growing it, while preserving the opacity ramp because that ramp carries timing.
 
-The final `HARNESS_SHIPPED_ARMS` panel at 30 Hz and 40 seeds per policy/faction wins
-107/120 duelists against 93/120 under the matched prior combat: elf 38/40, guard 31/40
-and villain 38/40. Beeline moves 49→55 (+5.0 percentage points) and cautious 38→42
-(+3.3). Duelists whiff 15.7–18.2% of their own attacks and avoid 69.4–78.8% of
-telegraphed heavies. The harness still does not model the real evade, shield or bow, so
-the evade-cost decision is arithmetic plus engine and browser evidence, not a harness
-claim.
+The final `HARNESS_SHIPPED_ARMS` panel keeps `meleeDefence: 'heavy'` in both arms.
+Newly readable tells require 0.25 seconds of reaction latency and enough remaining time
+to clear contact at sprint pace. Beeline wins move 47→45, cautious stays 32 and duelist
+moves 96→91, all inside the policy bands. No cell moves by more than 4/40. Duelists
+whiff 15.3–19.0% of their own attacks, avoid 76.2–78.1% of telegraphed heavies and
+take 7.1–13.1% starved finishers. At 0.20 seconds the guard duelist wins 34 rather
+than 31; 0.30 seconds reproduces the 0.25-second cells. The harness models no sidestep,
+evade, shield or bow, so their value rests on engine and browser evidence.
 
-An isolated Chrome 153 SwiftShader run used Vite port 5194 and CDP port 9794. The elf
-reached its caravan fight naturally at 1366×768; a live minion tick remained readable
-among the cart, squad rings and rain. The villain reached natural combat under
-`prefers-reduced-motion: reduce`: its minion tell tracked through 0.10 seconds and locked
-at 0.1167 seconds of the 0.18-second wind-up, while the full static tick stayed visible.
+An isolated Chrome 153 SwiftShader run used Vite port 5194 and CDP port 9794, with
+`Emulation.setFocusEmulationEnabled` active. `document.hasFocus()` stayed true for elf,
+guard and villain, so the production focus gate admitted their pooled tells. Each side
+used the repository's labelled crowd staging seam: real production actors, AI, actions,
+slots, collision and rendering, with no health or attack-state rewrite.
 
-The guard's generated route could not reach the active minion across that seed's terrain,
-so its check used the repository's labelled graphics-diagnostic staging seam: the real
-production minion, action, collision and renderer, with no health or attack-state rewrite.
-Its heading changed on every sidestep frame through 0.10 seconds, then froze at 0.1167
-seconds. This is controlled readability evidence, not a natural encounter or difficulty
-claim.
+At 60 Hz each faction captured the same soldier tick through its 0.26-second wind-up:
+tracking through 0.1667 seconds and locked on the 0.1833-second frame, around the exact
+0.1734-second boundary. Under reduced motion the villain tell stayed full length while
+its opacity continued to advance. These are controlled readability observations, not
+natural encounter or difficulty claims.
 
 At 390×844 the villain view had `scrollWidth === innerWidth`; all thirteen visible touch
-buttons measured 44×44 CSS pixels, and the evade label read `Готов · 19`. JPEG sequences
-and the diagnostic traces are retained in the W3-2 session artifacts outside the
-repository.
+buttons measured 44×44 CSS pixels, and the evade label read `Готов · 19`. JPEG pairs and
+the focus/timing traces are retained in the W3-2 session artifacts outside the repository.

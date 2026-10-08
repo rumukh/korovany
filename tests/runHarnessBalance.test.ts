@@ -266,9 +266,16 @@ test('the sustain arm: wounds bleed, the healer heals, and its placebo heals not
   )
 })
 
-test('W3-2 combat economy makes fast tells actionable and stamina starvation measurable', () => {
+test('W3-2 applies honest fast-tell latency and measurable stamina pressure', () => {
   const shipped = sample({})
   const legacy = sample({ combatEconomy: 'legacy', meleeDefence: 'heavy' })
+  const eager = sample({ tellReactionLatency: 0.20 })
+  const slow = sample({ tellReactionLatency: 0.30 })
+  const legacyEager = sample({
+    combatEconomy: 'legacy',
+    meleeDefence: 'heavy',
+    tellReactionLatency: 0.20,
+  })
   const fastRoles = ['scout', 'minion', 'wolf', 'boar', 'bear', 'troll']
   const fastAttempts = (reports: readonly RunReport[]) =>
     total(reports, (report) =>
@@ -279,8 +286,10 @@ test('W3-2 combat economy makes fast tells actionable and stamina starvation mea
     )
   assert.ok(shipped.every((report) => report.combatEconomy === 'shipped'))
   assert.ok(legacy.every((report) => report.combatEconomy === 'legacy'))
-  assert.ok(fastAttempts(shipped) > 0, 'the scripted duelist answered no newly visible fast tell')
-  assert.equal(fastAttempts(legacy), 0, 'the pre-W3-2 control could read a fast ground tick')
+  assert.equal(fastAttempts(shipped), 0, '0.25 s reacted to a 0.18–0.26 s tell')
+  assert.ok(fastAttempts(eager) > 0, 'the 0.20 s sensitivity arm answered no clearable tell')
+  assert.equal(fastAttempts(slow), 0, 'the 0.30 s sensitivity arm reacted before contact')
+  assert.equal(fastAttempts(legacyEager), 0, 'the legacy arm read a tell it does not draw')
   assert.ok(
     total(shipped, (report) => report.melee.staminaStarvedMoments) >
       total(legacy, (report) => report.melee.staminaStarvedMoments),
@@ -372,9 +381,12 @@ test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never 
   // the guard's: the window no longer recentres on every step back over an edge, the run meets
   // its packs and ambushes at other moments, and on seed 1 no raider starts a load. Re-picked
   // by the same rule: 126705 (n = 16, 1 load, 1 lost). The elf keeps 118786 (3 loads, 1 lost).
+  //
+  // W3-2's matched contact shapes change that road again. Re-picked by the same first-in-stride
+  // rule, seed 1 now starts one load for each side; the guard loses its cart and the elf does not.
   const reports = ([
-    [118786, 'elf'],
-    [126705, 'guard'],
+    [1, 'elf'],
+    [1, 'guard'],
   ] as const).map(([seed, faction]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,

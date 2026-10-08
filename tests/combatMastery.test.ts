@@ -271,7 +271,7 @@ test('offence delay advances on gameplay time and survives repeated version-two 
   delayStaminaRegeneration(state)
   assert.equal(state.staminaRegenDelay, OFFENCE_STAMINA_REGEN_DELAY)
   advanceCombatMastery(state, 0.25)
-  assert.ok(Math.abs(state.staminaRegenDelay - 0.30) < 1e-9)
+  assert.ok(Math.abs(state.staminaRegenDelay - 0.25) < 1e-9)
   delayStaminaRegeneration(state)
   let block = serializeCombatMastery(state, melee, 0, 0, false)
   assert.equal(block.version, 2)

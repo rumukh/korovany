@@ -101,11 +101,11 @@ The three melee beats have alternating wind-ups and follow-through, with a stron
 full-body finisher. Poses and weapon trails follow the actual combat clock rather
 than a separate animation timer; cancelling a swing also cancels its visual strike.
 Each accepted melee beat, arrow or villain cleave holds stamina regeneration for
-0.55 seconds. Raising the guard's shield and landing a perfect guard do not.
-Ordinary enemy melee follows its target for the first 60% of the wind-up, then locks
-its heading and strike lane. Scouts, minions and beasts use the same pooled ground
-tick as soldiers; direct and nearby threats take the eight slots first. Reduced motion
-keeps the full tell visible without growing it.
+0.50 seconds. Raising the guard's shield and landing a perfect guard do not.
+Ordinary enemy melee locks to the shape it draws: ticks for the final 33.3% of the
+wind-up, and commander chevrons and heavy wedges for the final 35%. Scouts, minions
+and beasts use the same pooled tick as soldiers; direct and nearby threats take the
+eight slots first. Reduced motion keeps the full tell visible and its opacity clock.
 The guard braces the shield with the offhand, including while moving or attacking.
 The elf's held bow and shot recovery use the shared manual-aim presentation in both
 the enhanced and legacy renderers. Releasing aim restores the melee equipment.

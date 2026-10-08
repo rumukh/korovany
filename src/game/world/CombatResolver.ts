@@ -76,10 +76,21 @@ export const LARGE_ROLE_KNOCKBACK_SCALE = 0.55
 export const HIGH_KNOCKBACK_THRESHOLD = 2.5
 /** Slack on the contact check, so a target that stepped back mid-swing still gets hit. */
 export const CONTACT_RANGE_FORGIVENESS = 0.35
-/** Share of an ordinary melee wind-up whose heading no longer follows the target. */
-export const ACTOR_MELEE_HEADING_LOCK_SHARE = 0.40
-/** Extra half-width around the target collider in the locked strike lane. */
-export const ACTOR_MELEE_LANE_HALF_WIDTH = 0.17
+export type ActorTelegraphKind = 'tick' | 'aim' | 'commander' | 'wedge'
+export interface ActorTelegraphSpec {
+  kind: ActorTelegraphKind
+  /** Full width in world units. Wedges reach this width at contact range. */
+  width: number
+  /** Share of an ordinary melee wind-up whose heading no longer follows the target. */
+  lockShare: number
+}
+export const ACTOR_TICK_WIDTH = 0.34
+export const ACTOR_COMMANDER_WIDTH = 2.1
+export const ACTOR_BRUTE_WEDGE_WIDTH = 2.5
+export const ACTOR_CHAMPION_WEDGE_WIDTH = 2.8
+export const ACTOR_TICK_LOCK_SHARE = 0.333
+export const ACTOR_COMMANDER_LOCK_SHARE = 0.35
+export const ACTOR_WEDGE_LOCK_SHARE = 0.35
 export const ARCHER_FIRE_COOLDOWN = 1.8
 /** Poise damage multiplier by attack kind: a cleave rocks composure, a jab does not. */
 export const CLEAVE_POISE_MULTIPLIER = 1.45
@@ -326,11 +337,50 @@ export function isWithinContact(distance: number, contactRange: number): boolean
   return distance <= contactRange + CONTACT_RANGE_FORGIVENESS
 }
 
-export function shouldLockActorMeleeHeading(elapsed: number, duration: number): boolean {
-  return duration > 0 && elapsed >= duration * (1 - ACTOR_MELEE_HEADING_LOCK_SHARE)
+export function actorTelegraphSpec(role: ActorRole): ActorTelegraphSpec | null {
+  if (role === 'archer') return { kind: 'aim', width: 0.16, lockShare: 0 }
+  if (role === 'commander') {
+    return {
+      kind: 'commander',
+      width: ACTOR_COMMANDER_WIDTH,
+      lockShare: ACTOR_COMMANDER_LOCK_SHARE,
+    }
+  }
+  if (role === 'brute') {
+    return { kind: 'wedge', width: ACTOR_BRUTE_WEDGE_WIDTH, lockShare: ACTOR_WEDGE_LOCK_SHARE }
+  }
+  if (role === 'champion') {
+    return { kind: 'wedge', width: ACTOR_CHAMPION_WEDGE_WIDTH, lockShare: ACTOR_WEDGE_LOCK_SHARE }
+  }
+  if (
+    role === 'soldier' ||
+    role === 'captive' ||
+    role === 'scout' ||
+    role === 'minion' ||
+    isBeastRole(role)
+  ) {
+    return { kind: 'tick', width: ACTOR_TICK_WIDTH, lockShare: ACTOR_TICK_LOCK_SHARE }
+  }
+  return null
 }
 
-export function isWithinLockedMeleeLane(input: {
+export function shouldLockActorMeleeHeading(
+  role: ActorRole,
+  elapsed: number,
+  duration: number,
+): boolean {
+  const spec = actorTelegraphSpec(role)
+  return Boolean(spec && spec.lockShare > 0 &&
+    duration > 0 && elapsed >= duration * (1 - spec.lockShare))
+}
+
+/**
+ * Contact is the tell's footprint widened by the target body. The commander uses the
+ * full 2.1-unit envelope around both chevron lobes: conservative in their visual gaps,
+ * but never a hit outside what the pair spans. A wedge widens linearly from the actor.
+ */
+export function isWithinLockedMeleeShape(input: {
+  role: ActorRole
   offsetX: number
   offsetZ: number
   headingX: number
@@ -339,15 +389,26 @@ export function isWithinLockedMeleeLane(input: {
   targetRadius: number
 }): boolean {
   const distance = Math.hypot(input.offsetX, input.offsetZ)
-  if (!isWithinContact(distance, input.contactRange)) return false
   const headingLength = Math.hypot(input.headingX, input.headingZ)
   if (headingLength <= 1e-9 || distance <= 1e-9) return true
   const headingX = input.headingX / headingLength
   const headingZ = input.headingZ / headingLength
   const forward = input.offsetX * headingX + input.offsetZ * headingZ
-  if (forward < -input.targetRadius) return false
+  const spec = actorTelegraphSpec(input.role)
+  if (!spec || spec.kind === 'aim') return isWithinContact(distance, input.contactRange)
+  if (
+    forward < -input.targetRadius ||
+    forward > input.contactRange + Math.max(input.targetRadius, CONTACT_RANGE_FORGIVENESS)
+  ) {
+    return false
+  }
   const lateral = Math.abs(input.offsetX * headingZ - input.offsetZ * headingX)
-  return lateral <= input.targetRadius + ACTOR_MELEE_LANE_HALF_WIDTH
+  const halfWidth =
+    spec.kind === 'wedge'
+      ? spec.width * 0.5 *
+        Math.min(1, Math.max(0, forward) / Math.max(input.contactRange, 1e-9))
+      : spec.width * 0.5
+  return lateral <= input.targetRadius + halfWidth
 }
 
 /**
