@@ -70,7 +70,6 @@ import {
   readAchievementCatalogue,
   summarizeAchievements,
   type AchievementSummary,
-  type AchievementUnlock,
   type AchievementView,
 } from './game/achievements'
 import {
@@ -83,7 +82,6 @@ import {
   type BodyPart,
   type Faction,
   type GameView,
-  type LootRarity,
   type NoticeOrigin,
   type NoticeTone,
   type PartStatus,
@@ -112,7 +110,7 @@ import { ChoicePrice } from './game/ui/ChoicePrice'
 import type { CaravanBeatOutcome } from './game/world/CaravanBeats'
 import { CompactMissionHud, CompactWorldNews } from './game/ui/CompactCombatHud'
 import {
-  NARROW_HUD_QUERY,
+  COLUMN_LANE_QUERY,
   NOTICE_FRAME_CAP_MS,
   advanceNotices,
   createNoticeQueue,
@@ -122,6 +120,8 @@ import {
   noticeLogEnabled,
   noticeViews,
   pushNotice,
+  settingNoticeWanted,
+  type NoticeArt,
   type NoticeLimits,
   type NoticeQueue,
   type NoticeView,
@@ -187,6 +187,8 @@ import {
   describeRunRewardLines,
   describeSquadMedicineTarget,
   formatRussianCount,
+  describeAchievementNotice,
+  describeLootNotice,
   type RunEpilogueCopy,
 } from './game/content/gameCopy'
 import { parseSeed } from './game/random/seed'
@@ -383,13 +385,6 @@ const abilityIcons: Record<GameView['ability']['id'], ReactNode> = {
   cleave: <Sword aria-hidden="true" />,
 }
 
-const lootRarityLabels: Record<LootRarity, string> = {
-  common: 'Обычная',
-  uncommon: 'Необычная',
-  rare: 'Редкая',
-  legendary: 'Легендарная',
-}
-
 const bodyParts: Array<{ id: BodyPart; label: string; short: string; icon: ReactNode }> = [
   { id: 'leftEye', label: 'Левый глаз', short: 'Л. глаз', icon: <Eye aria-hidden="true" /> },
   { id: 'rightEye', label: 'Правый глаз', short: 'П. глаз', icon: <Eye aria-hidden="true" /> },
@@ -500,16 +495,16 @@ function readVisualPreferences(): VisualPreferences {
   }
 }
 
-// W3-6 — the same query the CSS's narrow HUD block uses, read live so a rotation or a
-// resize moves the notice lane together with the layout around it.
-function subscribeNarrowHud(onChange: () => void): () => void {
-  const query = window.matchMedia(NARROW_HUD_QUERY)
+// W3-6 — the same query the CSS's column-lane block uses (W3-6b: up to 1000px, or a touch
+// screen), read live so a rotation or a resize moves the notice lane with the layout around it.
+function subscribeColumnLane(onChange: () => void): () => void {
+  const query = window.matchMedia(COLUMN_LANE_QUERY)
   query.addEventListener('change', onChange)
   return () => query.removeEventListener('change', onChange)
 }
 
-function readNarrowHud(): boolean {
-  return window.matchMedia(NARROW_HUD_QUERY).matches
+function readColumnLane(): boolean {
+  return window.matchMedia(COLUMN_LANE_QUERY).matches
 }
 
 interface NoticeLogEntry {
@@ -1190,56 +1185,30 @@ function formatAchievementDate(value: string): string {
       }).format(date)
 }
 
-function AchievementBanner({ achievement }: { achievement: AchievementUnlock | null }) {
-  if (!achievement) return null
+/**
+ * W3-6b — an achievement or a find, drawn with the old banner's and toast's three lines but
+ * as a notice in the lane, so neither floats over the vitals or the first notice any more.
+ */
+function NoticeArtLines({ art }: { art: NoticeArt }) {
   return (
-    <aside
-      className={`achievement-banner rarity-${achievement.rarity}`}
-      aria-live="assertive"
-      aria-label="Достижение открыто"
-    >
-      <div className="achievement-banner-icon">
+    <>
+      {art.kind === 'achievement' ? (
         <Trophy aria-hidden="true" />
-      </div>
-      <div>
-        <span>Достижение открыто · {ACHIEVEMENT_RARITY_LABELS[achievement.rarity]}</span>
-        <strong>{achievement.name}</strong>
-        <p>{achievement.description}</p>
-      </div>
-    </aside>
+      ) : (
+        <span className="loot-rarity-shape" aria-hidden="true">
+          <i />
+        </span>
+      )}
+      <span className="notice-art">
+        <small>{art.label}</small> <strong>{art.title}</strong> <span>{art.detail}</span>
+      </span>
+    </>
   )
 }
 
-function LootToast({ toast }: { toast: GameView['lootToast'] }) {
-  return (
-    <>
-      <span className="sr-only" role="status" aria-live="polite">
-        {toast
-          ? (
-              <span key={toast.id}>
-                {`${lootRarityLabels[toast.rarity]} награда. ${toast.title}. ${toast.detail}`}
-              </span>
-            )
-          : null}
-      </span>
-      {toast ? (
-        <aside
-          className={`loot-toast loot-${toast.rarity}`}
-          aria-hidden="true"
-          key={toast.id}
-        >
-          <span className="loot-rarity-shape">
-            <i />
-          </span>
-          <span className="loot-toast-copy">
-            <small>{lootRarityLabels[toast.rarity]} награда</small>
-            <strong>{toast.title}</strong>
-            <span>{toast.detail}</span>
-          </span>
-        </aside>
-      ) : null}
-    </>
-  )
+function noticeArtClass(art: NoticeArt | undefined): string {
+  if (!art) return ''
+  return ` ${art.kind} ${art.kind === 'loot' ? 'loot' : 'rarity'}-${art.rarity}`
 }
 
 function AchievementGallery({
@@ -2644,8 +2613,7 @@ export function GameScreen({
   view,
   worldRef,
   notices,
-  narrowHud = false,
-  achievementBanner,
+  columnLane = false,
   runAchievements,
   activeOverlay,
   simulationPaused,
@@ -2711,11 +2679,11 @@ export function GameScreen({
   worldRef: React.RefObject<HTMLDivElement | null>
   notices: NoticeView[]
   /**
-   * W3-6 — the layout the CSS calls narrow (`NARROW_HUD_QUERY`). Notices then sit at the
-   * foot of the left column in either HUD mode. Defaults to the wide layout.
+   * W3-6 — the column-lane layout (`COLUMN_LANE_QUERY`: up to 1000px, or a touch screen).
+   * Notices then sit at the foot of the left column in either HUD mode. Defaults to the wide
+   * layout.
    */
-  narrowHud?: boolean
-  achievementBanner: AchievementUnlock | null
+  columnLane?: boolean
   runAchievements: AchievementView[]
   activeOverlay: GameOverlay | null
   simulationPaused: boolean
@@ -2897,15 +2865,18 @@ export function GameScreen({
     onBlur: () => onInput(code, false),
   })
 
-  // W3-6 — one live region, placed by layout: the foot of the left column on narrow
-  // layouts, otherwise where GFX-05 and W1-4 put it. The narrow lane grows upward from the
-  // column's foot, so it lists the newest first and a notice already up never moves.
-  const noticeLane = noticeLaneFor(visualPreferences.hudMode, narrowHud)
+  // W3-6 — one live region, placed by layout: the foot of the left column on column-lane
+  // layouts (W3-6b: up to 1000px, or a touch screen), otherwise where GFX-05 and W1-4 put
+  // it. The column lane grows upward from the column's foot, so it lists the newest first
+  // and a notice already up never moves. W3-6b — achievements and finds are notices too.
+  const noticeLane = noticeLaneFor(visualPreferences.hudMode, columnLane)
   const noticeStack = (
     <div className="notice-stack" aria-live="polite">
       {(noticeLane === 'column' ? [...notices].reverse() : notices).map((notice) => (
-        <div className={`notice ${notice.tone}`} key={notice.id}>
-          {notice.tone === 'success' ? (
+        <div className={`notice ${notice.tone}${noticeArtClass(notice.art)}`} key={notice.id}>
+          {notice.art ? (
+            <NoticeArtLines art={notice.art} />
+          ) : notice.tone === 'success' ? (
             <Check aria-hidden="true" />
           ) : notice.tone === 'danger' ? (
             <Skull aria-hidden="true" />
@@ -2914,7 +2885,7 @@ export function GameScreen({
           ) : (
             <Sparkles aria-hidden="true" />
           )}
-          <span>{notice.message}</span>
+          {notice.art ? null : <span>{notice.message}</span>}
           {notice.count > 1 ? (
             <b className="notice-count" aria-hidden="true">×{notice.count}</b>
           ) : null}
@@ -3096,8 +3067,6 @@ export function GameScreen({
       </div>
 
       {noticeLane === 'screen' ? noticeStack : null}
-      <LootToast toast={view.lootToast} />
-      <AchievementBanner achievement={achievementBanner} />
 
       <div className={`crosshair${bowAiming ? ' bow-aim' : ''}${bowAiming && !view.ability.ready ? ' reloading' : ''}`}
         aria-hidden="true">
@@ -3360,7 +3329,6 @@ function App() {
   const [achievementCatalogue, setAchievementCatalogue] = useState<AchievementView[]>(() =>
     readAchievementCatalogue(),
   )
-  const [achievementQueue, setAchievementQueue] = useState<AchievementUnlock[]>([])
   const [runAchievements, setRunAchievements] = useState<AchievementView[]>([])
   const [overlayState, setOverlayState] = useState(initialGameOverlayState)
   const [touchCaptures] = useState(() => new GameplayPointerCaptures())
@@ -3390,8 +3358,8 @@ function App() {
   /** Painted, unpaused milliseconds: the only clock notices age on (W3-6). */
   const noticeClockRef = useRef(0)
   const noticeDueRef = useRef<number | null>(null)
-  const narrowHud = useSyncExternalStore(subscribeNarrowHud, readNarrowHud, () => false)
-  const noticeLimits = noticeLimitsFor(narrowHud)
+  const columnLane = useSyncExternalStore(subscribeColumnLane, readColumnLane, () => false)
+  const noticeLimits = noticeLimitsFor(columnLane)
   const noticeLimitsRef = useRef(noticeLimits)
   const musicMutedRef = useRef(musicMuted)
   const sfxVolumeRef = useRef(sfxVolume)
@@ -3527,13 +3495,13 @@ function App() {
   )
 
   const addNotice = useMemo(
-    () => (message: string, tone: NoticeTone = 'info', origin?: NoticeOrigin) => {
+    () => (message: string, tone: NoticeTone = 'info', origin?: NoticeOrigin, art?: NoticeArt) => {
       if (noticeLogEnabled(window.location.search)) {
         const target = window as NoticeLogWindow
         target.__korovanyNoticeLog ??= []
         target.__korovanyNoticeLog.push({ at: noticeClockRef.current, message, tone, origin: origin ?? null })
       }
-      updateNotices((queue, now, limits) => pushNotice(queue, { message, tone, origin }, now, limits))
+      updateNotices((queue, now, limits) => pushNotice(queue, { message, tone, origin, art }, now, limits))
     },
     [updateNotices],
   )
@@ -3661,24 +3629,27 @@ function App() {
   }, [theme])
 
   useEffect(() => {
-    if (achievementQueue.length === 0) return
-    const timer = window.setTimeout(() => {
-      setAchievementQueue((current) => current.slice(1))
-    }, 9000)
-    return () => window.clearTimeout(timer)
-  }, [achievementQueue])
-
-  useEffect(() => {
     if (screen !== 'game' || !worldRef.current) return
     const launch = pendingGeneratedLaunch
     if (!launch) return
+    // W3-6b — a find is a notice now. The view carries the latest find for its 2.4 s; each
+    // new one, by its id within this engine, becomes one notice in the lane.
+    let lastLootId = 0
     let engine: GameEngine
     try {
       engine = new GameEngine(
         worldRef.current,
         faction,
         {
-        onView: setGameView,
+        onView: (nextView) => {
+          setGameView(nextView)
+          const toast = nextView.lootToast
+          if (!toast || toast.id === lastLootId) return
+          lastLootId = toast.id
+          const copy = describeLootNotice(toast)
+          addNotice(copy.message, 'success', 'loot',
+            { kind: 'loot', rarity: toast.rarity, label: copy.label, title: copy.title, detail: copy.detail })
+        },
         onNotice: addNotice,
         onShop: () => applyGameOverlays(openGameOverlay(overlaysRef.current, 'shop')),
         onAtlasRequest: toggleAtlas,
@@ -3720,7 +3691,12 @@ function App() {
           setRunAchievements(currentEngine?.getCurrentRunAchievements() ?? [])
         },
         onAchievementUnlocked: (achievement) => {
-          setAchievementQueue((current) => [...current, achievement])
+          // W3-6b — an achievement is a kept notice in the lane, not a banner over the HUD.
+          const copy = describeAchievementNotice(
+            ACHIEVEMENT_RARITY_LABELS[achievement.rarity], achievement.name, achievement.description,
+          )
+          addNotice(copy.message, 'success', 'achievement',
+            { kind: 'achievement', rarity: achievement.rarity, label: copy.label, title: copy.title, detail: copy.detail })
           setAchievementCatalogue(
             engineRef.current?.getAchievements() ?? readAchievementCatalogue(),
           )
@@ -3835,7 +3811,6 @@ function App() {
 
   const resetGameUi = () => {
     updateNotices(createNoticeQueue)
-    setAchievementQueue([])
     setRunAchievements([])
     applyGameOverlays(initialGameOverlayState())
     setEndResult(null)
@@ -3957,6 +3932,12 @@ function App() {
     if (result?.ok && pendingGeneratedLaunch) checkpointGeneratedRun()
   }
 
+  // W3-6b — a setting's notice is only for a change made mid-game with nothing open; in the
+  // pause menu or the main menu the control already shows the new state.
+  const announceSetting = (message: string) => {
+    if (settingNoticeWanted(screen === 'game', topGameOverlay(overlaysRef.current))) addNotice(message, 'info')
+  }
+
   const toggleMusic = () => {
     const next = !musicMutedRef.current
     musicMutedRef.current = next
@@ -3967,7 +3948,7 @@ function App() {
     } catch (error) {
       console.warn('Korovany: music preference could not be saved.', error)
     }
-    addNotice(next ? 'Адаптивная музыка выключена.' : 'Адаптивная музыка включена.', 'info')
+    announceSetting(next ? 'Адаптивная музыка выключена.' : 'Адаптивная музыка включена.')
   }
 
   const changeSfxVolume = (volume: number) => {
@@ -3992,10 +3973,7 @@ function App() {
     } catch (error) {
       console.warn('Korovany: dynamic time preference could not be saved.', error)
     }
-    addNotice(
-      next ? 'Динамическое время суток включено.' : 'Время суток зафиксировано на полдне.',
-      'info',
-    )
+    announceSetting(next ? 'Динамическое время суток включено.' : 'Время суток зафиксировано на полдне.')
   }
 
   const toggleBloom = () => {
@@ -4020,10 +3998,7 @@ function App() {
     } catch (error) {
       console.warn('Korovany: ink-outline preference could not be saved.', error)
     }
-    addNotice(
-      next ? 'Чернильные контуры включены.' : 'Чернильные контуры выключены.',
-      'info',
-    )
+    announceSetting(next ? 'Чернильные контуры включены.' : 'Чернильные контуры выключены.')
   }
 
   const toggleWeather = () => {
@@ -4036,10 +4011,7 @@ function App() {
     } catch (error) {
       console.warn('Korovany: weather preference could not be saved.', error)
     }
-    addNotice(
-      next ? 'Динамическая погода включена.' : 'Динамическая погода выключена.',
-      'info',
-    )
+    announceSetting(next ? 'Динамическая погода включена.' : 'Динамическая погода выключена.')
   }
 
   const cycleFoliageQuality = () => {
@@ -4206,8 +4178,7 @@ function App() {
         view={gameView}
         worldRef={worldRef}
         notices={noticeViews(noticeQueue)}
-        narrowHud={narrowHud}
-        achievementBanner={achievementQueue[0] ?? null}
+        columnLane={columnLane}
         runAchievements={runAchievements}
         activeOverlay={activeOverlay}
         simulationPaused={activeOverlay !== null}

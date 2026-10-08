@@ -437,8 +437,8 @@ empty lane is collapsed to one clipped pixel rather than `display: none`, so the
 region stays in the accessibility tree and its first notice is announced. On
 phones at least 780px tall the status column never yields, and a second notice
 scrolls inside the lane. Wide layouts keep the lanes described above byte for byte.
-`GameScreen` takes the layout as `narrowHud`, and the App reads it from the CSS's
-own media query.
+`GameScreen` takes the layout as `columnLane` (`narrowHud` before W3-6b), and the App
+reads it from the CSS's own media query.
 
 The component packet is now `production-hud-component-layout-v2`. Each case carries
 `markup` (wide) and `narrowMarkup`, and the runner uses the narrow markup at 390.
@@ -446,3 +446,25 @@ All eight cases must clear the essentials, now including the squad strip. The
 bottom HUD's essentials are its body panel and control ribbon rather than its
 transparent full-width row. Main's runner already failed on that row: at 1920 the
 original finale lane overlapped the empty box by 17 px, but none of its content.
+
+### W3-6b amendment: the column lane reaches 1000px; the banner and the toast join it (2026-10-08)
+
+Between 721 and 1000px with a fine pointer, both modes still used a centred lane
+(`top: 5.7rem`, `min(26rem, 100% - 2rem)`), and it ran over the left column at every
+width: from 18036 px² of the vitals card at 721×768 to 3024 px² at 1000×768. There is
+no free lane between the two columns below about 800px. These windows therefore use
+the column lane too: the query is `(max-width: 1000px), (pointer: coarse)`, and the
+lane's rules moved into a block of their own with that condition. The centred medium
+rules are gone from `App.css` and `compact-combat.css`. Compact's own lanes, the
+finale's `position: fixed` lane included, now start at 1001px, so nothing at 721px
+and up competes with the column lane's equal-specificity rule. These windows have the
+taller desktop vitals card (246px with its squad strip), so their status reserve is
+16rem rather than the phones' 15rem.
+
+The achievement banner and the loot toast floated over the HUD on their own timers.
+On main the banner covered 15106 px² of the vitals at 390×844 and 21560 px² of the
+first notice at 1366×768, and the toast covered the vitals at 390×844. Both are now
+notices in the one live region, so they keep this section's rules by construction: no
+second live region (the banner's assertive one and the toast's hidden status are
+gone), never over an essential, and never over another notice. The queue paces them
+with everything else.

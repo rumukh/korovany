@@ -13,6 +13,8 @@ import type {
   ChoiceTravelView,
   ChronicleWorldEventKind,
   Faction,
+  LootRarity,
+  LootToastView,
   NoticeTone,
   RandomWorldEventKind,
   RumourKind,
@@ -2747,4 +2749,33 @@ export function describeExpeditionNotice(notice: 'invalid-save' | 'stale-target'
   return notice === 'invalid-save'
     ? 'Сохранённый маршрут повреждён или другой версии. Компас снова указывает на пункт похода.'
     : 'Выбранная цель завершена, закрыта или больше неизвестна. Компас вернулся к текущему пункту похода.'
+}
+
+/** W3-6b — the loot toast's rarity words, now the small line of a find's notice. */
+export const LOOT_RARITY_LABELS: Readonly<Record<LootRarity, string>> = {
+  common: 'Обычная',
+  uncommon: 'Необычная',
+  rare: 'Редкая',
+  legendary: 'Легендарная',
+}
+
+/** The three lines an achievement or a find shows in the notice lane. */
+export interface NoticeArtCopy {
+  label: string
+  title: string
+  detail: string
+  /** The same lines as one sentence: the notice's text in the log and its merge key. */
+  message: string
+}
+
+/** W3-6b — an unlocked achievement as a notice: the old banner's three lines. */
+export function describeAchievementNotice(rarityLabel: string, name: string, description: string): NoticeArtCopy {
+  const label = `Достижение открыто · ${rarityLabel}`
+  return { label, title: name, detail: description, message: `${label}. ${name}. ${description}` }
+}
+
+/** W3-6b — a find as a notice: the old loot toast's three lines. */
+export function describeLootNotice(toast: Pick<LootToastView, 'rarity' | 'title' | 'detail'>): NoticeArtCopy {
+  const label = `${LOOT_RARITY_LABELS[toast.rarity]} награда`
+  return { label, title: toast.title, detail: toast.detail, message: `${label}. ${toast.title}. ${toast.detail}` }
 }

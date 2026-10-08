@@ -51,25 +51,27 @@ cover a rumour's «Взяться» while capture is off. Wider than 1000px, the
 lane starts past the widest zone header, capped at 31rem, instead of under its
 pause button. Finale notice lanes are unchanged.
 
-On the narrow layout (`(max-width: 720px), (pointer: coarse)`), both modes put the
-one live notice region at the foot of the left column, below the mission panel. No
-lane on a phone is free of controls, and W2-2's camp and caravan cards fill the
-right column, so the notice takes height from the mission panel instead: the panel's
-content stays put and scrolls, and the vitals, squad strip, touch controls, prompt
-and right column are never covered. On phones at least 780px tall the whole status
-column (vitals, squad strip, ability and melee chips) keeps its height; when a long
-notice and a long first-time line meet, the lane scrolls and only the older one is
-cut short. On shorter screens the vitals card and squad strip keep their place and
-the rest of the status column scrolls first. Fine-pointer windows 721–1000px wide
-still use the centred lane, which can reach over the left column; W3-6 left them
-out of scope.
+On the column-lane layouts (`(max-width: 1000px), (pointer: coarse)`: phones, touch
+screens and, since W3-6b, windows up to 1000px wide), both modes put the one live
+notice region at the foot of the left column, below the mission panel. No lane on a
+phone is free of controls, between 721 and 1000px the centred lane reached over the
+left column, and W2-2's camp and caravan cards fill the right column. So the notice
+takes height from the mission panel instead: the panel's content stays put and
+scrolls, and the vitals, squad strip, touch controls, prompt and right column are
+never covered. On screens at least 780px tall the whole status column (vitals, squad
+strip, ability and melee chips) keeps its height; when a long notice and a long
+first-time line meet, the lane scrolls and only the older one is cut short. On
+shorter screens the vitals card and squad strip keep their place (a 15rem reserve on
+phones, 16rem for the taller desktop card at 721–1000px) and the rest of the status
+column scrolls first. On a phone the ability and attack buttons still show readiness
+and the combo beat while the chips are scrolled away.
 
 Notices are paced by one queue (`src/game/ui/noticeQueue.ts`). News shows two at a
-time on wide layouts and one on the narrow layout; a first-time line has a place of
+time on wide layouts and one in the column lane; a first-time line has a place of
 its own beside it, so lessons and news never starve each other, and the rest wait.
 Danger goes first, then warnings, rewards and other news, so a more urgent notice may
 take the place of a calmer one that has been up for 1.2s; the calmer one comes back
-with the time it had left. The narrow lane lists the newest on top, so a notice
+with the time it had left. The column lane lists the newest on top, so a notice
 already up never moves. A repeated notice is one line with a `×N` count. A notice
 lives 4.3–5.8s by length, and its clock counts painted, unpaused frames only: it
 stops behind any overlay and in a hidden tab, and a load stall counts as one short
@@ -78,12 +80,20 @@ calmest and oldest goes first, never a danger notice. First-time lines are never
 the hint director's 6s spacing. How a caravan beat ended is never dropped either, since
 the ending counts for the finale's gate. It takes a news place at its own tone: danger
 when the cart was lost, a warning when it got away or a crowded road let it through
-unfought, and the reward tone when it arrived. A notice raised
-behind an overlay, such as a purchase in the shop or a toggle in the pause menu,
-waits and shows once the game runs again. When empty, the narrow lane stays a live
-region, collapsed to one clipped pixel rather than hidden, so its first notice is
-announced. The achievement banner no longer takes taps meant for the controls
-beneath it. Add `?noticeLog=1` to the URL to record every
+unfought, and the reward tone when it arrived. An unlocked achievement and a find
+are notices too (W3-6b), drawn with the old banner's and loot toast's lines: a trophy
+or the find's rarity shape, a small rarity line, a title and a detail. Before, the
+banner floated over the vitals on a phone and over the first notice on a desktop for
+9s of wall time, and the toast sat over the vitals on a phone. An achievement is
+never dropped and stays up 5.8s, the longest a notice may. A find lives the toast's
+2.4s, a newer find takes its line, and one that could not show within 2.4s is dropped:
+the gold and health it gave are already on the HUD. A notice raised behind an
+overlay, such as a purchase in the shop, waits and shows once the game runs again. A
+setting changed in the pause menu or the main menu raises no notice, because its
+control already shows the new state; the HUD's own music button, pressed mid-game,
+still reports what it did. When empty, the column lane stays a live region, collapsed
+to one clipped pixel rather than hidden, so its first notice is announced. Add
+`?noticeLog=1` to the URL to record every
 notice's arrival in `window.__korovanyNoticeLog` and the live queue in
 `window.__korovanyNoticeQueue`.
 
