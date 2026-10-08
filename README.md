@@ -45,7 +45,8 @@ On phones and other narrow or touch layouts, notices sit at the foot of the left
 never cover the vitals, the squad strip or the touch controls. Bursts queue instead of
 stacking: two pieces of news at once on wider screens and one on narrow ones, the most
 urgent first (danger, then warnings, then rewards, then news), while first-time lines keep
-a place and a pace of their own. Repeats merge into one line with a count, and a notice's
+a place and a pace of their own. How a caravan beat ended is never dropped. Repeats merge
+into one line with a count, and a notice's
 clock stops while the game is paused.
 Faction launch cards come first, above seed and starting-gift customization.
 Theme, effect, audio and interface controls are grouped under **Настройки** at
@@ -260,7 +261,10 @@ walked cart that cannot move for six seconds beside you arrives where it stands.
 that finds the road crowded asks your side's idle packs to step back, as a contract does; if
 that is not room enough, it says so and waits while you stand by it;
 after 30 seconds it goes through without the fight, unpaid, and still counts for the camp
-and the gate. Until a choice is made, a won cart follows the claim rules below, and your
+and the gate. However busy the notices are, every ending that counts for the gate reaches
+them: a lost cart as a danger notice, one that got away or went through unfought as a
+warning, and one that arrived as good news. Until a choice is made, a won cart follows the
+claim rules below, and your
 squad never loads it. No random event is rolled while the camp's choice is open, while a
 cart is being fought, held or walked, or within 120 m of one not yet started; one already
 running stands down when the fight starts unless you are in the middle of it.

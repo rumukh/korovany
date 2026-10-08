@@ -5222,8 +5222,16 @@ kbd {
     width: 100%;
   }
 
+  /* Empty, the lane leaves the column's flow but stays in the accessibility tree, so the
+     first notice into it is still announced: a live region that is `display: none` until
+     it has content is often missed by screen readers. */
   .game-screen[data-hud] .left-hud > .notice-stack:empty {
-    display: none;
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    pointer-events: none;
+    position: absolute;
+    width: 1px;
   }
 
   .game-screen[data-hud] .left-hud > .notice-stack .notice {

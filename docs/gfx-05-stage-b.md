@@ -432,7 +432,9 @@ compass.
 W3-6 keeps this section's rules: one live region, no hidden copy, nothing inside a
 disclosure, finale cues never pushed, notices never buried. On the narrow layout
 it now renders that region, in both modes, at the foot of the left column after
-the mission panel. The mission panel yields its height while a notice shows. On
+the mission panel. The mission panel yields its height while a notice shows. An
+empty lane is collapsed to one clipped pixel rather than `display: none`, so the
+region stays in the accessibility tree and its first notice is announced. On
 phones at least 780px tall the status column never yields, and a second notice
 scrolls inside the lane. Wide layouts keep the lanes described above byte for byte.
 `GameScreen` takes the layout as `narrowHud`, and the App reads it from the CSS's

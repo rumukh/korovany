@@ -185,8 +185,12 @@ export type PartStatus = 'healthy' | 'wounded' | 'missing' | 'prosthetic'
 
 export type NoticeTone = 'info' | 'success' | 'warning' | 'danger'
 
-/** W3-6 — who released a notice, when that changes how it may be queued. */
-export type NoticeOrigin = 'hint'
+/**
+ * W3-6 — who released a notice, when that changes how it may be queued. A `hint` is a
+ * first-time line with a place of its own; an `outcome` says how a caravan beat ended, which
+ * moves the finale gate's count, so the queue never drops it.
+ */
+export type NoticeOrigin = 'hint' | 'outcome'
 
 export type LootRarity = 'common' | 'uncommon' | 'rare' | 'legendary'
 

@@ -73,9 +73,17 @@ with the time it had left. The narrow lane lists the newest on top, so a notice
 already up never moves. A repeated notice is one line with a `×N` count. A notice
 lives 4.3–5.8s by length, and its clock counts painted, unpaused frames only: it
 stops behind any overlay and in a hidden tab, and a load stall counts as one short
-frame. Plain news that waited 10s is dropped. First-time lines are never dropped and
-keep the hint director's 6s spacing. The achievement banner no longer takes taps
-meant for the controls beneath it. Add `?noticeLog=1` to the URL to record every
+frame. Plain news that waited 10s is dropped, and past twelve waiting notices the
+calmest and oldest goes first, never a danger notice. First-time lines are never dropped and keep
+the hint director's 6s spacing. How a caravan beat ended is never dropped either, since
+the ending counts for the finale's gate. It takes a news place at its own tone: danger
+when the cart was lost, a warning when it got away or a crowded road let it through
+unfought, and the reward tone when it arrived. A notice raised
+behind an overlay, such as a purchase in the shop or a toggle in the pause menu,
+waits and shows once the game runs again. When empty, the narrow lane stays a live
+region, collapsed to one clipped pixel rather than hidden, so its first notice is
+announced. The achievement banner no longer takes taps meant for the controls
+beneath it. Add `?noticeLog=1` to the URL to record every
 notice's arrival in `window.__korovanyNoticeLog` and the live queue in
 `window.__korovanyNoticeQueue`.
 

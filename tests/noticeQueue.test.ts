@@ -214,6 +214,35 @@ test('the waiting line is capped, and the cap never costs a hint or a danger not
   assert.ok(hinted.waiting.some((notice) => notice.message === 'Лишняя весть.'))
 })
 
+test('a line tagged as an outcome is kept: it waits out the stale age and the cap, in the news place', () => {
+  // Three dangers hold the phone's one place for news for about 15 s.
+  const blockers = [0, 1, 2].map((index): Arrival => ({ at: 0, message: `Опасно ${String(index)}.`, tone: 'danger' }))
+  const outcome: Arrival = { at: 10, message: 'Обоз дошёл без проводника.', tone: 'info', origin: 'outcome' }
+  const kept = play([...blockers, outcome], NARROW_NOTICE_LIMITS)
+  assert.ok((kept.wait(outcome.message) ?? 0) > NOTICE_STALE_INFO_MS, 'the outcome never had to wait out the stale age')
+  assert.equal(kept.maxHints, 0, 'an outcome is news, not a first-time line')
+  // Control: untagged, the same line goes stale behind the same dangers.
+  const { origin: _origin, ...untagged } = outcome
+  assert.equal(play([...blockers, untagged], NARROW_NOTICE_LIMITS).wait(outcome.message), undefined)
+
+  // At the cap the least urgent line goes, but never a kept one, however calm its tone.
+  let line = pushNotice(createNoticeQueue(), { message: 'Опасно.', tone: 'danger' }, 0, NARROW_NOTICE_LIMITS)
+  line = pushNotice(line, { message: 'Обоз ушёл своим ходом без тебя и дошёл.', tone: 'success', origin: 'outcome' }, 0, NARROW_NOTICE_LIMITS)
+  for (let index = 0; index < NOTICE_MAX_WAITING; index += 1) {
+    line = pushNotice(line, { message: `Ватага ${String(index)}.`, tone: 'warning' }, 0, NARROW_NOTICE_LIMITS)
+  }
+  assert.equal(line.waiting.length, NOTICE_MAX_WAITING)
+  assert.ok(line.waiting.some((notice) => notice.message === 'Обоз ушёл своим ходом без тебя и дошёл.'))
+  assert.equal(line.waiting.some((notice) => notice.message === 'Ватага 0.'), false, 'the oldest warning goes instead')
+  // Control: untagged, the calm success is the first line the cap cuts.
+  let plain = pushNotice(createNoticeQueue(), { message: 'Опасно.', tone: 'danger' }, 0, NARROW_NOTICE_LIMITS)
+  plain = pushNotice(plain, { message: 'Обоз ушёл своим ходом без тебя и дошёл.', tone: 'success' }, 0, NARROW_NOTICE_LIMITS)
+  for (let index = 0; index < NOTICE_MAX_WAITING; index += 1) {
+    plain = pushNotice(plain, { message: `Ватага ${String(index)}.`, tone: 'warning' }, 0, NARROW_NOTICE_LIMITS)
+  }
+  assert.equal(plain.waiting.some((notice) => notice.message === 'Обоз ушёл своим ходом без тебя и дошёл.'), false)
+})
+
 // ---------------------------------------------------------------------------
 // Rank and preemption
 // ---------------------------------------------------------------------------

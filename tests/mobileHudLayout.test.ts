@@ -53,7 +53,14 @@ test('W3-6: narrow notices use the foot of the left column in both modes, in flo
   assert.match(lane, /overflow-y:\s*auto;/)
   assert.match(lane, /pointer-events:\s*auto;/)
   assert.doesNotMatch(lane, /overflow:\s*hidden|display:\s*none|margin|(?:^|\s)(?:top|bottom|left|right):/)
-  assert.match(extractRule(mobileHudCss, '.game-screen[data-hud] .left-hud > .notice-stack:empty'), /display:\s*none;/)
+  // Empty, the lane leaves the column's flow but stays a live region, never `display: none`:
+  // a region that only enters the accessibility tree with its content is often not announced.
+  const empty = extractRule(mobileHudCss, '.game-screen[data-hud] .left-hud > .notice-stack:empty')
+  assert.match(empty, /position:\s*absolute;/)
+  assert.match(empty, /clip-path:\s*inset\(50%\);/)
+  assert.match(empty, /pointer-events:\s*none;/)
+  assert.doesNotMatch(empty, /display:\s*none|visibility:\s*hidden/)
+  assert.doesNotMatch(mobileHudCss, /notice-stack[^{}]*\{[^}]*display:\s*none/, 'a narrow rule hides the live region')
   assert.match(
     extractRule(mobileHudCss, '.game-screen[data-hud] .left-hud > .notice-stack .notice'),
     /overflow-wrap:\s*anywhere;/,

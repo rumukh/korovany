@@ -17,6 +17,10 @@ import type { HudMode } from '../visualSettings.ts'
  * either the lessons or the news starved (measured: info hints waited up to 90 s behind
  * warband warnings). So a hint never waits for a notice, and a notice never waits for a hint.
  *
+ * Only plain news can be dropped: info that went stale, or the least urgent line when the
+ * queue overflows. A first-time line is never dropped, and nor is how a caravan beat ended
+ * (`origin: 'outcome'`), because that moves the finale gate's count.
+ *
  * Everything below is pure: time is an argument, so the same calls give the same queue.
  */
 
@@ -45,9 +49,9 @@ const NOTICE_MS_PER_CHAR = 22
 export const NOTICE_MIN_DWELL_MS = 1200
 /** A displaced notice with less than this left has been read; it retires instead of returning. */
 export const NOTICE_MIN_RESUME_MS = 1500
-/** Plain info that waited this long describes a moment that has passed. Hints never go stale. */
+/** Plain info that waited this long describes a moment that has passed. Kept lines never go stale. */
 export const NOTICE_STALE_INFO_MS = 10_000
-/** A safety cap on the line. It never costs a hint or a danger notice. */
+/** A safety cap on the line. It never costs a kept line or a danger notice. */
 export const NOTICE_MAX_WAITING = 12
 /** The App's clock counts at most this much of one frame, so a stall does not age a notice. */
 export const NOTICE_FRAME_CAP_MS = 250
@@ -75,6 +79,8 @@ export interface NoticeView {
 
 export interface WaitingNotice extends NoticeView {
   hint: boolean
+  /** Never dropped: a first-time line, or how a caravan beat ended (`origin: 'outcome'`). */
+  keep: boolean
   /** The latest arrival, so a repeat keeps a waiting line fresh. */
   arrivedAt: number
   /** The life a displaced notice still had; `null` until it has been displaced. */
@@ -152,6 +158,7 @@ export function createNoticeQueue(): NoticeQueue {
 const rank = (notice: NoticeView): number => NOTICE_TONE_RANK[notice.tone]
 const sameLine = (notice: NoticeView, input: NoticeInput): boolean =>
   notice.message === input.message && notice.tone === input.tone
+const kept = (input: NoticeInput): boolean => input.origin === 'hint' || input.origin === 'outcome'
 
 /** First in line: the most urgent, then the one that arrived first. */
 function compareWaiting(first: WaitingNotice, second: WaitingNotice): number {
@@ -172,6 +179,7 @@ function displace(notice: ShownNotice, now: number): WaitingNotice | null {
     tone: notice.tone,
     count: notice.count,
     hint: notice.hint,
+    keep: notice.keep,
     arrivedAt: now,
     remainingMs: remaining,
     seen: true,
@@ -184,7 +192,7 @@ function show(notice: WaitingNotice, now: number): ShownNotice {
 }
 
 function isStale(notice: WaitingNotice, now: number): boolean {
-  return !notice.hint && notice.tone === 'info' && now - notice.arrivedAt >= NOTICE_STALE_INFO_MS
+  return !notice.keep && notice.tone === 'info' && now - notice.arrivedAt >= NOTICE_STALE_INFO_MS
 }
 
 function hintMayShow(notice: WaitingNotice, lastHintAt: number | null, now: number): boolean {
@@ -264,7 +272,7 @@ export function pushNotice(queue: NoticeQueue, input: NoticeInput, now: number, 
   if (waitingMatch) {
     stats.merged += 1
     const waiting = queue.waiting.map((notice) => notice === waitingMatch
-      ? { ...notice, count: notice.count + 1, arrivedAt: now }
+      ? { ...notice, count: notice.count + 1, arrivedAt: now, keep: notice.keep || kept(input) }
       : notice)
     return advanceNotices({ ...queue, waiting, stats }, now, limits)
   }
@@ -276,13 +284,14 @@ export function pushNotice(queue: NoticeQueue, input: NoticeInput, now: number, 
     tone: input.tone,
     count: 1,
     hint: input.origin === 'hint',
+    keep: kept(input),
     arrivedAt: now,
     remainingMs: null,
     seen: false,
   }]
   while (waiting.length > NOTICE_MAX_WAITING) {
     const victim = waiting
-      .filter((notice) => !notice.hint && notice.tone !== 'danger')
+      .filter((notice) => !notice.keep && notice.tone !== 'danger')
       .sort((first, second) => rank(first) - rank(second) || first.id - second.id)[0]
     if (!victim) break
     waiting = waiting.filter((notice) => notice !== victim)
@@ -304,7 +313,7 @@ export function nextNoticeDeadline(queue: NoticeQueue, limits: NoticeLimits, now
       if (!notice.seen && queue.lastHintAt !== null) times.push(queue.lastHintAt + HINT_NOTICE_GAP_MS)
       continue
     }
-    if (notice.tone === 'info') times.push(notice.arrivedAt + NOTICE_STALE_INFO_MS)
+    if (!notice.keep && notice.tone === 'info') times.push(notice.arrivedAt + NOTICE_STALE_INFO_MS)
     for (const entry of queue.shown) {
       if (!entry.hint && rank(entry) < rank(notice)) times.push(entry.shownAt + NOTICE_MIN_DWELL_MS)
     }
