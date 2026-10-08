@@ -38,6 +38,10 @@
  * The calm gate's 30 s ceiling (`DOCTRINE_DRAFT_MAX_HOLD_SECONDS`) changed four of the 360
  * `progress` runs, and no win: the stuck guard timeouts on seeds 79191 and 142543 under the
  * beeline and cautious scripts, whose third and fourth drafts the gate alone never opened.
+ *
+ * Everything above was measured before W3-5, with the errand stand-in (`errand: 'clear'`).
+ * W3-5 found that those four timeouts were that stand-in waiting out an archer the engine's
+ * `E` would have ignored. The shipped arms now press the errand, and the four runs end.
  */
 
 import assert from 'node:assert/strict'
@@ -118,8 +122,14 @@ test('a fight that never ends cannot starve a draft: the ceiling opens it 30 s a
   // Guard seed 142543 under the beeline script is pinned in a fight from the clock's third
   // tier to the 600 s timeout. The calm gate alone held its third and fourth drafts for the
   // rest of the run; the ceiling opens each `DOCTRINE_DRAFT_MAX_HOLD_SECONDS` after its tier.
+  //
+  // W3-5: the fight was the harness's own. Its errand stand-in waited for an archer to leave
+  // the healer the errand sits on, and the engine's `E` finishes that errand at 65 s. The
+  // shipped arms now press it (`errand: 'press'`). The stand-in, kept as the control arm, is
+  // still the deterministic fight that never ends that this rule needs.
   const stuckRun: RunOptions = {
     ...HARNESS_SHIPPED_ARMS,
+    errand: 'clear',
     seed: 142543,
     faction: 'guard',
     policy: 'beeline',

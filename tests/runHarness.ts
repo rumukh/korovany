@@ -114,6 +114,8 @@
  *    at 15 and hunt at 6.5; the contract stand-in spends start grace on whichever site
  *    the player stands on, as the engine did before W1-1; and they simulate the whole 3x3
  *    visible window, where the engine simulates only the plus inside it (`RegionWindow`).
+ *    Their errand waits until nothing hostile is within 12 m of its site, where the engine
+ *    finishes it on `E` whatever is near (`ErrandModel`).
  *    The `shipped` kit, the shipped encounters and the fought contracts are the engine's,
  *    and so is the window they run in.
  *
@@ -569,6 +571,8 @@ export const HARNESS_HEALER_HEAL = 40
 export const HARNESS_MEDICINE_HEAL = 55
 /** `findNearbySite(…, 6)`: how close the player stands to use a site at all. */
 export const HARNESS_SITE_REACH = 6
+/** The errand stand-in's "nothing hostile left within reach" (W3-5's `ErrandModel` `clear`). */
+export const HARNESS_ERRAND_CLEAR_RADIUS = 12
 /** The scripted sustain policy: eat below half health, or when a lost limb is bleeding. */
 export const HARNESS_RATION_HEALTH = 0.5
 export const HARNESS_RATION_BLEED = 0.3
@@ -985,6 +989,31 @@ export function advanceCommanderClock(
  */
 export type StagingModel = 'none' | 'friendly'
 
+/**
+ * W3-5 — how the scripted player finishes its errand: the campaign's «interact» or «claim»
+ * node that runs no contract («Осмотреть точку…», «Забрать награду…»).
+ *
+ * `clear` (the default) is this file's stand-in until W3-5, and every pinned number was
+ * measured with it. The errand completes once the player stands within
+ * `HARNESS_SITE_REACH` of its site with nothing hostile within
+ * `HARNESS_ERRAND_CLEAR_RADIUS`, and an `E` pressed there for the healer, the trader or the
+ * treasure does not complete it. When an archer holds 8–12 m off a healer that is the
+ * errand's own site, a player who does not fight it never completes the errand and is
+ * healed for ever. That is the guard's timeout on seeds 79191 and 142543.
+ *
+ * `press` is the engine's. `interact` → `handleGeneratedInteraction` completes the errand
+ * on the press that `chooseGeneratedInteraction` says targets it, after the site's own
+ * service, whatever is shooting at the player. The scripted player presses `E` while the
+ * prompt is up: the errand is the active node and its site is the nearest within reach.
+ * Nothing else completes an errand, so a press the engine would refuse shows as a stall.
+ */
+export type ErrandModel = 'clear' | 'press'
+
+/** W3-5 — the errand: the campaign's «interact» or «claim» node that runs no contract. */
+export function isErrandNode(node: Pick<FactionObjectiveNode, 'kind' | 'contract'>): boolean {
+  return node.contract === undefined && (node.kind === 'interact' || node.kind === 'claim')
+}
+
 /** W1-6 — the screen the staging arm's camera is measured on: a desktop's 16:9. */
 export const HARNESS_SCREEN_ASPECT = 16 / 9
 
@@ -1386,6 +1415,18 @@ export interface EncounterMetrics {
 }
 
 /**
+ * W3-5 — the errand's site. When the player first stood within `HARNESS_SITE_REACH` of it
+ * while the errand was the active node, when the errand completed, and for how much of the
+ * time in between, standing there, the player had something hostile within
+ * `HARNESS_ERRAND_CLEAR_RADIUS`. A stall reads as a long `heldSeconds` and no completion.
+ */
+export interface ErrandSiteMetrics {
+  reachedAt: number | null
+  completedAt: number | null
+  heldSeconds: number
+}
+
+/**
  * W1-5 — the balance block. Present on every report, populated by the arms that feed it,
  * and computed without a single draw from any stream, so its presence changes nothing the
  * pinned reports describe.
@@ -1426,6 +1467,8 @@ export interface BalanceMetrics {
   encounters: EncounterMetrics
   /** W2-2, PR B — the caravans a spine run met; null while `caravanBeats` is `off`. */
   beats: BeatMetrics | null
+  /** W3-5 — the errand's site, under either `errand` arm. */
+  errandSite: ErrandSiteMetrics
 }
 
 export interface RunReport {
@@ -1466,6 +1509,8 @@ export interface RunReport {
   beatPolicy: BeatPolicy
   /** W1-6 — whether the player's own packs stepped back for a staging. */
   staging: StagingModel
+  /** W3-5 — how the errand was finished: waited out until clear, or pressed. */
+  errand: ErrandModel
   /** Frames per simulated second the run was driven at. */
   hz: number
   outcome: RunOutcome
@@ -1661,6 +1706,11 @@ export interface RunOptions {
    * shipped encounters, whose packs are the ones that can step back.
    */
   staging?: StagingModel
+  /**
+   * W3-5 — defaults to `clear`, the errand stand-in every pinned number was measured with.
+   * `press` is the engine's `E` at the errand, and the shipped arms carry it.
+   */
+  errand?: ErrandModel
 }
 
 /**
@@ -1683,6 +1733,10 @@ export interface RunOptions {
  * `rumourSteering: 'meeting'` is the shipped compass for a taken escort. It changes nothing
  * while rumours are ignored, and it is what a run that turns `commit` on over these arms
  * follows.
+ *
+ * W3-5's `errand: 'press'` finishes the errand with the engine's `E`, the moment its prompt
+ * is up, instead of waiting until nothing hostile is within 12 m of its site. Pass
+ * `errand: 'clear'` for the stand-in every baseline before W3-5 was measured with.
  */
 export const HARNESS_SHIPPED_ARMS = {
   meleeModel: 'honest',
@@ -1701,6 +1755,7 @@ export const HARNESS_SHIPPED_ARMS = {
   commanders: 'shipped',
   staging: 'friendly',
   escalation: 'progress',
+  errand: 'press',
 } as const satisfies Partial<RunOptions>
 
 /**
@@ -1953,6 +2008,8 @@ export function runHarness(options: RunOptions): RunReport {
   const stagingModel: StagingModel = options.staging ?? 'none'
   // W1-6 — only the generator's own packs can step back, so only its shipped encounters can.
   const stagingOn = stagingModel === 'friendly' && shippedEncounters
+  // W3-5 — the errand's stand-in, or the engine's press.
+  const errandModel: ErrandModel = options.errand ?? 'clear'
 
   const blueprint = options.blueprint ?? generateWorld(options.seed)
   // The two placebos. Both leave every site, encounter, road and chronicle seed identical
@@ -2025,6 +2082,9 @@ export function runHarness(options: RunOptions): RunReport {
   // both about that one specifically.
   const contractNodes = graph.nodes.filter((node) => node.contract !== undefined)
   const contractNode = contractNodes[0] ?? null
+  // W3-5 — the errand, and how long its site was held. Measured under either arm.
+  const errandNodeId = graph.nodes.find((node) => isErrandNode(node))?.id ?? null
+  const errandSite: ErrandSiteMetrics = { reachedAt: null, completedAt: null, heldSeconds: 0 }
   const middleNodeIds = new Set(
     graph.nodes
       .filter((node) => !graph.rootNodeIds.includes(node.id) && node.id !== graph.finalNodeId)
@@ -4554,6 +4614,10 @@ export function runHarness(options: RunOptions): RunReport {
   /**
    * One press of `E`, in `interact`'s order: an event that accepts it, else
    * `chooseGeneratedInteraction`'s ration or service, else the road cart.
+   *
+   * W3-5 — under `errand: 'press'` the press also completes the objective it targets, after
+   * the site's own service, as `handleGeneratedInteraction` → `completeGeneratedObjective`
+   * does. The `clear` stand-in leaves that to step 7b and only once the site is clear.
    */
   const pressInteract = (activeNode: FactionObjectiveNode | null): void => {
     if (eventsFought && interactWithEvents()) return
@@ -4580,6 +4644,13 @@ export function runHarness(options: RunOptions): RunReport {
       maxHealth: player.maxHealth,
       rationOnBleed: doctrineEffects.rationOnBleed,
     })
+    const completeTargeted = (): void => {
+      if (errandModel !== 'press' || !choice.targetsObjective || activeNode === null) return
+      if (!objectivePrerequisitesDone(activeNode, objectives)) return
+      if (!completeObjectiveEntry(objectives, activeNode.id)) return
+      settleSkips(activeNode.id)
+      finishObjective(activeNode.id)
+    }
     if (choice.kind === 'ration') {
       eatRation()
       return
@@ -4589,8 +4660,10 @@ export function runHarness(options: RunOptions): RunReport {
       const keepHealing =
         service.kind === 'recovery' && healingOn && player.health < player.maxHealth
       if (!keepHealing) serviceCooldown.set(service.id, elapsed + HARNESS_SERVICE_COOLDOWN)
+      completeTargeted()
       return
     }
+    completeTargeted()
     if (site && choice.kind !== 'caravan' && choice.kind !== 'none') return
     interactWithCart()
   }
@@ -6218,13 +6291,32 @@ export function runHarness(options: RunOptions): RunReport {
       }
     }
 
+    // W3-5 — the errand's site, read before the press so the frame it is reached counts.
+    if (activeNode !== null && activeNode.id === errandNodeId && objectiveSite) {
+      if (Math.hypot(objectiveSite.x - player.x, objectiveSite.z - player.z) <= HARNESS_SITE_REACH) {
+        errandSite.reachedAt ??= elapsed
+        const held = actors.some(
+          (actor) =>
+            actor.alive &&
+            actor.hostileToPlayer &&
+            Math.hypot(actor.x - player.x, actor.z - player.z) < HARNESS_ERRAND_CLEAR_RADIUS,
+        )
+        if (held) errandSite.heldSeconds += delta
+      }
+    }
+
     // W1-5 — `E`, pressed when the policy wants something within reach: a ration, a
     // healer, a captive, a cart. The engine decides what the press actually does.
     if (policy !== 'idle' && interactCooldown <= 0) {
       const atGoal =
         goal?.pressWithin != null &&
         Math.hypot(goal.point.x - player.x, goal.point.z - player.z) <= goal.pressWithin
-      if (atGoal || wantsRation()) {
+      // W3-5 — and at the errand once its prompt is up: the nearest site within reach is the
+      // errand's own, so the engine offers «[E] Осмотреть…» or that site's own verb.
+      const atErrand =
+        errandModel === 'press' && activeNode !== null && activeNode.id === errandNodeId &&
+        nearbySite()?.id === activeNode.siteId
+      if (atGoal || wantsRation() || atErrand) {
         interactCooldown = HARNESS_INTERACT_INTERVAL
         pressInteract(activeNode)
       }
@@ -6563,22 +6655,24 @@ export function runHarness(options: RunOptions): RunReport {
     // is standing on it and nothing hostile is left within reach — a stand-in for the
     // interaction the engine gates on a keypress, and a stated simplification. W1-5's
     // shipped encounters take the finale out of it: there, only the boss's death ends it.
+    // W3-5's `press` takes the errand out of it: there, only the engine's `E` ends it.
     if (
       activeNode &&
       activeNode.kind !== 'arrive' &&
       activeNode.contract === undefined &&
       objectiveSite &&
-      !(shippedEncounters && activeNode.id === graph.finalNodeId)
+      !(shippedEncounters && activeNode.id === graph.finalNodeId) &&
+      !(errandModel === 'press' && activeNode.id === errandNodeId)
     ) {
       const onSite = Math.hypot(
         objectiveSite.x - player.x,
         objectiveSite.z - player.z,
-      ) <= 6
+      ) <= HARNESS_SITE_REACH
       const clear = !actors.some(
         (actor) =>
           actor.alive &&
           actor.hostileToPlayer &&
-          Math.hypot(actor.x - player.x, actor.z - player.z) < 12,
+          Math.hypot(actor.x - player.x, actor.z - player.z) < HARNESS_ERRAND_CLEAR_RADIUS,
       )
       if (onSite && clear && policy !== 'idle') {
         // W1-5 — the interaction is the site's own: a healer heals, a treasure pays.
@@ -6748,6 +6842,10 @@ export function runHarness(options: RunOptions): RunReport {
     rumourFeasibility: feasibility,
     encounters: encounterMetrics,
     beats: beats.metrics(elapsed),
+    errandSite: {
+      ...errandSite,
+      completedAt: (errandNodeId ? objectiveReports.get(errandNodeId)?.completedAt : null) ?? null,
+    },
   }
 
   return {
@@ -6775,6 +6873,7 @@ export function runHarness(options: RunOptions): RunReport {
     caravanBeats: caravanBeatModel,
     beatPolicy,
     staging: stagingModel,
+    errand: errandModel,
     hz,
     outcome,
     elapsed,

@@ -31,6 +31,7 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `escalation` (W2-1) | `time` | `progress`: pacing follows progress, enemy stats the clock | `time`; `progressAll` |
 | `caravanBeats` (W2-2) | `off` | `shipped`, in `HARNESS_SPINE_ARMS`: the spine | `beatPolicy`: `walk`, `ignore` |
 | `rumourSteering` (W2-3) | `cart`: an escort's cart's square | `meeting`: where its cart is met | `cart` |
+| `errand` (W3-5) | `clear`: waits for no hostile within 12 m | `press`: the engine's `E` at the errand | `clear` |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
   through `selectSquadIntent` and `getSquadFollowSpeed`, fight through the squad's own `selectThreat` pass and the
@@ -138,6 +139,9 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   the soldiers commanders called (W1-6), which count on the road once called, the packs that stepped back to make
   room for a contract and came home again, and how many of those the player called home from their posts (W1-6).
 - `sweepBalance` aggregates them per faction and policy, with the run-length distribution.
+- **The errand's site (W3-5), per run only:** when the player first stood within 6 m of it while the errand was the
+  active node, when the errand completed, and for how long before that something hostile stood within 12 m
+  (`errandSite`).
 
 ## Running it
 
@@ -320,7 +324,7 @@ and rejected: progress scaling enemy stats as well. Same seeds, the engine's win
 - Calm alone had no ceiling. Four guard runs pinned in a fight from 360 s to the 600 s timeout (seeds 79191 and
   142543, beeline and cautious) never opened their third and fourth drafts. With the 30 s ceiling those eight open
   at 390 s and 570 s, `draftsForced` counts them, and the other 356 runs are the same in every recorded field: no win
-  count moved, under `progress` or `progressAll`.
+  count moved, under `progress` or `progressAll`. W3-5 found the fight was the harness's own (see below).
 - The finale is fought at pacing tier 3 with its boss scaled at the clock's tier 1. Under `progressAll` the same boss
   had a quarter more health, and the finale's defeats are most of the gap in that column.
 - Run length moved by ten percent or less in every cell.
@@ -376,6 +380,7 @@ byte at 043f4bb. Won in p50 is the middle of the three sides' medians.
   damage against the baseline's 364 and cost the duelist 11 wins. Two to a step keeps the waves at 335, leaving out one
   run: a beeline guard (seed 285 085) that stalls for 1 100 s at an unfinished «interact» objective in region-1-4,
   the same stall as the baseline's own timeout (seed 142 543), and takes 2 964 wave damage while it stands there.
+  W3-5 found that stall was the harness's errand stand-in, not the game.
   Beeline gains one win, cautious none, and duelist loses six (10 points). The finale is fought at pacing tier 4 either
   way, against 3 without the spine; its boss stays scaled by the clock.
 - The scripted player's median win grows by 28–52 s, a third to a half. This harness cannot show option A's 6–10
@@ -480,6 +485,108 @@ and 0.17 on the shipped arms, worse than the cart's square. Its 8 s rules out th
 already beside the cart, so it led players away from carts they were walking with. Counting the square the player
 stands in as no walk at all changed no run in either panel.
 
+## W3-5: the errand is pressed, not waited out
+
+W2-1's four guard timeouts (seeds 79191 and 142543, `beeline` and `cautious`) and the spine's stall on seed 285085
+were one stall, and it was the harness's, not the game's. In each run the guard's errand, the «interact» node
+«Осмотреть точку «Лечение и протезы»», sat on `site-recovery-riverside`, a healer. An encounter archer held 8–12 m off
+it. The scripted player never fights what it cannot reach, and the squad was dead, so nobody touched the archer.
+
+Until W3-5 the harness finished an errand only once nothing hostile stood within 12 m of the player on its site, so it
+waited for ever. The arrows hurt, so the sustain arm pressed `E` at the healer, 53 to 189 times a run, and
+`chooseGeneratedInteraction` said every one of those presses targeted the errand. The harness healed and stopped
+there. The engine's `handleGeneratedInteraction` heals and completes the errand on that same press. Healed but never
+done, the player neither died nor moved on. W2-1's "fight from 360 s to 600 s" was that archer.
+
+A person at that spot sees «[E] Вылечиться: Лечение и протезы» and presses it once. Nothing between `interact` and
+`completeGeneratedObjective` looks at nearby enemies: the site is reachable, the prompt appears and no event takes
+the press. `tests/errandPress.test.ts` drives those production methods in seed 142543's world:
+
+- one press with an archer 10 m away heals and completes the errand;
+- 6.5 m off the site the same press does nothing;
+- with the contract arm pinned, the press heals and leaves the errand undone.
+
+A browser check on the same seed, with a labelled save that put the guard on the healer at 30 health with enemies on
+it, finished the errand on the first `E`: «Задача выполнена: Осмотреть точку «Лечение и протезы».», and the compass
+moved on to the finale.
+
+The `errand` arm fixes the harness:
+
+- `clear`, the default, is the stand-in every pinned number was measured with. `{ ...HARNESS_SHIPPED_ARMS, errand:
+  'clear' }` gives `main`'s baseline back run for run (360 of 360 at 043f4bb).
+- `press`, in the shipped arms, is the engine's `E`:
+  - the press completes the objective that `chooseGeneratedInteraction` says it targets, after the site's service;
+  - the scripted player presses while its errand's prompt is up;
+  - nothing else completes an errand, so a press the engine would refuse shows as a stall instead of being waited
+    out.
+- `balance.errandSite` says when the player first stood on the errand's site, when the errand completed, and how long
+  something hostile stood within 12 m before that. A stall reads as a long `heldSeconds` and no completion.
+
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s, seeds `1 + 7919 n` for n = 0…39, `clear` against `press`, on `main` at
+191cda5:
+
+| Policy · faction | `clear`: win / defeat / timeout | `press`: win / defeat / timeout | Median win |
+| --- | --- | --- | --- |
+| beeline · elf | 11 / 29 / 0 | 14 / 26 / 0 | 87 → 77 s |
+| beeline · guard | 17 / 21 / 2 | 17 / 23 / 0 | 93 s |
+| beeline · villain | 20 / 20 / 0 | 20 / 20 / 0 | 89 s |
+| cautious · elf | 10 / 11 / 19 | 13 / 12 / 15 | 78 → 80 s |
+| cautious · guard | 13 / 17 / 10 | 14 / 13 / 13 | 88 → 87 s |
+| cautious · villain | 17 / 12 / 11 | 18 / 12 / 10 | 86 s |
+| duelist · elf | 36 / 4 / 0 | 36 / 4 / 0 | 96 s |
+| duelist · guard | 36 / 4 / 0 | 34 / 6 / 0 | 108 → 107 s |
+| duelist · villain | 37 / 3 / 0 | 37 / 3 / 0 | 93 s |
+
+- **Timeouts.** They fall from 42 to 38, and errand stalls from 4 to none. The other 38 are all `cautious` and stall
+  at the finale. Below 35 % health its retreat overrides the walk to the healer it chose, its health does not come
+  back, and it shuttles across a square's edge. That is the class the baseline calls cautious stalls. W3-5 neither
+  causes nor hides it. Which runs fall into it changes only because 132 runs took another course.
+- **The wait.** 101 of the 132 changed runs had waited at the errand or stalled there. Under `clear`, 109 of the 353
+  errands that completed had first waited for the site to clear:
+
+  | Faction | Errands that waited | Mean wait | Longest |
+  | --- | ---: | ---: | ---: |
+  | elf | 38 | 12 s | 74 s |
+  | guard | 48 | 16 s | 172 s |
+  | villain | 23 | 4 s | 17 s |
+
+  Under `press` no errand waits.
+- **Wins.** They rise from 197 to 203:
+  - beeline, 48 → 51;
+  - cautious, 40 → 45;
+  - duelist, 109 → 107.
+- **200 more seeds.** n = 40…239, beeline and cautious, 1 200 runs:
+  - errand stalls fall from 7 to none. Six are the guard held at the same healer on seeds 1100742, 1346231 and
+    1868885, under both policies. The seventh is a cautious guard on 1021552 that reached the site and retreated;
+  - timeouts fall from 216 to 183;
+  - beeline wins rise from 219 to 255 (elf 62 → 78, guard 61 → 73, villain 96 → 104) and cautious wins from 178 to
+    215.
+
+  The stand-in made the walking players stand in fights at the errand, which cost them about six points.
+
+`HARNESS_SPINE_ARMS` inherits the arm. The spine's own panel above, at 1 200 s with beeline 40, cautious 30 and
+duelist 20 per side:
+
+| Arm | Wins (beeline / cautious / duelist) | Timeouts | Errand stalls |
+| --- | --- | ---: | ---: |
+| spine, `clear` | 128 (49 / 29 / 50) | 38 | 4 |
+| spine, `press` | 122 (48 / 24 / 50) | 38 | 0 |
+
+- **Seed 285085.** Its beeline guard stood 1 100 s at the healer and took 2 964 threat-wave damage there. It now ends
+  in defeat at 156 s. The 142543 runs finish their errand too: the beeline dies at the finale at 142 s, and the
+  cautious falls into the cautious finale stall. A cautious villain on 79191 used to reach its errand's site, retreat
+  and never come back; it now completes the errand on arrival and dies at 216 s.
+- **Cautious.** Its five lost wins are noise on 30 seeds a side. On 100 more seeds per side (beeline n = 40…139,
+  cautious n = 30…129, 600 runs):
+  - cautious wins rise from 81 to 94 and its timeouts fall from 117 to 112;
+  - beeline wins rise from 95 to 110 and its timeouts fall from 2 to 0;
+  - errand stalls fall from 3 to 0: the guard on 641440, under both policies, and on 285085.
+
+`tests/errandPress.test.ts` holds the four runs. Under `press` each errand completes on the frame its site is reached,
+with a hostile within 12 m, and both beeline runs end long before the limit. Under `clear` none of the four completes
+in 240 s. `tests/runHarnessEscalation.test.ts` keeps `errand: 'clear'` for its fight that never ends, and W1-2's
+whole-run test in `tests/runHarnessBalance.test.ts` re-picked the elf's seed by its own rule: 356356.
+
 ## What it still does not model
 
 The harness header lists these with the bias each one introduces. In short: no props, buildings, trees or water as
@@ -488,8 +595,8 @@ off a cart. No flanking, separation, commanders' orders and rallies, or boar cha
 sustain policy is a script that never buys an upgrade. Caravan beats are modelled only in `HARNESS_SPINE_ARMS`,
 on a straight lane with no cart collider and a player who takes the camp's offer on the first frame. Civilians,
 ambient prowlers, campfires, achievements and the profile are not modelled. The pinned arms keep a 6.4 m/s walk, a
-22 m sense range, a contract grace from before W1-1, a simulated 3x3, an inert commander and nobody making room, none
-of them the engine's. The staging arm's camera never looks round, so what it counts as out of sight is what a player
-watching the road would not see.
+22 m sense range, a contract grace from before W1-1, a simulated 3x3, an inert commander, nobody making room and an
+errand that waits for its site to clear, none of them the engine's. The staging arm's camera never looks round, so
+what it counts as out of sight is what a player watching the road would not see.
 
 A number from this harness is a scripted player's, not a person's.

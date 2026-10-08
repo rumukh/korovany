@@ -53,7 +53,10 @@
  *   the run's progress as well as the clock, so the same runs reach two drafts, while enemy
  *   stats stay on the clock and the win counts stay within noise. The table above is the
  *   clock-only rule (`escalation: 'time'`); `tests/runHarnessEscalation.test.ts` holds the
- *   comparison.
+ *   comparison. **W3-5 found that the two beeline guard timeouts, and two of the cautious
+ *   guard's, were the harness's errand stand-in waiting out an archer at a healer.** The
+ *   shipped arms now press the errand (`errand: 'press'`); `tests/errandPress.test.ts` and
+ *   `docs/run-harness.md` have the rest.
  * - **F2, corrected.** Every run reached its contract and started it: 360 started, 346
  *   kept, none abandoned. The first baseline's 239 `crowded` abandonments came from the
  *   harness simulating the whole 3x3 where the engine simulates only the plus inside it
@@ -307,7 +310,7 @@ test('W1-1 in whole runs: a random event up at arrival stands down, and the cont
 })
 
 test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never to the squad', () => {
-  // Under `engage`, the elf on seed 7920 and the guard on seed 79191 each reach a chronicle
+  // Under `engage`, the elf on seed 356356 and the guard on seed 79191 each reach a chronicle
   // ambush whose raiders load their cart. In the baseline's `ignore` arm no NPC ever starts a
   // load, so these are the runs that show the channel working end to end. The pre-W1-2
   // touch rule would lose a cart without a load (`lost > loads`), and the old squad rule
@@ -320,9 +323,14 @@ test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never 
   //
   // W2-2 re-picked the guard's by the same rule. On 47515 the guard now defends an ambush of
   // its own side's cart instead of robbing it, the run takes another course, and no raider
-  // starts a load; the guard's first such seed is now 79191. The elf keeps 7920.
+  // starts a load; the guard's first such seed is now 79191.
+  //
+  // W3-5 re-picked the elf's by the same rule. The shipped arms now press the errand as soon
+  // as its prompt is up instead of waiting for its site to clear. On 7920 the elf leaves its
+  // errand sooner and its ambush's raiders never start a load, so the elf's first such seed
+  // is now 356356 (n = 45). The guard keeps 79191.
   const reports = ([
-    [7920, 'elf'],
+    [356356, 'elf'],
     [79191, 'guard'],
   ] as const).map(([seed, faction]) =>
     runHarness({
@@ -428,6 +436,7 @@ test('the arms leave the pinned run alone, and the shipped kit walks the engine\
     regionWindow: 'square',
     commanders: 'inert',
     staging: 'none',
+    errand: 'clear',
   })
   assert.deepEqual(explicit, omitted, 'the declared defaults must be the defaults')
   assert.equal(omitted.balance.companions.started, 0)
