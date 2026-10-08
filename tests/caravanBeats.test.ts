@@ -2256,7 +2256,7 @@ test('PR B — the camp is decided by the caravan met, the other goes its way, a
   assert.equal(runtime.get(first.id)?.cart.visible, false)
 })
 
-test('PR B — the finale waits for two caravans, every ending counts, and each met one is a step', () => {
+test('PR B — the finale waits for two caravans, every ending counts, and two met ones are a step', () => {
   const value = harness('villain', 20_260_909, { spine: true })
   const { plans, beats, slot, state } = spineOf(value)
   const graph = value.blueprint.objectives.villain
@@ -2289,16 +2289,19 @@ test('PR B — the finale waits for two caravans, every ending counts, and each 
   const [crossing] = slot('crossing')
   state(first.id).phase = 'fighting'
   declineOtherCaravanOffers(plans, beats, first.id)
-  state(first.id).phase = 'lost'
-  assert.equal(steps(), before + 1, 'a lost cart is a step the run took')
+  state(first.id).phase = 'unavailable'
+  assert.equal(steps(), before, 'an unstageable cart is nobody\'s step')
   assert.deepEqual(caravanSpineGate(beats), { open: false, settled: 1, required: 2 })
   assert.equal(ready().includes(finalNode.id), false)
-  state(crossing.id).phase = 'unavailable'
-  assert.equal(steps(), before + 1, 'an unstageable cart is no step of progress')
-  assert.equal(caravanSpineGate(beats).open, true, '…but it counts for the gate')
+  state(crossing.id).phase = 'lost'
+  assert.equal(steps(), before, 'one met cart is half a step')
+  assert.equal(caravanSpineGate(beats).open, true, 'every ending counts for the gate')
   assert.equal(invoke<boolean>(value.engine, 'generatedPrerequisitesDone', finalNode), true)
   assert.ok(ready().includes(finalNode.id))
   assert.ok(field() > 0, 'the finale fields its garrison once the gate opens')
+  // Had the camp's cart been met (it escaped), the two met carts would pay one step.
+  state(first.id).phase = 'escaped'
+  assert.equal(steps(), before + 1, 'two met carts, lost and escaped, pay one step')
 
   // Control: the same campaign without a spine has its finale ready at once.
   const legacy = harness('villain')

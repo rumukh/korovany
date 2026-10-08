@@ -49,7 +49,8 @@ Provide:
 - A short road itinerary with the next crossing/region and an honest uncertainty note.
 
 Known objective destinations may retain their existing visibility through fog.
-For the default target (a taken live rumour, otherwise the active campaign objective)
+For the default target (a taken live rumour, the camp's chosen caravan, the active campaign
+objective, or the caravan a shut finale still waits on)
 or an explicitly selected known mission, its planned road itinerary may extend
 through unexplored ground, drawn dashed and labelled unscouted. This deliberately
 exposes only transport geometry along that itinerary, not arbitrary hidden sites,
@@ -199,8 +200,14 @@ the itinerary changes. No navigation grids are built by the atlas.
 Without an atlas choice, the compass charts a default target exactly as if the player
 had selected it: the same road itinerary, next instruction, crossing symbols, and fog
 exception. A taken live rumour is that target until it is kept, broken, dropped or
-expires; otherwise it is the active campaign objective. Explicitly selecting a ready
-mission, live rumour or site overrides the default, and «Убрать маршрут» returns to it.
+expires; otherwise it is the active campaign objective. W2-2's caravan spine adds two
+places to that order (see [the caravan spine](16-caravan-spine.md)): while the camp's
+choice is open, the caravan the player took with «Взяться» leads ahead of the objective,
+and once no objective is left before a finale the caravans still hold shut, the nearest
+caravan by road follows after it. The whole order is an atlas choice, a taken live rumour,
+the camp's chosen caravan, the active objective, then the gate's next caravan. Explicitly
+selecting a ready mission, live rumour, caravan or site overrides the default, and
+«Убрать маршрут» returns to it.
 Either way, a mission may expose its own dashed, unscouted road itinerary and crossing
 symbols. Unexplored region owners, biomes, actors, unrelated sites, river legs, and the
 rest of the road network remain hidden. A discovered utility site does not grant the
@@ -236,7 +243,8 @@ Clearing writes `campaign`, which survives a reload. A version-1 save from befor
 2026-10-07 may hold `none`, the old «Убрать маршрут»; it loads as `campaign` without
 a warning, because clearing now means returning to the default route. A target of kind
 `bridgeAmbush` loads as `caravanBeat` with the same ID: W2-2 made the bridge one caravan
-beat among others, and the atlas lists every beat that is not yet settled under that kind.
+beat among others, and the atlas lists every beat the run can still meet under that kind,
+priced as its card is. A spine's road beats are not listed until the camp has chosen.
 
 Both initial and live views carry `expedition`. Initial position and heading now use
 the same start projection as the actual engine rather than the former site-center

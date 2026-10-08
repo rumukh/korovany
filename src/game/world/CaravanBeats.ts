@@ -621,21 +621,39 @@ export interface CaravanSpineGate {
  * declined offer is not a beat the run can meet, so it neither counts nor is required, and a
  * world with fewer beats than the gate asks is never asked for more than it has.
  */
-export function caravanSpineGate(state: CaravanBeatsState | null): CaravanSpineGate {
+export function caravanSpineGate(
+  state: CaravanBeatsState | null,
+  /** The run harness measures other gates (`beatGate`); the game always asks the shipped one. */
+  finaleGate: number = CARAVAN_SPINE_FINALE_GATE,
+): CaravanSpineGate {
   if (!state?.spine) return { open: true, settled: 0, required: 0 }
   const counted = state.beats.filter((beat) => beat.phase !== 'declined')
   const settled = counted.filter(isCaravanBeatSettled).length
-  const required = Math.min(CARAVAN_SPINE_FINALE_GATE, counted.length)
+  const required = Math.min(Math.max(0, Math.floor(finaleGate)), counted.length)
   return { open: settled >= required, settled, required }
 }
 
 /**
- * The caravans the threat tier counts as steps of progress (W2-1's `caravanBeatsResolved`).
- * Only endings the run took part in: a cart that could not be staged moved nobody forward.
+ * The caravans the run took part in: resolved, lost or escaped. A cart that could not be
+ * staged, or the camp's declined offer, moved nobody forward.
  */
-export function caravanSpineProgressBeats(state: CaravanBeatsState | null): number {
+export function caravanSpineMetCount(state: CaravanBeatsState | null): number {
   if (!state?.spine) return 0
   return state.beats.filter((beat) => PROGRESS_PHASES.includes(beat.phase)).length
+}
+
+/**
+ * Met caravans per step of W2-1's progress. Two, the coordinator's fallback, because one per
+ * step was measured out of band: with the tier rising on every cart the threat waves dealt
+ * nearly three times their damage and the duelist's wins fell 20 points, while two per step
+ * keeps the waves at their baseline and every policy within 10 points of its wins. The finale
+ * is fought at pacing tier 4 either way. `docs/run-harness.md` has the sweep.
+ */
+export const CARAVAN_SPINE_BEATS_PER_STEP = 2
+
+/** The progress steps the met caravans pay for (W2-1's `caravanBeatsResolved`). */
+export function caravanSpineProgressBeats(state: CaravanBeatsState | null): number {
+  return Math.floor(caravanSpineMetCount(state) / CARAVAN_SPINE_BEATS_PER_STEP)
 }
 
 /**

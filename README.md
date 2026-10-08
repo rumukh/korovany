@@ -12,7 +12,8 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 - Reproducible 25-region worlds with streamed terrain, hills, rivers, roads, bridges, settlements, and fog of war
 - Shareable text or numeric seeds with deterministic world validation and fingerprints
 - Melee combat, NPC squads, caravan raids, stylized injuries, prosthetics, healing, and trading
-- Caravan beats: each side settles a won cart with its own verb from the letter, and the market's prices remember it
+- «Грабить корованы» as every run's spine: the camp is a choice between two caravans, the finale waits on two, and
+  each side settles a won cart with its own verb from the letter while the market's prices remember it
 - Directional evasion, perfect guard, and drag-to-look when mouse capture is unavailable
 - Follow, Hold, Focus, and Regroup squad orders with a live health and status roster
 - An expedition atlas with road/bridge itineraries and cautious routes; the compass follows the road by default
@@ -140,18 +141,40 @@ already full of soldiers nobody had sent for.
 
 ## Caravan beats
 
-«Можно грабить корованы» is a decision, not scenery. A caravan beat is a gilded cart on a real
-road: you win the fight at the cart, then settle it with your own side's verb from the letter.
-New runs place one on a real generated bridge on the road to the finale. It does not replace
-campaign objectives or alter the world's seed. After reaching camp, follow its guidance or
-find it in the journal and atlas, where the card names the square and who holds the cart.
-Once selected, the card follows the atlas's live route, including cautious detours and
-resumed runs. If no road can be planned, it labels the direction as a straight-line bearing
-rather than directing you along the original camp itinerary.
+«Можно грабить корованы» is a decision, not scenery, and every new run is built round it. A
+caravan beat is a gilded cart on a real road: you win the fight at the cart, then settle it
+with your own side's verb from the letter.
 
-The guard escorts its own carts and never pockets cargo. The elves and the villain overcome
-the escort of the guard's cart. Once the last escort or raider at the cart is down, the panel
-offers your side's choices and what each one pays:
+- **«Суть такова: выбрать корован».** The camp is no longer reached, it is decided. Two
+  caravans wait near the start, one on the road to the finale and one on another road, at
+  least 70 m apart. They have different owners, and one is light (two guards, 70 gold) and
+  the other rich (three with an elite, 120). The elves and the villain rob the other two
+  sides' carts. The palace guard gets two orders: an escort of its own cart against one
+  enemy, and a raid on the other's. The camp's card prices both: what the first verb pays,
+  the walk there, the danger already known, and the side's other verbs. «Взяться» points the
+  compass at one, but walking up to either cart is the choice. The cart you meet first is
+  the one you took, and the other goes its own way. The camp's objective closes when that
+  cart settles, however it ends.
+- **The road.** The bridge ambush is always on the road to the finale, and one more cart
+  stands on that road past it when the road allows: a forest road in the elves' squares, a
+  mountain pass by the villain's fort, an open road elsewhere. Neither is a detour, and
+  neither has a cart on it until the camp has chosen.
+- **The gate.** The finale opens after two caravans have settled. Every ending counts: lost,
+  escaped and never staged as much as robbed or walked in. The camp's declined cart neither
+  counts nor is asked for, and a world with fewer carts than the gate never asks for more
+  than it has. Until then the finale's row reads «Штурм после корованов: 1/2», and with
+  nothing else left to do the compass leads to the nearest cart.
+
+Caravans do not replace campaign objectives or alter the world's seed: placement reads the
+world, takes its few draws from its own stream, and saves nothing but the carts' state. The
+journal lists every cart, and the atlas charts every one the run can still meet, each with
+its price. Once a cart is selected, its card follows the atlas's live route, including
+cautious detours and resumed runs. If no road can be planned, it labels the direction as a
+straight-line bearing.
+
+The guard escorts its own carts and never pockets cargo. The other sides overcome the escort
+of the cart they rob. Once the last escort or raider at the cart is down, the panel offers
+your side's choices and what each one pays (here, a standard cart's):
 
 | Side | Choice | Pays |
 | --- | --- | --- |
@@ -159,6 +182,7 @@ offers your side's choices and what each one pays:
 | Elves | **Отдать домикам деревяным** | walk the cart to its mark: two rations |
 | Palace guard | **Довести обоз** | walk the cart to its mark: the commander's 55 gold and a ration |
 | Palace guard | **Отпустить своим ходом** | nothing; the cart goes on alone |
+| Palace guard (a raid) | **Конфисковать для дворца** | the commander's 70 gold bounty |
 | Villain | **Забрать добро** | 90 gold |
 | Villain | **Забрить в войско** | one more companion, up to a squad of four |
 | Villain | **Сжечь груз** | no gold; one escort fewer at the palace finale, once, and only before it begins |
@@ -185,17 +209,22 @@ A beat always ends. Stay more than 90 m from a cart you are fighting, holding or
 and after 30 seconds it settles itself. A robbery you never finished gets away with what is
 left of its escort, a defence you left is lost, and a won cart left standing is looted. An
 escorted cart goes on alone, unpaid, and a walk finishes without its guide or its reward. A
-walked cart that cannot move for six seconds beside you arrives where it stands. Until a
-choice is made, a won cart follows the claim rules below, and your squad never loads it. No
-random event is rolled while a cart is being fought, held or walked, or within 120 m of one
-not yet started; one already running stands down when the fight starts unless you are in
-the middle of it.
+walked cart that cannot move for six seconds beside you arrives where it stands. A cart
+that finds the road too crowded to stage its fight says so and waits while you stand by it;
+after 30 seconds it goes through without the fight, unpaid, and still counts for the camp
+and the gate. Until a choice is made, a won cart follows the claim rules below, and your
+squad never loads it. No random event is rolled while the camp's choice is open, while a
+cart is being fought, held or walked, or within 120 m of one not yet started; one already
+running stands down when the fight starts unless you are in the middle of it.
 
-Combat wounds, cargo health, the walk's progress, the walked-away clock and the single
-outcome survive suspend/continue. A save from before caravan beats migrates its bridge
-ambush: a seizure already paid keeps its words and is never paid again. A villain who was
-walking the old cart has no walking verb any more, so the cart returns to the bridge and
-the choice opens again. Existing saves without the encounter keep their original campaign.
+Combat wounds, cargo health, the walk's progress, the walked-away clock, a crowded cart's
+wait, the camp's choice and each single outcome survive suspend/continue. A run saved before
+the spine keeps the campaign it started with: its camp closes on arrival, its finale has no
+gate, and its one bridge cart is as it was. A save from before caravan beats migrates its
+bridge ambush: a seizure already paid keeps its words and is never paid again. A villain who
+was walking the old cart has no walking verb any more, so the cart returns to the bridge and
+the choice opens again. A damaged caravan record is refused rather than repaired: every cart
+closes unpaid, which settles the camp and opens the gate, and the run goes on.
 
 Ordinary road carts are world texture, not caravan beats: they have no card and write no
 consequence. They also require their escorts to be overcome before robbery, and an escort
@@ -209,7 +238,8 @@ within 0.12 seconds of raising the shield can spend 12 stamina instead of health
 the timing reward rearms no sooner than 0.65 seconds. Arrows never stun their shooter.
 
 Without opening the atlas, the compass follows the road itinerary to a taken live rumour,
-or else to the active objective, and crosses rivers on actual bridges. A target within
+then to the camp's chosen caravan, then to the active objective, and when nothing is left
+before a shut finale, to the nearest caravan; it crosses rivers on actual bridges. A target within
 60 m on a dry straight line, or within 80 m when the road would double the walk, is
 approached straight instead and labelled as an unchecked approach. The atlas selects
 another destination without accepting a rumour or changing a campaign commitment;
@@ -242,7 +272,8 @@ raiders back; the road cart's dead escorts are saved, as described above.
 
 The threat tier in the corner rises with whichever comes first: the clock, one tier every
 three minutes, or the run's progress. The required errand and the contract arm you settle,
-kept or failed forward, are a step each, and each step raises the tier by one, up to 4;
+kept or failed forward, are a step each, and so is every second caravan the run met, robbed,
+walked, lost or escaped; each step raises the tier by one, up to 4;
 only the clock reaches 5. The camp, the arm you chose past and the finale are not steps. A
 higher tier means more frequent events, bigger and faster threat waves once those start at
 four minutes, and the doctrine drafts below. Enemy health and damage follow the clock's

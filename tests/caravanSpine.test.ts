@@ -18,6 +18,7 @@ import {
   caravanSpineGate,
   caravanSpineHoldsCamp,
   caravanSpineLeads,
+  caravanSpineMetCount,
   caravanSpineProgressBeats,
   chooseCaravanOffer,
   createCaravanBeatPlans,
@@ -271,19 +272,25 @@ test('the camp holds the run until a caravan is met: choice, decline, dormancy a
   assert.equal(state.chosenOfferId, first.id)
   assert.equal(beat(second.id).phase, 'declined')
   assert.equal(caravanSpineHoldsCamp(plans, state), true, 'a fight is not a settled cart')
-  assert.equal(caravanSpineProgressBeats(state), 0)
+  assert.equal(caravanSpineMetCount(state), 0)
   settle(beat(first.id), 'escaped')
   assert.equal(caravanSpineHoldsCamp(plans, state), false)
   assert.equal(isCaravanOpeningSettled(plans, state), true)
   assert.equal(isCaravanBeatDormant(crossing, plans, state), false, 'the road wakes with the camp')
-  assert.equal(caravanSpineProgressBeats(state), 1, 'an escaped cart is a step the run took')
+  assert.equal(caravanSpineMetCount(state), 1, 'an escaped cart is one the run met')
+  assert.equal(caravanSpineProgressBeats(state), 0, 'two met carts make one step of progress')
   // The declined offer is neither counted nor required.
   assert.deepEqual(caravanSpineGate(state), { open: false, settled: 1, required: 2 })
   assert.equal(caravanSpineLeads(plans, state, (point) => distance(point, crossing.cargoStart)).trailing,
     crossing.id, 'the gate leads to the nearest cart left')
   settle(beat(crossing.id), 'unavailable')
   assert.equal(caravanSpineGate(state).open, true, 'an unstageable cart still counts')
-  assert.equal(caravanSpineProgressBeats(state), 1, '…but is no step of progress')
+  assert.equal(caravanSpineMetCount(state), 1, '…but nobody met it')
+  const road = plans.find((plan) => plan.slot === 'road')
+  if (road) {
+    settle(beat(road.id), 'resolved')
+    assert.equal(caravanSpineProgressBeats(state), 1, 'the second met cart pays the step')
+  }
 
   // An offer that could not be staged settles the camp, and the other stays on the road.
   const fallback = createCaravanSpine(blueprint, 'elf').state
@@ -299,6 +306,7 @@ test('the camp holds the run until a caravan is met: choice, decline, dormancy a
   legacy.beats[0].phase = 'resolved'
   assert.equal(caravanSpineHoldsCamp(legacyPlans, legacy), false)
   assert.deepEqual(caravanSpineGate(legacy), { open: true, settled: 0, required: 0 })
+  assert.equal(caravanSpineMetCount(legacy), 0)
   assert.equal(caravanSpineProgressBeats(legacy), 0)
   assert.deepEqual(caravanSpineLeads(legacyPlans, legacy, () => 0), { leading: null, trailing: null })
 })
