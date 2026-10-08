@@ -26,10 +26,17 @@
  */
 import {
   CARAVAN_BEAT_CHOICE_LABELS,
+  CARAVAN_BEAT_DECLINED_HINT,
+  CARAVAN_BEAT_DORMANT_HINT,
   CARAVAN_BEAT_OPTIONAL_STAKE,
   CARAVAN_BEAT_UNAVAILABLE_HINT,
+  CARAVAN_SPINE_STAKE,
   describeCaravanBeatAbandon,
+  describeCaravanBeatAlternatives,
   describeCaravanBeatApproach,
+  describeCaravanBeatDeclined,
+  describeCaravanBeatDormant,
+  describeCaravanBeatStagingWait,
   describeCaravanBeatChoice,
   describeCaravanBeatDelivering,
   describeCaravanBeatFight,
@@ -43,7 +50,14 @@ import {
   type CaravanBeatMarketCopy,
 } from '../content/gameCopy.ts'
 import type { SerializableState } from '../run/runTypes.ts'
-import type { ActorRole, Allegiance, Faction, Objective } from '../types.ts'
+import type {
+  ActorRole,
+  Allegiance,
+  ChoicePayoutView,
+  ChoiceTravelView,
+  Faction,
+  Objective,
+} from '../types.ts'
 import {
   BRIDGE_AMBUSH_ACTIVATION_RADIUS,
   BRIDGE_AMBUSH_CARGO_HEALTH,
@@ -74,7 +88,11 @@ import { FINALE_PROFILES } from './FinaleDirector.ts'
 import type { WorldBlueprint, WorldSite } from './worldTypes.ts'
 
 export type CaravanBeatPlacement = 'bridge' | 'forest' | 'open' | 'pass'
-export type CaravanBeatSlot = 'crossing'
+/**
+ * Where a beat sits in the run. `crossing` is the old bridge ambush. PR B's spine adds the
+ * two `offer`s the camp chooses between and one more `road` beat on the way to the finale.
+ */
+export type CaravanBeatSlot = 'offer' | 'crossing' | 'road'
 export type CaravanBeatRole = 'rob' | 'defend'
 export type CaravanBeatTier = 'light' | 'standard' | 'rich'
 export type CaravanBeatOutcome =
@@ -96,6 +114,8 @@ export type CaravanBeatPhase =
   | 'lost'
   | 'escaped'
   | 'unavailable'
+  /** The other caravan at the camp, the one the run did not take: it went its own way. */
+  | 'declined'
 
 export const CARAVAN_BEAT_OUTCOMES: readonly CaravanBeatOutcome[] = [
   'take', 'give', 'deliver', 'release', 'confiscate', 'plunder', 'press', 'burn',
@@ -171,17 +191,31 @@ export interface CaravanBeatState {
   unavailableReason: string | null
   /** Seconds left before an engaged cart the player walked away from settles itself. */
   abandonRemaining: number | null
+  /**
+   * Seconds the cart has waited, with the player beside it, for room on a crowded road.
+   * Saved, so a continue resumes the wait instead of starting it again.
+   */
+  stagingStalled: number
   combatants: CaravanBeatCombatantState[]
 }
 
 export interface CaravanBeatsState {
-  version: 1
+  version: typeof CARAVAN_BEATS_VERSION
+  /**
+   * PR B — the campaign waits on its caravans: the camp is a choice between two of them and
+   * the finale opens after `CARAVAN_SPINE_FINALE_GATE`. False for a run saved before that,
+   * which keeps the campaign it started with.
+   */
+  spine: boolean
+  /** The camp's offer the player said they would take, before either cart was met. */
+  chosenOfferId: string | null
   /** A burned cart already thinned the palace finale; a second burn does not. */
   garrisonThinned: boolean
   beats: CaravanBeatState[]
 }
 
-export const CARAVAN_BEATS_VERSION = 1
+/** 2 since PR B's spine; a version-1 block (PR A) loads as a run without one. */
+export const CARAVAN_BEATS_VERSION = 2
 export const CARAVAN_BEAT_CARGO_HEALTH = BRIDGE_AMBUSH_CARGO_HEALTH
 export const CARAVAN_BEAT_ACTIVATION_RADIUS = BRIDGE_AMBUSH_ACTIVATION_RADIUS
 export const CARAVAN_BEAT_CHOICE_RADIUS = BRIDGE_AMBUSH_CHOICE_RADIUS
@@ -201,6 +235,18 @@ export const CARAVAN_BEAT_ABANDON_RANGE = 90
 export const CARAVAN_BEAT_ABANDON_SECONDS = 30
 /** A walked cart that has not moved for this long while escorted finishes where it stands. */
 export const CARAVAN_BEAT_DELIVERY_STALL_SECONDS = 6
+/**
+ * How long a cart waits for room on a crowded road while the player stands by it. The same
+ * patience it has for a player who walked away (`CARAVAN_BEAT_ABANDON_SECONDS`): after that
+ * it goes through without a fight, and the run moves on rather than waiting on the budget.
+ */
+export const CARAVAN_BEAT_STAGING_GIVE_UP_SECONDS = 30
+/**
+ * PR B — the finale opens after this many caravans have settled, whatever their ending.
+ * Two: the camp's choice and one met on the road. One would leave the road optional again;
+ * three would force the last detour on a run that is already going badly.
+ */
+export const CARAVAN_SPINE_FINALE_GATE = 2
 /**
  * The villain's press-gang stops at four companions: the three starters and one more, which
  * is the size a rescue already reaches. The fourth borrows a spare slot from the actor
@@ -236,8 +282,10 @@ const POSITION_EPSILON = 0.08
 const SETTLED_PHASES: readonly CaravanBeatPhase[] = ['resolved', 'lost', 'escaped', 'unavailable']
 const ENGAGED_PHASES: readonly CaravanBeatPhase[] = ['fighting', 'secured', 'delivering']
 const PHASES: readonly CaravanBeatPhase[] = [
-  'approach', 'fighting', 'secured', 'delivering', 'resolved', 'lost', 'escaped', 'unavailable',
+  'approach', 'fighting', 'secured', 'delivering', 'resolved', 'lost', 'escaped', 'unavailable', 'declined',
 ]
+/** Endings a run takes part in: an unavailable or declined cart is no step of its progress. */
+const PROGRESS_PHASES: readonly CaravanBeatPhase[] = ['resolved', 'lost', 'escaped']
 
 function distance(first: CaravanBeatPoint, second: CaravanBeatPoint): number {
   return Math.hypot(first.x - second.x, first.z - second.z)
@@ -259,7 +307,7 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 /** The world's one shop. Every generated world has it; a settlement-kind site is the fallback. */
-function marketSite(blueprint: WorldBlueprint): WorldSite | null {
+export function caravanMarketSite(blueprint: WorldBlueprint): WorldSite | null {
   return blueprint.sites.find((site) => site.kind === 'shop') ??
     blueprint.sites.find((site) => site.kind === 'settlement' || site.kind === 'recovery') ??
     null
@@ -269,7 +317,7 @@ function createCrossingBeatPlan(blueprint: WorldBlueprint, faction: Faction): Ca
   const bridge = createBridgeAmbushPlan(blueprint, faction)
   if (!bridge) return null
   const opponent = bridgeAmbushEnemyFaction(blueprint, faction, bridge)
-  const market = marketSite(blueprint)
+  const market = caravanMarketSite(blueprint)
   return {
     id: bridge.id,
     slot: 'crossing',
@@ -338,6 +386,7 @@ export function createCaravanBeatState(plan: CaravanBeatPlan): CaravanBeatState 
     rewardPaid: false,
     unavailableReason: null,
     abandonRemaining: null,
+    stagingStalled: 0,
     combatants,
   }
 }
@@ -355,9 +404,15 @@ export function createUnavailableCaravanBeatState(
   }
 }
 
-export function createCaravanBeatsState(plans: readonly CaravanBeatPlan[]): CaravanBeatsState {
+/** A fresh run's beats. `spine` is set for every new run since PR B; tests pass false. */
+export function createCaravanBeatsState(
+  plans: readonly CaravanBeatPlan[],
+  spine = false,
+): CaravanBeatsState {
   return {
     version: CARAVAN_BEATS_VERSION,
+    spine,
+    chosenOfferId: null,
     garrisonThinned: false,
     beats: plans.map((plan) => createCaravanBeatState(plan)),
   }
@@ -491,6 +546,215 @@ export function isCaravanBeatEngaged(state: CaravanBeatState): boolean {
   return ENGAGED_PHASES.includes(state.phase)
 }
 
+/** Settled, or the camp's other caravan that went its own way: nothing more happens there. */
+export function isCaravanBeatClosed(state: CaravanBeatState): boolean {
+  return isCaravanBeatSettled(state) || state.phase === 'declined'
+}
+
+/**
+ * Who guards (or raids) a cart of this weight. The bridge's three are the standard; a light
+ * cart drops the archer, and a rich one puts the side's elite in the middle post: a brute for
+ * the palace and the villain, a second blade for the elves, who field no brutes.
+ */
+export function caravanBeatEnemyRoles(opponent: Faction, tier: CaravanBeatTier): ActorRole[] {
+  const roles = [0, 1, 2].map((index) => bridgeAmbushEnemyRole(opponent, index))
+  if (tier === 'light') return roles.slice(0, 2)
+  if (tier === 'rich') roles[1] = opponent === 'elf' ? 'soldier' : 'brute'
+  return roles
+}
+
+// ---------------------------------------------------------------------------
+// PR B — the spine: the camp's choice and the finale's gate
+// ---------------------------------------------------------------------------
+
+/** Ends at which a cart has had its say in the run: something happened there, or could not. */
+const COMMITTED_PHASES: readonly CaravanBeatPhase[] = [
+  'fighting', 'secured', 'delivering', 'resolved', 'lost', 'escaped',
+]
+
+function isOfferBeat(plans: readonly CaravanBeatPlan[], beat: CaravanBeatState): boolean {
+  return plans.find((plan) => plan.id === beat.id)?.slot === 'offer'
+}
+
+/**
+ * Whether the camp's choice is behind the run. Always, without a spine. With one: once either
+ * offer has settled, or once nothing at the camp can be met any more — no offer was placed, or
+ * every one is closed. «Суть такова»: the run does not go on until a caravan has been met.
+ */
+export function isCaravanOpeningSettled(
+  plans: readonly CaravanBeatPlan[],
+  state: CaravanBeatsState | null,
+): boolean {
+  if (!state?.spine) return true
+  const offers = state.beats.filter((beat) => isOfferBeat(plans, beat))
+  return offers.length === 0 || offers.some(isCaravanBeatSettled) || offers.every(isCaravanBeatClosed)
+}
+
+/** The camp holds the first node of the campaign while its choice is open. */
+export function caravanSpineHoldsCamp(
+  plans: readonly CaravanBeatPlan[],
+  state: CaravanBeatsState | null,
+): boolean {
+  return !isCaravanOpeningSettled(plans, state)
+}
+
+/** A spine's road beats wait for the camp: no cart stands on them until the choice is made. */
+export function isCaravanBeatDormant(
+  plan: CaravanBeatPlan,
+  plans: readonly CaravanBeatPlan[],
+  state: CaravanBeatsState | null,
+): boolean {
+  return plan.slot !== 'offer' && caravanSpineHoldsCamp(plans, state)
+}
+
+export interface CaravanSpineGate {
+  open: boolean
+  /** Settled beats, which may run past `required`. */
+  settled: number
+  required: number
+}
+
+/**
+ * The finale's gate: it opens once `CARAVAN_SPINE_FINALE_GATE` beats have settled. Every
+ * ending counts — lost, escaped and unavailable as much as resolved — because each of them
+ * ends in bounded time, which is what keeps the gate from ever stranding a run. The camp's
+ * declined offer is not a beat the run can meet, so it neither counts nor is required, and a
+ * world with fewer beats than the gate asks is never asked for more than it has.
+ */
+export function caravanSpineGate(
+  state: CaravanBeatsState | null,
+  /** The run harness measures other gates (`beatGate`); the game always asks the shipped one. */
+  finaleGate: number = CARAVAN_SPINE_FINALE_GATE,
+): CaravanSpineGate {
+  if (!state?.spine) return { open: true, settled: 0, required: 0 }
+  const counted = state.beats.filter((beat) => beat.phase !== 'declined')
+  const settled = counted.filter(isCaravanBeatSettled).length
+  const required = Math.min(Math.max(0, Math.floor(finaleGate)), counted.length)
+  return { open: settled >= required, settled, required }
+}
+
+/**
+ * The caravans the run took part in: resolved, lost or escaped. A cart that could not be
+ * staged, or the camp's declined offer, moved nobody forward.
+ */
+export function caravanSpineMetCount(state: CaravanBeatsState | null): number {
+  if (!state?.spine) return 0
+  return state.beats.filter((beat) => PROGRESS_PHASES.includes(beat.phase)).length
+}
+
+/**
+ * Met caravans per step of W2-1's progress. Two, the coordinator's fallback, because one per
+ * step was measured out of band: with the tier rising on every cart the threat waves dealt
+ * nearly three times their damage and the duelist's wins fell 20 points, while two per step
+ * keeps the waves at their baseline and every policy within 10 points of its wins. The finale
+ * is fought at pacing tier 4 either way. `docs/run-harness.md` has the sweep.
+ */
+export const CARAVAN_SPINE_BEATS_PER_STEP = 2
+
+/** The progress steps the met caravans pay for (W2-1's `caravanBeatsResolved`). */
+export function caravanSpineProgressBeats(state: CaravanBeatsState | null): number {
+  return Math.floor(caravanSpineMetCount(state) / CARAVAN_SPINE_BEATS_PER_STEP)
+}
+
+/**
+ * «Взяться»: the player says which offer they will take, and the compass follows it. Only an
+ * offer still waiting at an open camp can be chosen. Returns whether anything changed.
+ */
+export function chooseCaravanOffer(
+  plans: readonly CaravanBeatPlan[],
+  state: CaravanBeatsState,
+  offerId: string,
+): boolean {
+  if (!caravanSpineHoldsCamp(plans, state) || state.chosenOfferId === offerId) return false
+  const beat = state.beats.find((entry) => entry.id === offerId)
+  if (!beat || beat.phase !== 'approach' || !isOfferBeat(plans, beat)) return false
+  state.chosenOfferId = offerId
+  return true
+}
+
+/**
+ * One offer was met: it is the choice now, and every other offer still waiting at the camp
+ * goes its own way. Returns the ids declined.
+ */
+export function declineOtherCaravanOffers(
+  plans: readonly CaravanBeatPlan[],
+  state: CaravanBeatsState,
+  metId: string,
+): string[] {
+  if (!state.spine) return []
+  const declined: string[] = []
+  for (const beat of state.beats) {
+    if (beat.id === metId || beat.phase !== 'approach' || !isOfferBeat(plans, beat)) continue
+    beat.phase = 'declined'
+    declined.push(beat.id)
+  }
+  state.chosenOfferId = metId
+  return declined
+}
+
+/**
+ * While the gate is shut and nothing else leads, the compass goes to the nearest caravan the
+ * run can still meet, by the distance the caller measures (the road, for the engine).
+ */
+export function caravanSpineNextBeat(
+  plans: readonly CaravanBeatPlan[],
+  state: CaravanBeatsState | null,
+  distanceTo: (point: CaravanBeatPoint) => number,
+): string | null {
+  // The camp's choice is the camp's to lead; the gate leads only once it is made.
+  if (!state?.spine || caravanSpineGate(state).open || caravanSpineHoldsCamp(plans, state)) return null
+  let best: { id: string; distance: number } | null = null
+  for (const beat of state.beats) {
+    const plan = plans.find((entry) => entry.id === beat.id)
+    if (!plan || isCaravanBeatClosed(beat) || isCaravanBeatDormant(plan, plans, state)) continue
+    const away = distanceTo({ x: beat.cargoX, z: beat.cargoZ })
+    if (best === null || away < best.distance) best = { id: beat.id, distance: away }
+  }
+  return best?.id ?? null
+}
+
+/** Whether a committed offer leaves the others nothing to wait for (the normaliser's rule). */
+function openingCommitted(plans: readonly CaravanBeatPlan[], beats: readonly CaravanBeatState[]): boolean {
+  return beats.some((beat) => isOfferBeat(plans, beat) && COMMITTED_PHASES.includes(beat.phase))
+}
+
+/**
+ * The caravans the compass follows on its own. While the camp's choice is open, the offer
+ * the player took with «Взяться» leads ahead of the active objective; before one is taken,
+ * the nearest offer still waiting does, by the distance the caller measures (the road, for
+ * the engine and the launch view), because the camp itself is no place to go: its choice
+ * is made at a cart. Ties keep the plan's order. The gate's next cart follows the active
+ * objective once none is left before the shut finale. An atlas choice and a taken rumour
+ * still come first (`ExpeditionPlanner`).
+ */
+export function caravanSpineLeads(
+  plans: readonly CaravanBeatPlan[],
+  state: CaravanBeatsState | null,
+  distanceTo: (point: CaravanBeatPoint) => number,
+): { leading: string | null; trailing: string | null } {
+  if (!state?.spine) return { leading: null, trailing: null }
+  let leading: string | null = null
+  if (caravanSpineHoldsCamp(plans, state)) {
+    const chosen = state.chosenOfferId === null
+      ? undefined
+      : state.beats.find((beat) => beat.id === state.chosenOfferId)
+    if (chosen !== undefined && !isCaravanBeatClosed(chosen)) {
+      leading = chosen.id
+    } else {
+      let nearest = Infinity
+      for (const beat of state.beats) {
+        if (beat.phase !== 'approach' || !isOfferBeat(plans, beat)) continue
+        const away = distanceTo({ x: beat.cargoX, z: beat.cargoZ })
+        if (away < nearest) {
+          nearest = away
+          leading = beat.id
+        }
+      }
+    }
+  }
+  return { leading, trailing: caravanSpineNextBeat(plans, state, distanceTo) }
+}
+
 export function caravanBeatDeliveryProgress(plan: CaravanBeatPlan, point: CaravanBeatPoint): number {
   const dx = plan.deliveryEnd.x - plan.cargoStart.x
   const dz = plan.deliveryEnd.z - plan.cargoStart.z
@@ -513,7 +777,7 @@ export function caravanBeatReservesStagingPoint(
   state: CaravanBeatState,
   point: CaravanBeatPoint,
 ): boolean {
-  if (isCaravanBeatSettled(state)) return false
+  if (isCaravanBeatClosed(state)) return false
   const lane = caravanBeatLanePoint(plan, caravanBeatDeliveryProgress(plan, point))
   return distance(point, lane) <= BRIDGE_AMBUSH_STAGING_CLEARANCE
 }
@@ -569,11 +833,15 @@ export interface CaravanBeatChoiceView {
 
 export interface CaravanBeatView {
   id: string
+  /** PR B — optional on the view, so a hand-built view from before the spine still reads. */
+  slot?: CaravanBeatSlot
   placement: CaravanBeatPlacement
   role: CaravanBeatRole
   owner: Faction
   tier: CaravanBeatTier
   phase: CaravanBeatPhase
+  /** A spine's road beat before the camp's choice: no cart there yet. */
+  dormant?: boolean
   title: string
   description: string
   hint: string
@@ -595,14 +863,38 @@ export interface CaravanBeatView {
   outcome: CaravanBeatOutcome | null
   consequence: string | null
   abandonRemaining: number | null
+  /** Seconds this cart has waited for room on a crowded road, while it is waiting. */
+  stagingStalled?: number
   active: boolean
   tracked: boolean
+  /** W2-3's price for an open cart: the side's first verb, and the walk there. */
+  payout?: ChoicePayoutView | null
+  /** The side's other verbs, said after the price: «или 3 пайка домикам деревяным». */
+  alternatives?: string | null
+  travel?: ChoiceTravelView | null
+  /** The camp's offer the player said they would take. */
+  chosen?: boolean
+}
+
+/** PR B — the camp's choice, while it is open. */
+export interface CaravanOpeningView {
+  offers: CaravanBeatView[]
+  chosenId: string | null
 }
 
 export interface CaravanBeatsView {
   beats: CaravanBeatView[]
   /** The one the field HUD shows, or null. */
   active: CaravanBeatView | null
+  /** The camp's choice while it is open; null once made, and in a run without a spine. */
+  opening?: CaravanOpeningView | null
+  /** The finale's gate in a spine run; null without one. */
+  gate?: CaravanSpineGateView | null
+}
+
+/** The gate as the objective list shows it: on the finale's own line. */
+export interface CaravanSpineGateView extends CaravanSpineGate {
+  objectiveId: string
 }
 
 export interface CaravanBeatViewContext {
@@ -621,6 +913,11 @@ export interface CaravanBeatViewContext {
   garrisonCanThin: boolean
   /** The market square's supply right now, or null when nobody knows it. */
   marketSupply: number | null
+  /**
+   * W2-3 — how the caller times a walk, as the contract cards do. Without it the beat cards
+   * quote no walk.
+   */
+  travel?: (point: CaravanBeatPoint) => ChoiceTravelView | null
 }
 
 function regionLabel(blueprint: WorldBlueprint, regionId: string | null): string {
@@ -685,48 +982,114 @@ function buildChoices(
   })
 }
 
+/**
+ * W2-3's price for a cart the run can still meet: the side's first verb through the shared
+ * `ChoicePayoutView`, the other verbs as words, so the card never adds alternatives up.
+ */
+export function caravanBeatPayout(faction: Faction, plan: CaravanBeatPlan): ChoicePayoutView {
+  const reward = caravanBeatReward(plan, caravanBeatChoices(faction, plan)[0])
+  return {
+    gold: reward.gold,
+    supplies: reward.rations,
+    heal: 0,
+    damage: 0,
+    companion: reward.recruits > 0,
+    loot: null,
+  }
+}
+
+function beatAlternatives(
+  context: CaravanBeatViewContext,
+  plan: CaravanBeatPlan,
+  garrisonThinned: boolean,
+): string | null {
+  const [, ...others] = caravanBeatChoices(context.faction, plan)
+  return describeCaravanBeatAlternatives({
+    outcomes: others,
+    rations: CARAVAN_BEAT_GIVE_RATIONS[plan.tier],
+    thinsGarrison: context.garrisonCanThin &&
+      caravanBeatThinsGarrison(context.faction, plan, garrisonThinned),
+  })
+}
+
 export function buildCaravanBeatView(
   context: CaravanBeatViewContext,
   plan: CaravanBeatPlan,
   state: CaravanBeatState,
+  spine?: { plans: readonly CaravanBeatPlan[]; state: CaravanBeatsState },
 ): CaravanBeatView {
   const { blueprint, faction, player, heading, expedition } = context
   const cargo = { x: state.cargoX, z: state.cargoZ }
   const title = describeCaravanBeatTitle(plan.placement, faction, plan.role)
   const tracked = expedition?.mode === 'selected' &&
     expedition.target?.kind === 'caravanBeat' && expedition.target.id === plan.id
+  // PR B — the compass may lead here on its own (the camp's chosen offer, the gate's next cart).
+  const led = expedition?.mode === 'campaign' &&
+    expedition.target?.kind === 'caravanBeat' && expedition.target.id === plan.id
+  const open = !isCaravanBeatClosed(state)
   const base = {
     id: plan.id,
+    slot: plan.slot,
     placement: plan.placement,
     role: plan.role,
     owner: plan.owner,
     tier: plan.tier,
+    dormant: spine ? isCaravanBeatDormant(plan, spine.plans, spine.state) : false,
     title,
     regionLabel: regionLabel(blueprint, plan.regionId),
     x: cargo.x,
     z: cargo.z,
     escort: escortRoles(state, plan),
+    stagingStalled: state.stagingStalled,
     tracked,
+    payout: open ? caravanBeatPayout(faction, plan) : null,
+    alternatives: open
+      ? beatAlternatives(context, plan, spine?.state.garrisonThinned ?? context.garrisonThinned)
+      : null,
+    travel: open && state.phase === 'approach' ? context.travel?.(cargo) ?? null : null,
+    chosen: spine?.state.chosenOfferId === plan.id,
+  }
+  const closedCard = {
+    distance: distance(player, cargo),
+    bearing: 0,
+    remainingEnemies: 0,
+    totalEnemies: 0,
+    cargoHealth: 0,
+    cargoMaxHealth: state.cargoMaxHealth,
+    progress: 0,
+    canChoose: false,
+    choices: [],
+    outcome: null,
+    consequence: null,
+    abandonRemaining: null,
+    active: false,
   }
   if (state.phase === 'unavailable') {
     return {
       ...base,
+      ...closedCard,
       phase: 'unavailable',
       description: state.unavailableReason ?? 'Встреча недоступна.',
       hint: CARAVAN_BEAT_UNAVAILABLE_HINT,
-      distance: distance(player, cargo),
-      bearing: 0,
-      remainingEnemies: 0,
-      totalEnemies: 0,
-      cargoHealth: 0,
-      cargoMaxHealth: state.cargoMaxHealth,
-      progress: 0,
-      canChoose: false,
-      choices: [],
-      outcome: null,
-      consequence: null,
-      abandonRemaining: null,
-      active: false,
+    }
+  }
+  if (state.phase === 'declined') {
+    return {
+      ...base,
+      ...closedCard,
+      phase: 'declined',
+      description: describeCaravanBeatDeclined(faction, plan.role, plan.owner, plan.placement),
+      hint: CARAVAN_BEAT_DECLINED_HINT,
+    }
+  }
+  if (base.dormant) {
+    return {
+      ...base,
+      ...closedCard,
+      cargoHealth: state.cargoHealth,
+      phase: state.phase,
+      description: describeCaravanBeatDormant(faction, plan.role, plan.owner, plan.placement),
+      hint: CARAVAN_BEAT_DORMANT_HINT,
     }
   }
 
@@ -751,8 +1114,9 @@ export function buildCaravanBeatView(
       exclusive: false,
       committed: false,
     }
-    const route = tracked ? expedition?.route ?? null : plan.openingRoute
-    const road = tracked && expedition?.guidance
+    const charted = tracked || led
+    const route = charted ? expedition?.route ?? null : plan.openingRoute
+    const road = charted && expedition?.guidance
       ? expedition.guidance
       : buildExpeditionGuidance(getExpeditionGraph(blueprint), route, target, player, heading)
     if (road.next) {
@@ -770,7 +1134,9 @@ export function buildCaravanBeatView(
   const remaining = caravanBeatRemainingEnemies(state)
   const settled = isCaravanBeatSettled(state)
   const description = state.phase === 'approach'
-    ? describeCaravanBeatApproach(faction, plan.role, plan.owner, plan.placement)
+    ? state.stagingStalled > 0
+      ? describeCaravanBeatStagingWait(CARAVAN_BEAT_STAGING_GIVE_UP_SECONDS - state.stagingStalled)
+      : describeCaravanBeatApproach(faction, plan.role, plan.owner, plan.placement)
     : state.phase === 'fighting'
       ? describeCaravanBeatFight(plan.role, remaining)
       : state.phase === 'secured'
@@ -792,8 +1158,17 @@ export function buildCaravanBeatView(
   const suppress = (expedition?.mode === 'selected' && !tracked) ||
     (expedition?.mode === 'campaign' && expedition.target?.committed === true)
   const near = distance(player, cargo) <= CARAVAN_BEAT_ACTIVATION_RADIUS
-  const automatic = !settled &&
-    (state.phase !== 'approach' || near || rootCompleted(blueprint, faction, context.objectives))
+  // A spine run meets several carts, so one waiting on the road takes the field card only
+  // when the player is at it or the compass leads there; otherwise the compass keeps the
+  // objective's road and the cart waits in the journal and the atlas. The camp's offers wait
+  // for «Взяться»: before it the compass leads to the nearest on its own, but the field keeps
+  // the camp's card, where the choice is. A run without a spine has the one bridge, which
+  // leads from the camp on, as it always did.
+  const untakenOffer = plan.slot === 'offer' && spine?.state.chosenOfferId === null
+  const awaitedOnRoad = spine?.state.spine === true
+    ? led && !untakenOffer
+    : rootCompleted(blueprint, faction, context.objectives)
+  const automatic = !settled && (state.phase !== 'approach' || near || awaitedOnRoad)
   const active = (tracked || automatic) &&
     (state.phase !== 'approach' || tracked || !suppress || near)
 
@@ -843,13 +1218,30 @@ export function buildCaravanBeatsView(
   plans: readonly CaravanBeatPlan[],
   state: CaravanBeatsState | null,
 ): CaravanBeatsView {
-  if (!state) return { beats: [], active: null }
+  if (!state) return { beats: [], active: null, opening: null, gate: null }
+  const spine = { plans, state }
   const beats: CaravanBeatView[] = []
   for (const beat of state.beats) {
     const plan = plans.find((entry) => entry.id === beat.id)
-    if (plan) beats.push(buildCaravanBeatView(context, plan, beat))
+    if (plan) beats.push(buildCaravanBeatView(context, plan, beat, spine))
   }
-  return { beats, active: pickActiveBeat(beats) }
+  const opening = caravanSpineHoldsCamp(plans, state)
+    ? {
+        offers: beats.filter((beat) => beat.slot === 'offer' && beat.phase === 'approach'),
+        chosenId: state.chosenOfferId,
+      }
+    : null
+  return {
+    beats,
+    active: pickActiveBeat(beats),
+    opening,
+    gate: state.spine
+      ? {
+          ...caravanSpineGate(state),
+          objectiveId: context.blueprint.objectives[context.faction].finalNodeId,
+        }
+      : null,
+  }
 }
 
 export interface CaravanBeatExpeditionTarget {
@@ -859,26 +1251,43 @@ export interface CaravanBeatExpeditionTarget {
   position: CaravanBeatPoint
   task: string
   stake: string
+  /** W2-3 — the same price the beat's card quotes. */
+  payout: ChoicePayoutView | null
+  travel: ChoiceTravelView | null
 }
 
-/** The beats the atlas may chart: anything not yet settled and not being walked already. */
+/**
+ * The beats the atlas may chart: anything the run can still meet and is not walking already.
+ * A spine's dormant road beats are not charted until the camp's choice wakes them.
+ */
 export function caravanBeatExpeditionTargets(
   faction: Faction,
   plans: readonly CaravanBeatPlan[],
   state: CaravanBeatsState | null,
+  travel?: (point: CaravanBeatPoint) => ChoiceTravelView | null,
 ): CaravanBeatExpeditionTarget[] {
   if (!state) return []
   const targets: CaravanBeatExpeditionTarget[] = []
   for (const beat of state.beats) {
     const plan = plans.find((entry) => entry.id === beat.id)
-    if (!plan || isCaravanBeatSettled(beat) || beat.phase === 'delivering') continue
+    if (
+      !plan ||
+      isCaravanBeatClosed(beat) ||
+      beat.phase === 'delivering' ||
+      isCaravanBeatDormant(plan, plans, state)
+    ) {
+      continue
+    }
+    const position = { x: beat.cargoX, z: beat.cargoZ }
     targets.push({
       id: plan.id,
       title: describeCaravanBeatTitle(plan.placement, faction, plan.role),
       regionId: plan.regionId,
-      position: { x: beat.cargoX, z: beat.cargoZ },
+      position,
       task: describeCaravanBeatTask(plan.placement),
-      stake: CARAVAN_BEAT_OPTIONAL_STAKE,
+      stake: state.spine ? CARAVAN_SPINE_STAKE : CARAVAN_BEAT_OPTIONAL_STAKE,
+      payout: caravanBeatPayout(faction, plan),
+      travel: travel?.(position) ?? null,
     })
   }
   return targets
@@ -904,6 +1313,7 @@ function serializeBeat(state: CaravanBeatState): SerializableState {
     rewardPaid: state.rewardPaid,
     unavailableReason: state.unavailableReason,
     abandonRemaining: state.abandonRemaining,
+    stagingStalled: state.stagingStalled,
     combatants: state.combatants.map((entry) => ({ ...entry })),
   }
 }
@@ -911,6 +1321,8 @@ function serializeBeat(state: CaravanBeatState): SerializableState {
 export function serializeCaravanBeatsState(state: CaravanBeatsState): SerializableState {
   return {
     version: CARAVAN_BEATS_VERSION,
+    spine: state.spine,
+    chosenOfferId: state.chosenOfferId,
     garrisonThinned: state.garrisonThinned,
     beats: state.beats.map(serializeBeat) as SerializableState[string],
   }
@@ -965,6 +1377,7 @@ function normalizeBeat(
   plan: CaravanBeatPlan,
   faction: Faction,
   blueprint: WorldBlueprint,
+  version: 1 | typeof CARAVAN_BEATS_VERSION,
 ): CaravanBeatState | null {
   const source = record(value)
   if (
@@ -995,10 +1408,14 @@ function normalizeBeat(
   const abandonRemaining = source.abandonRemaining === null
     ? null
     : finite(source.abandonRemaining, 0, CARAVAN_BEAT_ABANDON_SECONDS) ?? undefined
+  // A version-1 cart (PR A) never waited for room on the road.
+  const stagingStalled = version === 1
+    ? 0
+    : finite(source.stagingStalled, 0, CARAVAN_BEAT_STAGING_GIVE_UP_SECONDS)
   if (
     !combatants || cargoX === null || cargoZ === null || cargoHealth === null ||
     cargoMaxHealth === null || progress === null || outcome === undefined ||
-    consequence === undefined || abandonRemaining === undefined ||
+    consequence === undefined || abandonRemaining === undefined || stagingStalled === null ||
     typeof source.rewardPaid !== 'boolean' || source.unavailableReason !== null
   ) {
     return null
@@ -1007,6 +1424,8 @@ function normalizeBeat(
   const rewardPaid = source.rewardPaid
   const current = { x: cargoX, z: cargoZ }
   if (Math.abs(caravanBeatDeliveryProgress(plan, current) - progress) > 0.02) return null
+  // The stall clock only runs while the cart waits to be staged.
+  if (stagingStalled > 0 && phase !== 'approach') return null
   const enemiesDown = combatants.every((entry) => !entry.enemy || entry.defeated)
   const spawned = combatants.every((entry) => entry.maxHealth > 0 || entry.defeated)
   const lane = outcome !== null && isCaravanBeatLaneOutcome(outcome) &&
@@ -1018,6 +1437,9 @@ function normalizeBeat(
     switch (phase) {
       case 'approach':
         return !spawned && undecided && abandonRemaining === null && atStart
+      case 'declined':
+        return plan.slot === 'offer' && !spawned && undecided && abandonRemaining === null &&
+          atStart && cargoHealth === CARAVAN_BEAT_CARGO_HEALTH
       case 'fighting':
         return spawned && !enemiesDown && cargoHealth > 0 && undecided && atStart
       case 'secured':
@@ -1054,11 +1476,37 @@ function normalizeBeat(
     rewardPaid,
     unavailableReason: null,
     abandonRemaining,
+    stagingStalled,
     combatants,
   }
 }
 
-/** The version-1 block, checked against freshly derived plans. Null when anything disagrees. */
+/**
+ * A spine's beats must tell one story: at most one offer met, every other offer then gone its
+ * own way (or never stageable), nothing declined before a choice was made, and no road beat
+ * touched while the camp still waits.
+ */
+function spineConsistent(plans: readonly CaravanBeatPlan[], state: CaravanBeatsState): boolean {
+  const offers = state.beats.filter((beat) => isOfferBeat(plans, beat))
+  const committed = offers.filter((beat) => COMMITTED_PHASES.includes(beat.phase))
+  if (committed.length > 1) return false
+  if (committed.length === 1 && offers.some((beat) => beat.phase === 'approach')) return false
+  if (!openingCommitted(plans, state.beats) && offers.some((beat) => beat.phase === 'declined')) {
+    return false
+  }
+  if (state.chosenOfferId !== null && !offers.some((beat) => beat.id === state.chosenOfferId)) return false
+  if (!caravanSpineHoldsCamp(plans, state)) return true
+  return state.beats.every((beat) => isOfferBeat(plans, beat) ||
+    (beat.phase === 'approach' && beat.stagingStalled === 0))
+}
+
+/**
+ * A saved block, checked against freshly derived plans. Null when anything disagrees.
+ *
+ * Version 1 (PR A) is a run without a spine, read against the crossing alone; version 2
+ * carries the spine flag, the camp's choice and each cart's stall clock. The caller derives
+ * `plans` from the same flag (`restoreCaravanSpine`), so a mismatch is a rejection here.
+ */
 export function normalizeCaravanBeatsState(
   value: unknown,
   blueprint: WorldBlueprint,
@@ -1066,23 +1514,37 @@ export function normalizeCaravanBeatsState(
   plans: readonly CaravanBeatPlan[],
 ): CaravanBeatsState | null {
   const source = record(value)
+  const version = source?.version
   if (
     !source ||
-    source.version !== CARAVAN_BEATS_VERSION ||
+    (version !== 1 && version !== CARAVAN_BEATS_VERSION) ||
     typeof source.garrisonThinned !== 'boolean' ||
     !Array.isArray(source.beats) ||
     source.beats.length !== plans.length
   ) {
     return null
   }
+  const spine = version === 1 ? false : source.spine
+  const chosenOfferId = version === 1 ? null : source.chosenOfferId
+  if (typeof spine !== 'boolean' || (chosenOfferId !== null && typeof chosenOfferId !== 'string')) {
+    return null
+  }
+  if (!spine && (chosenOfferId !== null || plans.some((plan) => plan.slot !== 'crossing'))) return null
   const saved = source.beats
   const beats: CaravanBeatState[] = []
   for (const [index, plan] of plans.entries()) {
-    const beat = normalizeBeat(saved[index], plan, faction, blueprint)
+    const beat = normalizeBeat(saved[index], plan, faction, blueprint, version)
     if (!beat) return null
     beats.push(beat)
   }
-  return { version: CARAVAN_BEATS_VERSION, garrisonThinned: source.garrisonThinned, beats }
+  const state: CaravanBeatsState = {
+    version: CARAVAN_BEATS_VERSION,
+    spine,
+    chosenOfferId,
+    garrisonThinned: source.garrisonThinned,
+    beats,
+  }
+  return !spine || spineConsistent(plans, state) ? state : null
 }
 
 const LEGACY_SEIZE: Readonly<Record<Faction, CaravanBeatOutcome>> = {
@@ -1141,6 +1603,7 @@ function migrateLegacyBridge(
       rewardPaid: legacy.rewardPaid,
       unavailableReason: null,
       abandonRemaining: null,
+      stagingStalled: 0,
       combatants: legacy.combatants.map((entry) => ({ ...entry })),
     },
     reopened,
@@ -1159,16 +1622,21 @@ export interface CaravanBeatsRestore {
 /**
  * The beats a restored run continues with.
  *
- * - `caravanBeats` present → normalised; malformed means rejected, never repaired.
+ * - `caravanBeats` present → normalised; malformed means rejected, never repaired. A rejected
+ *   spine keeps its spine: every cart is closed without a reward, which settles the camp and
+ *   opens the finale's gate, so the run goes on rather than waiting on carts it cannot meet.
  * - Only the version-1 `bridgeAmbush` present → migrated (the shipped normaliser decides
  *   whether the old block is sound, exactly as it did before).
  * - Neither → a run from before the bridge existed, which stays without beats.
+ *
+ * `plans` must match `spine`; `restoreCaravanSpine` derives both from the saved block.
  */
 export function restoreCaravanBeatsState(
   director: SerializableState | undefined,
   blueprint: WorldBlueprint,
   faction: Faction,
   plans: readonly CaravanBeatPlan[],
+  spine = false,
 ): CaravanBeatsRestore {
   const saved = director?.caravanBeats
   if (saved !== undefined && saved !== null) {
@@ -1177,6 +1645,8 @@ export function restoreCaravanBeatsState(
     return {
       state: {
         version: CARAVAN_BEATS_VERSION,
+        spine,
+        chosenOfferId: null,
         garrisonThinned: false,
         beats: plans.map((plan) => createUnavailableCaravanBeatState(
           plan,
@@ -1201,7 +1671,7 @@ export function restoreCaravanBeatsState(
     reopened = migrated.reopened
   }
   return {
-    state: { version: CARAVAN_BEATS_VERSION, garrisonThinned: false, beats },
+    state: { version: CARAVAN_BEATS_VERSION, spine: false, chosenOfferId: null, garrisonThinned: false, beats },
     rejected: restored.rejected,
     reopened,
   }

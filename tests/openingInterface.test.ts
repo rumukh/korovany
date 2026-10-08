@@ -204,6 +204,85 @@ test('compact field HUD keeps journal access and the paused journal renders full
   assert.match(planning, /class="gameplay-layer" inert=""/)
 })
 
+test('PR B — the camp\'s two caravans are priced on the field and in the journal, and the finale says what it waits on', () => {
+  const view = gameProps.view
+  const opening = view.caravanBeats.opening
+  assert.ok(opening && opening.offers.length === 2, 'seed 7 gives the elf a choice')
+  const playing = renderToStaticMarkup(createElement(GameScreen, gameProps))
+  const card = playing.slice(playing.indexOf('class="bridge-encounter caravan-opening"'))
+  assert.match(card, /Суть такова: два корована/)
+  assert.equal((card.match(/class="caravan-offer"/g) ?? []).length, 2)
+  // Each offer has its own 44 px button (`.bridge-squad-button`) and its own price.
+  assert.equal((card.match(/class="bridge-squad-button caravan-offer-take" aria-pressed="false"/g) ?? []).length, 2)
+  assert.equal((card.match(/class="choice-price-payout"/g) ?? []).length, 2)
+  assert.match(card, /Плата: \d+ золот/)
+  assert.match(card, /Или: \d паёк|Или: \d пайка|Или: \d пайков/)
+  // The field says the rule in one line; the journal's card keeps the side's lead.
+  assert.match(card, /Возьмёшься за один — второй уйдёт\./)
+  assert.doesNotMatch(card, /Мимо домиков деревяных/)
+  // Nothing taken yet: the compass leads to the nearer offer on its own, and says so.
+  const compass = (markup: string) => {
+    const from = markup.indexOf('class="expedition-compass"')
+    return markup.slice(from, markup.indexOf('</button>', from))
+  }
+  assert.equal(view.expedition.target?.kind, 'caravanBeat')
+  assert.ok(opening.offers.some((offer) => offer.id === view.expedition.target?.id))
+  assert.match(compass(playing), /ближний · второй — в карточке/)
+  assert.doesNotMatch(compass(playing), /по прямой/)
+  // A world with one offer left says one, not two (control: the card above says «второй»).
+  const single = renderToStaticMarkup(createElement(GameScreen, {
+    ...gameProps,
+    view: { ...view, caravanBeats: { ...view.caravanBeats, opening: {
+      ...opening, offers: opening.offers.filter((offer) => offer.id === view.expedition.target?.id),
+    } } },
+  }))
+  const lone = single.slice(single.indexOf('class="bridge-encounter caravan-opening"'))
+  assert.match(lone, /Суть такова: один корован/)
+  assert.match(lone, /Корован один — с него и начнёшь\./)
+  assert.doesNotMatch(lone.slice(0, lone.indexOf('</section>')), /второй|два корована/)
+  assert.match(compass(single), /выбирать не из чего/)
+  // The finale's line says what it waits on; the gate is the view's, on the finale's own row.
+  assert.equal(view.caravanBeats.gate?.open, false)
+  assert.match(playing, /Штурм после корованов: 0\/2/)
+
+  // «Взяться» shows which one the compass follows.
+  const chosen = renderToStaticMarkup(createElement(GameScreen, {
+    ...gameProps,
+    view: { ...view, caravanBeats: { ...view.caravanBeats, opening: { ...opening, chosenId: opening.offers[1].id } } },
+  }))
+  assert.equal((chosen.match(/aria-pressed="true"/g) ?? []).length, 1)
+  assert.match(chosen, /class="caravan-offer chosen"/)
+  // Control: once one is taken the compass follows it as the player's own, with no «второй».
+  assert.doesNotMatch(compass(chosen), /второй — в карточке/)
+  assert.match(compass(chosen), /по прямой/)
+
+  // The journal reads the same card with its walk and danger kept.
+  const journal = renderToStaticMarkup(createElement(GameScreen, {
+    ...gameProps, activeOverlay: 'journal', simulationPaused: true,
+  }))
+  const missions = journal.slice(journal.indexOf('class="journal-missions"'))
+  assert.match(missions, /class="bridge-encounter caravan-opening in-journal"/)
+  assert.match(missions, /Идти ~\d+ с/)
+  assert.match(missions, /Мимо домиков деревяных идут два корована/)
+
+  // Controls: no choice open, no card; an open gate, no line.
+  const settled = renderToStaticMarkup(createElement(GameScreen, {
+    ...gameProps,
+    view: {
+      ...view,
+      caravanBeats: {
+        ...view.caravanBeats,
+        opening: null,
+        gate: view.caravanBeats.gate ? { ...view.caravanBeats.gate, settled: 2, open: true } : null,
+      },
+    },
+  }))
+  assert.doesNotMatch(settled, /caravan-opening/)
+  assert.doesNotMatch(settled, /Штурм после корованов/)
+  const appWiring = appSource.slice(appSource.lastIndexOf('<GameScreen'))
+  assert.match(appWiring, /onTakeOffer=\{\(beatId\) => \{ engineRef\.current\?\.chooseCaravanOffer\(beatId\) \}\}/)
+})
+
 test('bow hold and caravan beat actions keep dedicated engine callback contracts', () => {
   const gameScreen = appSource.slice(
     appSource.indexOf('export function GameScreen'),

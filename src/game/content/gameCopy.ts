@@ -1235,6 +1235,164 @@ export const CARAVAN_BEAT_NO_ROOM_NOTICE =
 export const CARAVAN_BEAT_REOPENED_NOTICE =
   'Злодей обозы не водит: телега у моста снова ждёт твоего решения.'
 
+// ---------------------------------------------------------------------------
+// W2-2, PR B — «грабить корованы» as the spine of the run
+// ---------------------------------------------------------------------------
+
+/** The camp's node in a run with a spine: the first thing the run decides. */
+export const CARAVAN_SPINE_ROOT_TEXT = 'Суть такова: выбрать корован'
+
+/** The atlas's stake for a cart the finale waits on. */
+export const CARAVAN_SPINE_STAKE =
+  'Без корованов штурма не будет: до него надо разобраться с двумя, как бы ни кончилось.'
+
+export const CARAVAN_OPENING_TITLE = 'Суть такова: два корована'
+
+/**
+ * The opening card's title for the offers still open. A world without a second road (a few
+ * in a hundred), or one whose other cart could not be staged, has a single caravan to take.
+ */
+export function describeCaravanOpeningTitle(offers: number): string {
+  return offers === 1 ? 'Суть такова: один корован' : CARAVAN_OPENING_TITLE
+}
+
+/** The opening card's first line, in each side's words. */
+export function describeCaravanOpeningLead(faction: Faction, offers = 2): string {
+  if (offers === 1) {
+    switch (faction) {
+      case 'elf':
+        return 'Мимо домиков деревяных идёт один корован. С него поход и начнётся.'
+      case 'guard':
+        return 'Командир дал один приказ. С него служба и начнётся.'
+      case 'villain':
+        return 'Сам себе командир: на дороге один корован. С него и начнём.'
+    }
+  }
+  switch (faction) {
+    case 'elf':
+      return 'Мимо домиков деревяных идут два корована. Возьмёшься за один — второй уйдёт своей дорогой.'
+    case 'guard':
+      return 'Командир дал два приказа на выбор. Возьмёшься за один — второй отдадут другим.'
+    case 'villain':
+      return 'Сам себе командир: на дорогах два корована. Пойдёшь на один — второй уйдёт своей дорогой.'
+  }
+}
+
+export const CARAVAN_OPENING_HINT =
+  'Нажми «Взяться» или просто иди к телеге: к какой подойдёшь, та и выбрана.'
+
+/** The field card's one line, what taking one costs; the journal's card says it at length. */
+export function describeCaravanOpeningRule(faction: Faction, offers = 2): string {
+  if (offers === 1) return faction === 'guard' ? 'Приказ один — с него и начнёшь.' : 'Корован один — с него и начнёшь.'
+  return faction === 'guard' ? 'Возьмёшься за один — второй отдадут.' : 'Возьмёшься за один — второй уйдёт.'
+}
+
+export const CARAVAN_OFFER_TAKE_LABEL = 'Взяться'
+export const CARAVAN_OFFER_TAKEN_LABEL = 'Взялся'
+
+/** «Взяться», with the square: the camp's two carts often share a road's name. */
+export function describeCaravanOfferChosen(title: string, regionLabel: string): string {
+  return `Взялся: «${title}» в ${regionLabel}. Компас ведёт к телеге.`
+}
+
+/**
+ * The compass's second line while it leads to one of the camp's offers on its own, before
+ * «Взяться»: the nearest by road, and the other one is in the card. The line above already
+ * says «Корован…» or «Приказ…», so this one fits the compass at 1366 px.
+ */
+export function describeCaravanOfferCompassNote(offers: number): string {
+  return offers > 1 ? 'ближний · второй — в карточке' : 'выбирать не из чего'
+}
+
+export function describeCaravanOffersDeclined(faction: Faction): string {
+  return faction === 'guard'
+    ? 'Второй приказ отдали другим: за двумя обозами не уследишь.'
+    : 'Второй корован ушёл своей дорогой: за двумя корованами погонишься — ни одного не ограбишь.'
+}
+
+export const CARAVAN_BEAT_DORMANT_HINT = 'Выйдет на дорогу после первого корована.'
+
+/** A road beat while the camp still chooses: no cart stands there yet. */
+export function describeCaravanBeatDormant(
+  faction: Faction,
+  role: CaravanBeatRole,
+  owner: Faction,
+  placement: CaravanBeatPlacement,
+): string {
+  const cart = `${CARAVAN_OWNERS[owner]} ${CARAVAN_BEAT_PLACES[placement]}`
+  if (faction === 'guard') {
+    return role === 'defend'
+      ? `Приказ подождёт: ${cart} выйдет на дорогу после первого корована.`
+      : `Набег подождёт: ${cart} выйдет на дорогу после первого корована.`
+  }
+  return `${capitalize(cart)} выйдет на дорогу после первого корована.`
+}
+
+export const CARAVAN_BEAT_DECLINED_HINT = 'Выбор сделан у лагеря; эта телега в поход не вошла.'
+
+/** The camp's offer the run did not take. */
+export function describeCaravanBeatDeclined(
+  faction: Faction,
+  _role: CaravanBeatRole,
+  owner: Faction,
+  placement: CaravanBeatPlacement,
+): string {
+  const cart = `${CARAVAN_OWNERS[owner]} ${CARAVAN_BEAT_PLACES[placement]}`
+  return faction === 'guard'
+    ? `Приказ отдали другим: ${cart} ушёл без тебя.`
+    : `${capitalize(cart)} ушёл другой дорогой: ты взялся за другой корован.`
+}
+
+/** A cart waiting for room on a crowded road, with the seconds it will still wait. */
+export function describeCaravanBeatStagingWait(seconds: number): string {
+  return `На дороге тесно, драке негде развернуться. Корован ждёт ещё ${String(Math.max(0, Math.ceil(seconds)))} с, потом проедет без тебя.`
+}
+
+/** The cart gave up on the road: the run moves on without that fight. */
+export function describeCaravanBeatStagingGaveUp(placement: CaravanBeatPlacement): string {
+  return `${capitalize(CARAVAN_BEAT_PLACES[placement])} так и не стало просторно: корован проехал без драки. Поход идёт дальше.`
+}
+
+/** The finale objective's line while the gate is shut. */
+export function describeCaravanSpineGate(settled: number, required: number): string {
+  return `Штурм после корованов: ${String(Math.min(settled, required))}/${String(required)}`
+}
+
+export const CARAVAN_SPINE_GATE_OPEN_NOTICE = 'Корованы разобраны: путь на штурм открыт.'
+
+/**
+ * The side's other verbs on a cart, said after its price. Words rather than another payout,
+ * so a card never adds alternatives up: «Или: 3 пайка домикам деревяным.»
+ */
+export function describeCaravanBeatAlternatives(input: {
+  outcomes: readonly CaravanBeatOutcome[]
+  rations: number
+  thinsGarrison: boolean
+}): string | null {
+  const parts: string[] = []
+  for (const outcome of input.outcomes) {
+    switch (outcome) {
+      case 'give':
+        parts.push(`${formatRussianCount(input.rations, RATION_FORMS)} домикам деревяным`)
+        break
+      case 'release':
+        parts.push('отпустить своим ходом, без жалованья')
+        break
+      case 'press':
+        parts.push('забрить обозников в войско')
+        break
+      case 'burn':
+        parts.push(input.thinsGarrison
+          ? 'сжечь груз — у ворот дворца станет на одного стражника меньше'
+          : 'сжечь груз назло хозяевам')
+        break
+      default:
+        break
+    }
+  }
+  return parts.length > 0 ? `Или: ${parts.join('; или ')}.` : null
+}
+
 /** The prompt line beside a beat's cart, by what the player can do there right now. */
 export const CARAVAN_BEAT_PROMPTS = {
   releaseCursor: '[E] Освободить курсор и выбрать судьбу груза',
@@ -2157,6 +2315,7 @@ export type HintId =
   | 'interact'
   | 'map'
   | 'expedition'
+  | 'caravanSpine'
   | 'bridgeAmbush'
   | 'caravanLoot'
   | 'chronicle'
@@ -2232,6 +2391,10 @@ const HINT_COPY: Record<HintId, HintCopy> = {
   },
   expedition: {
     text: 'Компас сам ведёт по дорогам и мостам. M или карта — атлас: другая цель там не значит «взяться за слух». Пунктир в тумане — неизведанная дорога, а подход к ней ещё надо пройти самому.',
+    tone: 'info',
+  },
+  caravanSpine: {
+    text: 'Корован выбран — поход начался. Штурм откроется после двух корованов, чем бы они ни кончились: следующие ждут на дороге к цели, компас подскажет.',
     tone: 'info',
   },
   bridgeAmbush: {

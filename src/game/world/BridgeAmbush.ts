@@ -132,7 +132,8 @@ function bridgeAxis(
   return length > 0.001 ? { x: dx / length, z: dz / length } : null
 }
 
-function withinBounds(
+/** Shared with the road beats (CaravanSpine): one lane geometry for every cart. */
+export function withinBounds(
   blueprint: WorldBlueprint,
   point: BridgeAmbushPoint,
   margin: number,
@@ -143,7 +144,7 @@ function withinBounds(
     point.z <= blueprint.bounds.maxZ - margin
 }
 
-function translated(
+export function translated(
   point: BridgeAmbushPoint,
   axis: BridgeAmbushPoint,
   along: number,
@@ -155,7 +156,7 @@ function translated(
   }
 }
 
-function approachSign(
+export function approachSign(
   route: ExpeditionRoute,
   bridge: BridgeAmbushPoint,
   axis: BridgeAmbushPoint,
@@ -175,7 +176,7 @@ function approachSign(
   return projection < 0 ? -1 : 1
 }
 
-function deterministicSide(seed: number, key: string): -1 | 1 {
+export function deterministicSide(seed: number, key: string): -1 | 1 {
   let hash = seed >>> 0
   for (let index = 0; index < key.length; index += 1) {
     hash = Math.imul(hash ^ key.charCodeAt(index), 16777619) >>> 0

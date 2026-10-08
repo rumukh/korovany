@@ -15,6 +15,7 @@ import {
   type CaravanBeatState,
   type CaravanBeatsState,
 } from '../src/game/world/CaravanBeats.ts'
+import { planCaravanSpine } from '../src/game/world/CaravanSpine.ts'
 import type { Faction } from '../src/game/types.ts'
 import type { WorldBlueprint } from '../src/game/world/worldTypes.ts'
 
@@ -44,9 +45,18 @@ export function attachCaravanBeats(
   blueprint: WorldBlueprint,
   faction: Faction,
   saved?: CaravanBeatsState,
+  options: {
+    /**
+     * PR B — the spine's plans and a spine state, as a new run has them. Without it the
+     * fixture keeps PR A's shape (the crossing alone, no spine), which every older test
+     * was written against.
+     */
+    spine?: boolean
+  } = {},
 ): AttachedCaravanBeat {
-  const plans = createCaravanBeatPlans(blueprint, faction)
-  const beats = saved ?? createCaravanBeatsState(plans)
+  const spine = options.spine ?? saved?.spine ?? false
+  const plans = spine ? planCaravanSpine(blueprint, faction).plans : createCaravanBeatPlans(blueprint, faction)
+  const beats = saved ?? createCaravanBeatsState(plans, spine)
   const runtime = new Map<string, AttachedCaravanBeat['runtime']>()
   for (const plan of plans) {
     const state = beats.beats.find((entry) => entry.id === plan.id)

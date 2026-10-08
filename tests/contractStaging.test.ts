@@ -502,6 +502,25 @@ test('a beat that needs campaign room asks the same way, and a running contract 
   for (const fighter of kept) assert.ok(control.actors.includes(fighter) && fighter.alive)
 })
 
+test('W2-2 — a caravan beat\'s own staging seam asks the packs to step back before it reserves', () => {
+  const node = cull()
+  const started = (): Probe => {
+    const probe = arrive({ staging: true })
+    probe.contractFrames(0.1)
+    assert.equal(probe.status(node), 'active')
+    probe.face(FACING_NORTH)
+    return probe
+  }
+  const probe = started()
+  assert.equal(invoke<boolean>(probe.engine, 'requestBeatStagingRoom', 3), true)
+  assert.deepEqual(members(probe, SOUTH_PACK), [])
+  // Negative control: the same seam without W1-6's step-back finds no room on the same field.
+  const control = started()
+  Reflect.set(control.engine, 'makeRoomForStaging', () => false)
+  assert.equal(invoke<boolean>(control.engine, 'requestBeatStagingRoom', 3), false)
+  assert.equal(members(control, SOUTH_PACK).length, 3)
+})
+
 // ---------------------------------------------------------------------------
 // 4. The guard test: every contract site, every way the player might face
 // ---------------------------------------------------------------------------

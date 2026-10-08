@@ -270,6 +270,9 @@ test('W2-3: a priced contract card shows its price in Full, Compact, the journal
     'Опасно: B2 · в тумане: 1 квадрат']
   for (const mode of ['full', 'compact'] as const) {
     const props = fixture(mode, 'villain')
+    // W2-2, PR B — the camp's two caravans are priced in the same language; this test counts
+    // contract cards, so the launch view's camp choice is taken off the field.
+    props.view.caravanBeats = { ...props.view.caravanBeats, opening: null }
     props.view.contracts = props.view.contracts.map((entry, index) =>
       index === 0 ? { ...entry, ...price } : { ...entry, payout: null, timeLimit: null, travel: null })
     const html = renderToStaticMarkup(createElement(GameScreen, props))

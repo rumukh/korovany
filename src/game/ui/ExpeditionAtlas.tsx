@@ -1,7 +1,7 @@
 import { Compass, Map as MapIcon, Maximize, Navigation2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { lockDocumentScroll } from '../../documentScrollLock'
-import { EXPEDITION_COPY as copy, describeChoiceSummary, describeExpeditionNotice, formatRegionGridLabel } from '../content/gameCopy'
+import { EXPEDITION_COPY as copy, describeCaravanOfferCompassNote, describeChoiceSummary, describeExpeditionNotice, formatRegionGridLabel } from '../content/gameCopy'
 import { FACTION_INFO, ZONE_INFO, type GameView } from '../types'
 import type { ExpeditionPreference, ExpeditionTargetIdentity, ExpeditionView } from '../world/ExpeditionPlanner'
 import { ChoicePrice } from './ChoicePrice'
@@ -68,18 +68,33 @@ export function ExpeditionMinimap({ view }: { view: GameView }) {
   )
 }
 
+/**
+ * W2-2, PR B — the compass leads to one of the camp's offers on its own (the nearest by road)
+ * until «Взяться» takes one, so it says the other is in the card. Derived from the view: the
+ * default target is an offer of an open camp that nobody has taken.
+ */
+function openingCompassNote(view: GameView): string | null {
+  const { mode, target } = view.expedition
+  const opening = view.caravanBeats.opening
+  if (mode !== 'campaign' || target?.kind !== 'caravanBeat' || !opening || opening.chosenId !== null) return null
+  return opening.offers.some((offer) => offer.id === target.id)
+    ? describeCaravanOfferCompassNote(opening.offers.length)
+    : null
+}
+
 export function ExpeditionCompass({ view, onOpen }: { view: GameView; onOpen: () => void }) {
   const { target, guidance } = view.expedition
   const instruction = nextInstruction(view.expedition)
+  const note = openingCompassNote(view)
   return (
     <button type="button" className="expedition-compass" onClick={onOpen}
-      aria-label={`${copy.open}. ${target ? `${target.title}, ${target.regionLabel}. ${instruction}` : copy.noSelection}`}>
+      aria-label={`${copy.open}. ${target ? `${target.title}, ${target.regionLabel}${note ? `, ${note}` : ''}. ${instruction}` : copy.noSelection}`}>
       <span className="expedition-compass-arrow" aria-hidden="true">
         <Navigation2 style={{ transform: `rotate(${guidance?.bearing ?? 0}rad)` }} />
       </span>
       <span className="expedition-compass-copy">
         <strong>{target ? `${target.regionLabel} - ${target.title}` : copy.noSelection}</strong>
-        <span>{target ? `${Math.ceil(target.directDistance)} ${copy.straightMeters}` : copy.open}</span>
+        <span>{note ?? (target ? `${Math.ceil(target.directDistance)} ${copy.straightMeters}` : copy.open)}</span>
         {target ? <small>{instruction}{guidance && !guidance.arrived ? ` - ${Math.ceil(guidance.distance)} ${copy.meters}` : ''}</small> : null}
       </span>
       <kbd>M</kbd>

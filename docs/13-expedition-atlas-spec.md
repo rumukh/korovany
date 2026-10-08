@@ -49,7 +49,8 @@ Provide:
 - A short road itinerary with the next crossing/region and an honest uncertainty note.
 
 Known objective destinations may retain their existing visibility through fog.
-For the default target (a taken live rumour, otherwise the active campaign objective)
+For the default target (a taken live rumour, the camp's caravan, the active campaign
+objective, or the caravan a shut finale still waits on)
 or an explicitly selected known mission, its planned road itinerary may extend
 through unexplored ground, drawn dashed and labelled unscouted. This deliberately
 exposes only transport geometry along that itinerary, not arbitrary hidden sites,
@@ -199,8 +200,15 @@ the itinerary changes. No navigation grids are built by the atlas.
 Without an atlas choice, the compass charts a default target exactly as if the player
 had selected it: the same road itinerary, next instruction, crossing symbols, and fog
 exception. A taken live rumour is that target until it is kept, broken, dropped or
-expires; otherwise it is the active campaign objective. Explicitly selecting a ready
-mission, live rumour or site overrides the default, and «Убрать маршрут» returns to it.
+expires; otherwise it is the active campaign objective. W2-2's caravan spine adds two
+places to that order (see [the caravan spine](16-caravan-spine.md)): while the camp's
+choice is open, the camp's caravan leads ahead of the objective (the one the player took
+with «Взяться», or before that the nearest offer by road), and once no objective is left
+before a finale the caravans still hold shut, the nearest caravan by road follows after
+it. The whole order is an atlas choice, a taken live rumour, the camp's caravan, the
+active objective, then the gate's next caravan. Explicitly
+selecting a ready mission, live rumour, caravan or site overrides the default, and
+«Убрать маршрут» returns to it.
 Either way, a mission may expose its own dashed, unscouted road itinerary and crossing
 symbols. Unexplored region owners, biomes, actors, unrelated sites, river legs, and the
 rest of the road network remain hidden. A discovered utility site does not grant the
@@ -236,7 +244,8 @@ Clearing writes `campaign`, which survives a reload. A version-1 save from befor
 2026-10-07 may hold `none`, the old «Убрать маршрут»; it loads as `campaign` without
 a warning, because clearing now means returning to the default route. A target of kind
 `bridgeAmbush` loads as `caravanBeat` with the same ID: W2-2 made the bridge one caravan
-beat among others, and the atlas lists every beat that is not yet settled under that kind.
+beat among others, and the atlas lists every beat the run can still meet under that kind,
+priced as its card is. A spine's road beats are not listed until the camp has chosen.
 
 Both initial and live views carry `expedition`. Initial position and heading now use
 the same start projection as the actual engine rather than the former site-center
@@ -407,8 +416,9 @@ the walk's distance: it exposes no more than selecting the destination already d
 Cards are measured on the live path through `ExpeditionPlanner.measureTravel`, which remembers
 an estimate per 4 m of player movement, and on the launch path directly, after the starting
 boon's reveal, so initial and live views agree. The atlas list row shows a short form
-(«300 золотых · идти ~45 с»); the detail shows the full price. The bridge-ambush destination is
-left unpriced for the caravan-beat work that replaces it.
+(«300 золотых · идти ~45 с»); the detail shows the full price. Caravan destinations are priced
+the same way since W2-2's spine: what the side's first verb pays (`caravanBeatPayout`) and the
+walk to the cart, with the side's other verbs said in words on the cards.
 
 ### 2026-10-08: reachable rumours (W2-3, part 2)
 
@@ -452,3 +462,40 @@ tick, so the planner re-plans when the meeting square changes, not on every fram
 whenever the cart crosses into another square. The meeting is derived and never saved. The
 launch view works it out from the restored position at the restored tick, so a continued run's
 first frame agrees with the live compass. An untaken escort still points at its cart.
+
+### 2026-10-08: a spine run launches toward a caravan (W2-2, PR B)
+
+A run with the caravan spine does not close its camp on arrival: the camp is decided at one
+of its two caravans. Pointing the launch compass at the camp therefore spent the player's first
+seconds on a place where nothing happens. While the camp's choice is open and no offer is
+taken, the default target is now the camp's nearest offer by road (`caravanSpineLeads`, from
+the same `estimateChoiceTravel` metres the offer cards quote; ties keep the plan's order). The
+compass's second line says it is one of two, «ближний · второй — в карточке», or «выбирать не
+из чего» when the world has a single offer. «Взяться» on the other card retargets it, and the
+line gives way to the usual distance. The field keeps the camp's card until an offer is taken
+or the player is at a cart, so the compass leading there does not replace the choice.
+
+W1-3's rule is unchanged for every run that does not hold its camp: a run saved before the
+spine, and a world that placed no offer, launch straight at the camp as before. The expedition
+hint still waits for a change of road target, so the launch frame stays quiet even though a
+spine launch already follows a road.
+
+Evidence:
+
+- `tests\expeditionPlanner.test.ts`: 598 of the 600 fixed spine launches lead to the offer
+  nearest by road, recomputed from `planCaravanSpine`, with a valid itinerary and a dry first
+  leg; the other two worlds placed no offer and launch at the camp. The second offer is the
+  nearer in 79 launches and the straight line misleads in 67, so a compass that took the
+  trunk's offer, or the nearest as the crow flies, fails. Each launch's legacy twin, a save
+  from before the spine at the same spot, points straight at the camp, and the road-only
+  arrow misses that camp in 474 of them, as it did before.
+- `tests\campaignView.test.ts`: launch views chart the nearest offer or, without one, approach
+  the camp straight; restored views from before the spine keep the active objective.
+- `tests\caravanBeats.test.ts`: the engine's own expedition input leads to the nearer offer,
+  «Взяться» on the farther one retargets it, an atlas choice still comes first, and a run
+  without a spine keeps the camp.
+- `tests\openingInterface.test.ts`: the compass line reads «ближний · второй — в карточке»
+  before a choice and «выбирать не из чего» with one offer; once an offer is taken it is gone.
+- `tests\hints.test.ts`: a spine launch's road is no change; a new road target still fires.
+- Four mutations each fail at least one of these tests: no nearest lead, always the first
+  offer, an untaken offer taking the field card, and the line kept after a choice.

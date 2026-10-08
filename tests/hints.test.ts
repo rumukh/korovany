@@ -125,7 +125,14 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
       tracked: false,
     }
     const active = { ...beat, active: true }
-    return { ...base, caravanBeats: { beats: [active], active } }
+    // The base view's camp choice stays as it was, so only the beat line has a reason to fire.
+    return { ...base, caravanBeats: { ...base.caravanBeats, beats: [active], active } }
+  },
+  caravanSpine: (base) => {
+    // A cart was met at the camp: the offers leave the card on that frame.
+    assert.ok((base.caravanBeats.opening?.offers.length ?? 0) > 0, 'the launch view shows the camp choice')
+    const opening = base.caravanBeats.opening ?? null
+    return { ...base, caravanBeats: { ...base.caravanBeats, opening: opening && { ...opening, offers: [] } } }
   },
   caravanLoot: (base) => ({
     ...base,
@@ -411,9 +418,11 @@ test('the launch view teaches only what is already on screen', () => {
 
 test('the expedition line waits for the first default road route, never the launch frame', () => {
   const base = launchView()
-  // The camp is a short dry straight approach, so the launch compass is not a road itinerary.
+  // W2-2, PR B — a spine launch's camp is decided at a cart, so the launch compass already
+  // follows a road itinerary to the camp's nearest offer. The line still waits for a change.
   assert.equal(base.expedition.mode, 'campaign')
-  assert.equal(base.expedition.route?.status, 'direct')
+  assert.equal(base.expedition.target?.kind, 'caravanBeat')
+  assert.equal(base.expedition.route?.status, 'road')
   const road = (key: string, elapsed: number): GameView => ({
     ...base, elapsed,
     expedition: {
@@ -422,10 +431,26 @@ test('the expedition line waits for the first default road route, never the laun
       route: base.expedition.route ? { ...base.expedition.route, status: 'road' } : null,
     },
   })
+  // A run saved before the spine launches at its camp, a short dry straight approach.
+  const legacy: GameView = {
+    ...base,
+    expedition: {
+      ...base.expedition,
+      target: base.expedition.target ? { ...base.expedition.target, kind: 'objective', key: 'objective:camp' } : null,
+      route: base.expedition.route ? { ...base.expedition.route, status: 'direct' } : null,
+    },
+  }
+
+  const launched = recordingDirector()
+  launched.director.observe(base)
+  launched.director.observe({ ...base, elapsed: 30 })
+  assert.deepEqual(hintsFrom(launched), [], 'the launch frame\'s road is no change')
+  launched.director.observe(road('caravanBeat:taken', 31))
+  assert.deepEqual(hintsFrom(launched), ['expedition'], 'a new road target is')
 
   const walked = recordingDirector()
-  walked.director.observe(base)
-  walked.director.observe({ ...base, elapsed: 30 })
+  walked.director.observe(legacy)
+  walked.director.observe({ ...legacy, elapsed: 30 })
   assert.deepEqual(hintsFrom(walked), [], 'the straight camp approach teaches nothing')
   walked.director.observe(road('objective:after-camp', 31))
   assert.deepEqual(hintsFrom(walked), ['expedition'])
@@ -442,14 +467,14 @@ test('the expedition line waits for the first default road route, never the laun
 
   // An explicit atlas choice that comes first still counts, and the road does not repeat it.
   const chosen = recordingDirector()
-  chosen.director.observe(base)
-  chosen.director.observe({ ...base, elapsed: 10, expedition: { ...base.expedition, mode: 'selected' } })
+  chosen.director.observe(legacy)
+  chosen.director.observe({ ...legacy, elapsed: 10, expedition: { ...legacy.expedition, mode: 'selected' } })
   chosen.director.observe(road('objective:after-camp', 40))
   assert.deepEqual(hintsFrom(chosen), ['expedition'])
 
   // Reaching the camp also lights the objectives line; both arrive, with the usual spacing.
   const camp = recordingDirector()
-  camp.director.observe(base)
+  camp.director.observe(legacy)
   const done = {
     ...road('objective:after-camp', 20),
     objectives: base.objectives.map((objective, index) => index === 0 ? { ...objective, done: true } : objective),

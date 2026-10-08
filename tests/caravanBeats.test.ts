@@ -65,18 +65,23 @@ import {
   caravanBeatReservesStagingPoint,
   caravanBeatReward,
   caravanBeatThinsGarrison,
+  caravanSpineGate,
+  caravanSpineHoldsCamp,
   createCaravanBeatPlans,
   createCaravanBeatState,
   createCaravanBeatsState,
+  declineOtherCaravanOffers,
   normalizeCaravanBeatsState,
   restoreCaravanBeatsState,
   serializeCaravanBeatsState,
   summarizeCaravanBeats,
   type CaravanBeatPlan,
   type CaravanBeatState,
+  type CaravanBeatsState,
   type CaravanBeatViewContext,
   type CaravanBeatsView,
 } from '../src/game/world/CaravanBeats.ts'
+import { restoreCaravanSpine } from '../src/game/world/CaravanSpine.ts'
 import {
   CARAVAN_BEAT_CHRONICLE_PREFIX,
   SUPPLY_BASELINE,
@@ -728,12 +733,12 @@ function achievementState(runId: string, faction: Faction) {
   }
 }
 
-function harness(faction: Faction = 'guard', seed = 20_260_909) {
+function harness(faction: Faction = 'guard', seed = 20_260_909, options: { spine?: boolean } = {}) {
   const blueprint = generateWorld(seed)
   const player = new THREE.Group()
   const actors: HarnessActor[] = []
   const notices: string[] = []
-  const tally = { robbed: 0, gold: 0 }
+  const tally = { robbed: 0, gold: 0, objectives: 0 }
   const regions = new RegionManager(blueprint)
   const chronicleRegions = createChronicleRegions(blueprint)
   const finale = createFinaleState(createFinaleIdentity(blueprint, faction))
@@ -840,6 +845,7 @@ function harness(faction: Faction = 'guard', seed = 20_260_909) {
       getRunState: () => achievementState(runId, faction),
       recordGoldEarned: (amount: number) => { tally.gold += amount },
       recordCaravanRobbed: () => { tally.robbed += 1 },
+      recordObjectiveCompleted: () => { tally.objectives += 1 },
     },
     callbacks: {
       onNotice: (message: string) => notices.push(message),
@@ -851,7 +857,7 @@ function harness(faction: Faction = 'guard', seed = 20_260_909) {
     updatingProjectiles: false,
     squadNavigationRevision: '',
   })
-  const beat = attachCaravanBeats(engine, blueprint, faction)
+  const beat = attachCaravanBeats(engine, blueprint, faction, undefined, { spine: options.spine === true })
   const { plan, state, cart, runtime } = beat
   player.position.set(plan.cargoStart.x, 0, plan.cargoStart.z)
   regions.update(plan.regionId)
@@ -1489,8 +1495,16 @@ test('initial, restored, migrated and legacy launch views expose the same beats'
   assert.equal(fresh.caravanBeats.beats[0]?.active, false)
   assert.equal(fresh.caravanBeats.active, null)
   assert.equal(fresh.markers.some((marker) => marker.id.startsWith('caravan-beat:')), false)
+  // PR B — a fresh run is a spine run: the camp's offers are charted, and the crossing waits
+  // for the camp's choice before the atlas charts it.
+  const offerIds = fresh.caravanBeats.beats.filter((beat) => beat.slot === 'offer').map((beat) => beat.id)
+  assert.ok(offerIds.length > 0)
+  for (const id of offerIds) {
+    assert.ok(fresh.expedition.targets.some((target) => target.kind === 'caravanBeat' && target.id === id))
+  }
   assert.equal(fresh.expedition.targets.some((target) =>
-    target.kind === 'caravanBeat' && target.id === value.plan.id), true)
+    target.kind === 'caravanBeat' && target.id === value.plan.id), false)
+  assert.equal(fresh.caravanBeats.beats.find((beat) => beat.id === value.plan.id)?.dormant, true)
 
   readyCombatants(value.state)
   value.state.phase = 'fighting'
@@ -1536,7 +1550,7 @@ test('initial, restored, migrated and legacy launch views expose the same beats'
   const legacy = structuredClone(saved)
   delete legacy.directorState.caravanBeats
   const legacyView = buildInitialGameView({ blueprint: value.blueprint, config, restored: legacy })
-  assert.deepEqual(legacyView.caravanBeats, { beats: [], active: null })
+  assert.deepEqual(legacyView.caravanBeats, { beats: [], active: null, opening: null, gate: null })
   assert.equal(legacyView.markers.some((marker) => marker.id.startsWith('caravan-beat:')), false)
 })
 
@@ -2156,4 +2170,301 @@ test('the road cart remembers its dead escorts across walking away and a continu
   legacy.frame()
   legacy.frame()
   assert.equal(legacy.living(), 2)
+})
+
+// ---------------------------------------------------------------------------
+// PR B — the spine on the engine: the camp decided, the road waking, the gate, the seam
+// ---------------------------------------------------------------------------
+
+function spineOf(value: ReturnType<typeof harness>) {
+  const plans = Reflect.get(value.engine, 'caravanBeatPlans') as CaravanBeatPlan[]
+  const beats = Reflect.get(value.engine, 'caravanBeats') as CaravanBeatsState
+  const runtime = Reflect.get(value.engine, 'caravanBeatRuntime') as Map<string, {
+    cart: THREE.Group
+    stagingRefused?: boolean
+  }>
+  const slot = (kind: CaravanBeatPlan['slot']) => plans.filter((plan) => plan.slot === kind)
+  const state = (id: string) => beats.beats.find((entry) => entry.id === id) as CaravanBeatState
+  return { plans, beats, runtime, slot, state }
+}
+
+/** The player at a cart, its square streamed in as the engine's window would have it. */
+function standAt(value: ReturnType<typeof harness>, plan: CaravanBeatPlan): void {
+  value.player.position.set(plan.cargoStart.x, 0, plan.cargoStart.z)
+  value.regions.update(plan.regionId)
+  ;(Reflect.get(value.engine, 'simulatedGeneratedRegions') as Set<string>).add(plan.regionId)
+}
+
+/** The fight at a cart won: every enemy the engine staged there is down. */
+function winFightAt(value: ReturnType<typeof harness>, beat: CaravanBeatState): void {
+  for (const entry of value.actors) {
+    if (!beat.combatants.some((combatant) => combatant.enemy && combatant.id === entry.generatedSpawnId)) continue
+    entry.alive = false
+    entry.hp = 0
+  }
+  invoke(value.engine, 'syncCaravanBeatCombat')
+}
+
+function campDone(value: ReturnType<typeof harness>): boolean {
+  const camp = invoke<{ id: string } | null>(value.engine, 'campNode')
+  assert.ok(camp)
+  return (Reflect.get(value.engine, 'objectives') as Objective[]).some((entry) => entry.id === camp.id && entry.done)
+}
+
+test('PR B — the camp is decided by the caravan met, the other goes its way, and the road waits for it', () => {
+  const value = harness('elf', 20_260_909, { spine: true })
+  const { beats, runtime, slot, state } = spineOf(value)
+  const [first, second] = slot('offer')
+  const [crossing] = slot('crossing')
+  assert.ok(first && second && crossing)
+
+  // The road waits: at the bridge before the camp's choice, nothing stages and no cart stands.
+  standAt(value, crossing)
+  invoke(value.engine, 'updateCaravanBeats', 0.5)
+  assert.equal(state(crossing.id).phase, 'approach')
+  assert.equal(runtime.get(crossing.id)?.cart.visible, false)
+  assert.equal(value.actors.length, 0)
+  invoke(value.engine, 'settleCaravanOpening')
+  assert.equal(campDone(value), false)
+
+  // Walking up to the second offer is choosing it: it stages and the first goes its own way.
+  standAt(value, second)
+  invoke(value.engine, 'updateCaravanBeats', 0.5)
+  assert.equal(state(second.id).phase, 'fighting')
+  assert.equal(state(first.id).phase, 'declined')
+  assert.equal(beats.chosenOfferId, second.id)
+  assert.ok(value.notices.some((notice) => notice.includes('ушёл своей дорогой')))
+  invoke(value.engine, 'settleCaravanOpening')
+  assert.equal(campDone(value), false, 'a cart being fought is not a settled one')
+
+  // Won and taken: the camp closes, once, and the road wakes.
+  winFightAt(value, state(second.id))
+  assert.equal(state(second.id).phase, 'secured')
+  value.player.position.set(state(second.id).cargoX, 0, state(second.id).cargoZ)
+  assert.equal(invoke<boolean>(value.engine, 'chooseCaravanBeat', second.id, 'take'), true)
+  invoke(value.engine, 'settleCaravanOpening')
+  invoke(value.engine, 'settleCaravanOpening')
+  assert.equal(campDone(value), true)
+  assert.equal(value.tally.objectives, 1, 'the camp closes once')
+  standAt(value, crossing)
+  invoke(value.engine, 'updateCaravanBeats', 0.5)
+  assert.equal(state(crossing.id).phase, 'fighting', 'the bridge stages once the camp has chosen')
+  // The offer not taken never stages, with the player standing at it.
+  standAt(value, first)
+  invoke(value.engine, 'updateCaravanBeats', 0.5)
+  assert.equal(state(first.id).phase, 'declined')
+  assert.equal(runtime.get(first.id)?.cart.visible, false)
+})
+
+test('PR B — the finale waits for two caravans, every ending counts, and two met ones are a step', () => {
+  const value = harness('villain', 20_260_909, { spine: true })
+  const { plans, beats, slot, state } = spineOf(value)
+  const graph = value.blueprint.objectives.villain
+  const finalNode = graph.nodes.find((node) => node.id === graph.finalNodeId)
+  assert.ok(finalNode)
+  for (const objective of Reflect.get(value.engine, 'objectives') as Objective[]) {
+    if (objective.id !== graph.finalNodeId) objective.done = true
+  }
+  const ready = () => invoke<{ id: string }[]>(value.engine, 'getReadyGeneratedObjectives').map((node) => node.id)
+  const steps = () => invoke<number>(value.engine, 'campaignProgressSteps')
+  const before = steps()
+  assert.equal(invoke<boolean>(value.engine, 'generatedPrerequisitesDone', finalNode), false)
+  assert.equal(ready().includes(finalNode.id), false)
+  assert.equal(invoke(value.engine, 'getActiveGeneratedObjective'), null)
+
+  // The finale's own square fields nobody while the gate is shut.
+  const identity = value.finale.identity
+  const finalPlan = Object.values(createGeneratedEncounterPlans(value.blueprint, 'villain'))
+    .find((plan) => plan.encounterId === identity.encounterId)
+  assert.ok(finalPlan)
+  Reflect.set(value.engine, 'generatedEncounterPlans', new Map([[identity.regionId, [finalPlan]]]))
+  const field = () => {
+    Reflect.set(value.engine, 'generatedActivationSpawns', new Map([[identity.regionId, new Set<string>()]]))
+    invoke(value.engine, 'spawnGeneratedRegionEncounters', identity.regionId)
+    return value.actors.filter((entry) => entry.generatedEncounterId === identity.encounterId).length
+  }
+  assert.equal(field(), 0)
+
+  const [first] = slot('offer')
+  const [crossing] = slot('crossing')
+  state(first.id).phase = 'fighting'
+  declineOtherCaravanOffers(plans, beats, first.id)
+  state(first.id).phase = 'unavailable'
+  assert.equal(steps(), before, 'an unstageable cart is nobody\'s step')
+  assert.deepEqual(caravanSpineGate(beats), { open: false, settled: 1, required: 2 })
+  assert.equal(ready().includes(finalNode.id), false)
+  state(crossing.id).phase = 'lost'
+  assert.equal(steps(), before, 'one met cart is half a step')
+  assert.equal(caravanSpineGate(beats).open, true, 'every ending counts for the gate')
+  assert.equal(invoke<boolean>(value.engine, 'generatedPrerequisitesDone', finalNode), true)
+  assert.ok(ready().includes(finalNode.id))
+  assert.ok(field() > 0, 'the finale fields its garrison once the gate opens')
+  // Had the camp's cart been met (it escaped), the two met carts would pay one step.
+  state(first.id).phase = 'escaped'
+  assert.equal(steps(), before + 1, 'two met carts, lost and escaped, pay one step')
+
+  // Control: the same campaign without a spine has its finale ready at once.
+  const legacy = harness('villain')
+  for (const objective of Reflect.get(legacy.engine, 'objectives') as Objective[]) {
+    if (objective.id !== graph.finalNodeId) objective.done = true
+  }
+  assert.ok(invoke<{ id: string }[]>(legacy.engine, 'getReadyGeneratedObjectives')
+    .some((node) => node.id === finalNode.id))
+  assert.equal(caravanSpineGate(Reflect.get(legacy.engine, 'caravanBeats')).open, true)
+})
+
+test('PR B — a crowded road holds a caravan honestly, the wait survives a continue, and then it goes through', () => {
+  const value = harness('guard', 20_260_909, { spine: true })
+  const { plans, runtime, slot, state } = spineOf(value)
+  const [first, second] = slot('offer')
+  standAt(value, first)
+  // A world full of bodies that cannot give way to a cart: the squad and the campaign's own.
+  for (let index = 0; index < MAX_ACTORS; index += 1) {
+    const filler = actor(`filler-${index}`, 'guard', 'soldier', index < 3 ? 'squad' : 'campaign')
+    filler.mesh.position.set(first.cargoStart.x + 200, 0, first.cargoStart.z)
+    value.actors.push(filler)
+  }
+  const step = (seconds: number) => {
+    Reflect.set(value.engine, 'elapsed', Reflect.get(value.engine, 'elapsed') + seconds)
+    invoke(value.engine, 'updateCaravanBeats', seconds)
+  }
+  step(0.5)
+  assert.equal(state(first.id).phase, 'approach')
+  assert.equal(runtime.get(first.id)?.stagingRefused, true)
+  assert.ok(value.notices.some((notice) => notice.includes('слишком людно')))
+  for (let index = 0; index < 20; index += 1) step(0.5)
+  assert.ok(Math.abs(state(first.id).stagingStalled - 10) < 0.01, `stalled ${state(first.id).stagingStalled}`)
+  const view = invoke<CaravanBeatsView>(value.engine, 'buildCaravanBeatsView',
+    { mode: 'campaign', target: null, route: null, guidance: null })
+  assert.match(view.beats.find((beat) => beat.id === first.id)?.description ?? '', /Корован ждёт ещё 20 с/)
+
+  // The wait is saved: a continue resumes it rather than starting it again.
+  const saved = invoke<ActiveRunSaveV3>(value.engine, 'saveGeneratedRun')
+  const restored = restoreCaravanSpine(saved.directorState, value.blueprint, 'guard')
+  assert.equal(restored.rejected, false)
+  assert.ok(Math.abs((restored.state?.beats.find((beat) => beat.id === first.id)?.stagingStalled ?? 0) - 10) < 0.01)
+
+  // Twenty more seconds by the cart, and it goes through without its fight: the run moves on.
+  for (let index = 0; index < 41 && state(first.id).phase === 'approach'; index += 1) step(0.5)
+  assert.equal(state(first.id).phase, 'unavailable')
+  assert.match(state(first.id).unavailableReason ?? '', /проехал без драки/)
+  assert.equal(state(first.id).rewardPaid, false)
+  assert.equal(caravanSpineHoldsCamp(plans, Reflect.get(value.engine, 'caravanBeats')), false, 'the camp settles')
+  assert.equal(state(second.id).phase, 'approach', 'the other offer is still on its road')
+  assert.equal(value.actors.length, MAX_ACTORS)
+
+  // Control: with room, the same cart stages on the first try and its clock never runs.
+  const roomy = harness('guard', 20_260_909, { spine: true })
+  standAt(roomy, first)
+  invoke(roomy.engine, 'updateCaravanBeats', 0.5)
+  assert.equal(spineOf(roomy).state(first.id).phase, 'fighting')
+  assert.equal(spineOf(roomy).state(first.id).stagingStalled, 0)
+})
+
+test('PR B — the staging seam makes way for a cart as W1-1 does, and never for an event the player is in', () => {
+  const value = harness('elf', 20_260_909, { spine: true })
+  let cleaned = 0
+  const event = (marker: THREE.Vector3, interacted: boolean) => ({
+    id: `random-${String(cleaned)}`,
+    anchor: 'player',
+    state: 'active',
+    contractNodeId: null,
+    title: 'Засада на дороге',
+    markerPos: marker,
+    playerInteracted: interacted,
+    situationId: null,
+    cleanup: () => { cleaned += 1 },
+  })
+  Reflect.set(value.engine, 'activeEvents', [event(new THREE.Vector3(9_999, 0, 9_999), false)])
+  assert.equal(invoke<boolean>(value.engine, 'requestBeatStagingRoom', 3), true)
+  assert.equal(cleaned, 1)
+  assert.deepEqual(Reflect.get(value.engine, 'activeEvents'), [])
+  assert.ok(value.notices.some((notice) => notice.includes('Засада на дороге')))
+  // Control: an event the player is in the middle of finishes on its own terms.
+  const engaged = event(value.player.position.clone(), true)
+  Reflect.set(value.engine, 'activeEvents', [engaged])
+  assert.equal(invoke<boolean>(value.engine, 'requestBeatStagingRoom', 3), true)
+  assert.equal(cleaned, 1)
+  assert.deepEqual(Reflect.get(value.engine, 'activeEvents'), [engaged])
+})
+
+test('PR B — the compass leads to the camp\'s nearest offer by road, and «Взяться» retargets it', () => {
+  const value = harness('villain', 20_260_909, { spine: true })
+  const { slot } = spineOf(value)
+  const [first, second] = slot('offer')
+  const [crossing] = slot('crossing')
+  const start = getFactionStartPosition2D(value.blueprint, 'villain')
+  assert.ok(start)
+  value.player.position.set(start.x, 0, start.z)
+  const input = () => invoke<ExpeditionInput>(value.engine, 'buildExpeditionInput')
+  const planner = Reflect.get(value.engine, 'expeditionPlanner') as ExpeditionPlanner
+  // Before a choice the camp is no place to go: the nearer offer by the road its card quotes leads.
+  const road = (id: string) => input().caravanBeats?.find((target) => target.id === id)?.travel?.meters
+  const [firstRoad, secondRoad] = [road(first.id), road(second.id)]
+  assert.ok(firstRoad !== undefined && secondRoad !== undefined && firstRoad !== secondRoad)
+  const [nearest, other] = firstRoad < secondRoad ? [first, second] : [second, first]
+  assert.equal(input().leadingCaravanBeatId, nearest.id)
+  const before = planner.buildView(input())
+  assert.equal(before.target?.kind, 'caravanBeat', 'the camp no longer leads')
+  assert.equal(before.target?.id, nearest.id)
+  // Controls first: a road beat is no camp offer.
+  assert.equal(invoke<boolean>(value.engine, 'chooseCaravanOffer', crossing.id), false)
+  assert.equal(invoke<boolean>(value.engine, 'chooseCaravanOffer', other.id), true)
+  // Both offers often share a road's name, so the notice names the square.
+  const square = value.blueprint.regions.find((region) => region.id === other.regionId)
+  assert.ok(square)
+  const label = formatRegionGridLabel(square.coordinate.x, square.coordinate.y)
+  assert.ok(value.notices.some((notice) => notice.startsWith('Взялся:') && notice.includes(`» в ${label}.`)))
+  assert.equal(input().leadingCaravanBeatId, other.id)
+  const led = planner.buildView(input())
+  assert.equal(led.target?.kind, 'caravanBeat')
+  assert.equal(led.target?.id, other.id, '«Взяться» on the farther card retargets the compass')
+  assert.ok(led.target?.payout && led.target.travel, 'the atlas prices the cart it leads to')
+  // An atlas choice still comes first.
+  assert.equal(planner.select({ kind: 'caravanBeat', id: nearest.id }, input()), true)
+  assert.equal(planner.buildView(input()).target?.id, nearest.id)
+  // The dormant bridge is not charted while the camp chooses.
+  assert.equal(input().caravanBeats?.some((target) => target.id === crossing.id), false)
+  // Control: a run without a spine keeps W1-3's camp rule.
+  const legacy = harness('villain')
+  legacy.player.position.set(start.x, 0, start.z)
+  const legacyInput = invoke<ExpeditionInput>(legacy.engine, 'buildExpeditionInput')
+  assert.equal(legacyInput.leadingCaravanBeatId, null)
+  const legacyView = (Reflect.get(legacy.engine, 'expeditionPlanner') as ExpeditionPlanner).buildView(legacyInput)
+  assert.equal(legacyView.target?.kind, 'objective')
+  assert.equal(legacyView.target?.id, invoke<{ id: string } | null>(legacy.engine, 'campNode')?.id)
+})
+
+test('PR B — standing at the camp closes nothing, and a run without a spine still closes it there', () => {
+  /** The player on the camp's site, on a frame whose zone is the one already recorded. */
+  const atCamp = (value: ReturnType<typeof harness>) => {
+    const camp = invoke<{ siteId: string } | null>(value.engine, 'campNode')
+    assert.ok(camp)
+    const site = getSiteWorldPosition2D(value.blueprint, camp.siteId)
+    assert.ok(site)
+    value.player.position.set(site.x, 0, site.z)
+    Reflect.set(value.engine, 'zoneAtPosition', () => 'neutral')
+    Reflect.set(value.engine, 'lastZone', 'neutral')
+  }
+  const value = harness('elf', 20_260_909, { spine: true })
+  atCamp(value)
+  invoke(value.engine, 'updateMission')
+  invoke(value.engine, 'updateMission')
+  assert.equal(campDone(value), false, 'the camp waits for its caravan')
+  assert.equal(value.tally.objectives, 0)
+  // Control: a run without a spine closes its camp on the same arrival.
+  const legacy = harness('elf')
+  atCamp(legacy)
+  invoke(legacy.engine, 'updateMission')
+  assert.equal(campDone(legacy), true)
+})
+
+test('PR B — no random event is rolled while the camp chooses its caravan', () => {
+  const value = harness('elf', 20_260_909, { spine: true })
+  value.player.position.set(value.blueprint.bounds.maxX - 5, 0, value.blueprint.bounds.maxZ - 5)
+  assert.equal(invoke<boolean>(value.engine, 'caravanBeatHoldsRandomEvents'), true)
+  // Control: a run without a spine, far from its bridge, holds nothing.
+  const legacy = harness('elf')
+  legacy.player.position.set(legacy.blueprint.bounds.maxX - 5, 0, legacy.blueprint.bounds.maxZ - 5)
+  assert.equal(invoke<boolean>(legacy.engine, 'caravanBeatHoldsRandomEvents'), false)
 })

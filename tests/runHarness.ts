@@ -379,9 +379,20 @@ import {
   interruptFinale,
   resolveFinaleContactTargets,
   suspendFinale,
+  thinFinaleGarrison,
   type FinaleAction,
   type FinalePoint,
 } from '../src/game/world/FinaleDirector.ts'
+import { CARAVAN_BEAT_CARGO_HEALTH, CARAVAN_BEAT_SQUAD_CAP } from '../src/game/world/CaravanBeats.ts'
+import {
+  HARNESS_BEAT_CARGO_REACH,
+  createBeatHarness,
+  type BeatMetrics,
+  type BeatPolicy,
+  type CaravanBeatModel,
+  type OpeningPolicy,
+  type VerbPolicy,
+} from './runHarnessBeats.ts'
 import {
   estimateWalkSeconds,
   getExpeditionGraph,
@@ -409,6 +420,7 @@ import {
   HARNESS_CHAMPION_DAMAGE_CAP,
   HARNESS_CHAMPION_DAMAGE_STEP,
   HARNESS_CONTRACT_TRIGGER_RADIUS,
+  HARNESS_CONTRACT_QUIET_RADIUS,
   HARNESS_DEFEND_HOME_HEAL,
   HARNESS_EVENT_REQUIRED_SLOTS,
   HARNESS_EVENT_WEIGHTS,
@@ -1412,6 +1424,8 @@ export interface BalanceMetrics {
   contracts: ContractBalanceMetrics
   rumourFeasibility: RumourFeasibility
   encounters: EncounterMetrics
+  /** W2-2, PR B — the caravans a spine run met; null while `caravanBeats` is `off`. */
+  beats: BeatMetrics | null
 }
 
 export interface RunReport {
@@ -1447,6 +1461,9 @@ export interface RunReport {
   regionWindow: RegionWindow
   /** W1-6 — what the commanders did besides swing. */
   commanders: CommanderModel
+  /** W2-2, PR B — the caravan spine, and how the scripted player met it. */
+  caravanBeats: CaravanBeatModel
+  beatPolicy: BeatPolicy
   /** W1-6 — whether the player's own packs stepped back for a staging. */
   staging: StagingModel
   /** Frames per simulated second the run was driven at. */
@@ -1612,6 +1629,33 @@ export interface RunOptions {
    */
   commanders?: CommanderModel
   /**
+   * W2-2, PR B — defaults to `off`: no caravan beats, the camp closes on arrival and the
+   * finale opens on its prerequisites, as every pinned number describes. `shipped` is the
+   * engine's spine (`runHarnessBeats.ts`): the camp's two offers, the crossing and the road
+   * beat, the camp held until a met cart settles, the finale behind the gate, each side's
+   * verbs, and the settled carts counted into W2-1's progress steps.
+   */
+  caravanBeats?: CaravanBeatModel
+  /** W2-2, PR B — defaults to `engage`. `walk` is the fail-forward control, `ignore` the gate's. */
+  beatPolicy?: BeatPolicy
+  /** W2-2, PR B — which of the camp's offers. Defaults to `seeded`. */
+  openingPolicy?: OpeningPolicy
+  /** W2-2, PR B — which verb on a won cart. Defaults to `seeded`. */
+  verbPolicy?: VerbPolicy
+  /** W2-2, PR B — the finale gate's K. Defaults to the shipped `CARAVAN_SPINE_FINALE_GATE`. */
+  beatGate?: number
+  /**
+   * W2-2, PR B — met carts per W2-1 progress step. Defaults to the shipped
+   * CARAVAN_SPINE_BEATS_PER_STEP (2, the fallback the sweep chose); 1 is the measured rule.
+   */
+  beatsPerProgressStep?: number
+  /**
+   * W2-2, PR B — defaults to `shipped`, the road cart as every run meets it. `farm` robs it
+   * whenever it is ready and near, events or not: whether farming it beats meeting the
+   * caravans. The guard, who never robs it, takes its aid instead.
+   */
+  roadCart?: 'shipped' | 'farm'
+  /**
    * W1-6 — defaults to `none`, the rule every pinned number was measured with: nobody steps
    * back for a staging. `friendly` is the engine's `makeRoomForStaging`. Read only under the
    * shipped encounters, whose packs are the ones that can step back.
@@ -1659,6 +1703,17 @@ export const HARNESS_SHIPPED_ARMS = {
   escalation: 'progress',
 } as const satisfies Partial<RunOptions>
 
+/**
+ * W2-2, PR B — the shipped arms and the caravan spine every new run now plays. Kept apart from
+ * `HARNESS_SHIPPED_ARMS` so the published baseline, and every whole-run test seeded on those
+ * arms, still describe the runs they measured; `docs/run-harness.md` reports the spine against
+ * that baseline.
+ */
+export const HARNESS_SPINE_ARMS = {
+  ...HARNESS_SHIPPED_ARMS,
+  caravanBeats: 'shipped',
+} as const satisfies Partial<RunOptions>
+
 // ---------------------------------------------------------------------------
 // Actors
 // ---------------------------------------------------------------------------
@@ -1676,6 +1731,7 @@ export type ActorSystem =
   | 'threatWave'
   | 'caravan'
   | 'ambush'
+  | 'caravanBeat'
   | 'finale'
 
 /**
@@ -1890,6 +1946,10 @@ export function runHarness(options: RunOptions): RunReport {
   const regionWindow: RegionWindow =
     options.regionWindow ?? (shippedEncounters || eventsFought ? 'engine' : 'square')
   const commanderModel: CommanderModel = options.commanders ?? 'inert'
+  // W2-2, PR B — the caravan spine, off unless asked for.
+  const caravanBeatModel: CaravanBeatModel = options.caravanBeats ?? 'off'
+  const beatPolicy: BeatPolicy = options.beatPolicy ?? 'engage'
+  const roadCartFarm = options.roadCart === 'farm'
   const stagingModel: StagingModel = options.staging ?? 'none'
   // W1-6 — only the generator's own packs can step back, so only its shipped encounters can.
   const stagingOn = stagingModel === 'friendly' && shippedEncounters
@@ -3750,6 +3810,7 @@ export function runHarness(options: RunOptions): RunReport {
       options.faction,
       objectives,
       contracts.pinnedNodeId,
+      beats.gate(),
     )
     const offeredSite =
       activeNode && getContractStatus(contracts, activeNode) === 'offered'
@@ -3762,7 +3823,9 @@ export function runHarness(options: RunOptions): RunReport {
         offeredContractDistance: offeredSite
           ? Math.hypot(offeredSite.x - player.x, offeredSite.z - player.z)
           : null,
-      })
+      }) ||
+      // W2-2, PR B — `caravanBeatHoldsRandomEvents`: the camp's choice and the carts' quiet.
+      beats.holdsRandomEvents(HARNESS_CONTRACT_QUIET_RADIUS)
     ) {
       eventCooldown = HARNESS_EVENT_RETRY
       return
@@ -4062,7 +4125,9 @@ export function runHarness(options: RunOptions): RunReport {
     const activated = encounterActivated.get(regionId)
     if (!activated) return
     const finalNode = graph.nodes.find((node) => node.id === graph.finalNodeId)
-    const finalReady = finalNode ? objectivePrerequisitesDone(finalNode, objectives) : false
+    const finalReady = finalNode
+      ? objectivePrerequisitesDone(finalNode, objectives) && beats.gate().finaleOpen
+      : false
     const plans = [...encounterPlansFor(regionId)].sort(
       (left, right) =>
         Number(right.encounterId === finaleIdentity.encounterId) -
@@ -4298,6 +4363,102 @@ export function runHarness(options: RunOptions): RunReport {
       if (calledHome) encounterMetrics.packsCalledHome += 1
     }
   }
+
+  // --- W2-2, PR B: the caravan spine -------------------------------------------------
+
+  /** The engine's beats on this file's bodies, through a narrow port (`runHarnessBeats.ts`). */
+  const beats = createBeatHarness({
+    faction: options.faction,
+    blueprint,
+    player,
+    chronicleState,
+    chronicleRegions,
+    caravanMetrics,
+    body: (id) => actors.find((actor) => actor.id === id),
+    regionSimulated: (regionId) => simulatedRegionIds.has(regionId),
+    makeWay: () => {
+      const interrupted = playerAnchoredEvent()
+      if (
+        interrupted &&
+        interrupted.state === 'active' &&
+        interrupted.contractNodeId === null &&
+        !engagedWith(interrupted)
+      ) {
+        standDownRandomEvent(interrupted)
+      }
+    },
+    reserveCampaign: (count) => {
+      // W1-6 — the player's own idle packs out of sight step back first, as the engine's seam.
+      if (stagingOn) makeRoomForStaging('campaign', count)
+      return reserveSlots('campaign', count)
+    },
+    spawn: (input) => {
+      const actor = spawnEngineActor({
+        allegiance: input.allegiance,
+        role: input.role,
+        x: input.x,
+        z: input.z,
+        system: 'caravanBeat',
+        budget: 'campaign',
+        hostileToPlayer: input.enemy,
+        eventOwnerId: input.ownerId,
+        aiMode: input.propId ? 'attackEventProp' : 'normal',
+        propOwnerId: input.propId,
+      })
+      actor.id = input.id
+      actor.playerAggro = input.enemy
+      actor.homeX = input.home.x
+      actor.homeZ = input.home.z
+      return actor
+    },
+    remove: (id) => removeActor(id),
+    setProp: (id, prop) => {
+      if (prop) {
+        eventProps.set(id, {
+          ...prop, maxHp: CARAVAN_BEAT_CARGO_HEALTH, attackRange: HARNESS_BEAT_CARGO_REACH,
+        })
+      } else {
+        eventProps.delete(id)
+      }
+    },
+    propHp: (id) => eventProps.get(id)?.hp ?? null,
+    earnGold: (amount) => earnGold(amount, 'caravanBeat'),
+    addSupplies: (amount) => {
+      if (sustainOn) player.supplies += amount
+    },
+    squadSize: () => companions().length,
+    recruit: (at) => {
+      if (!squadOn || companions().length >= CARAVAN_BEAT_SQUAD_CAP || !reserveSlots('squad', 1)) {
+        return false
+      }
+      const actor = spawnEngineActor({
+        allegiance: options.faction,
+        role: options.faction === 'villain' ? 'minion' : 'soldier',
+        x: at.x + 1.5,
+        z: at.z,
+        system: 'squad',
+        budget: 'squad',
+        hostileToPlayer: false,
+        squadEligible: true,
+      })
+      assignSquadSlot(actor)
+      companionMetrics.recruited += 1
+      return true
+    },
+    thinFinale: () => {
+      const thinned = thinFinaleGarrison(finaleState, (spawnId) =>
+        actors.some((actor) => actor.alive && actor.id === `generated:${spawnId}`))
+      if (thinned) defeatedUniqueIds.add(thinned)
+      return thinned
+    },
+  }, {
+    model: caravanBeatModel,
+    beatPolicy,
+    openingPolicy: options.openingPolicy ?? 'seeded',
+    verbPolicy: options.verbPolicy ?? 'seeded',
+    gate: options.beatGate,
+    beatsPerStep: options.beatsPerProgressStep,
+  })
 
   // --- W1-5: deaths, blows and the `E` key ---------------------------------------------
 
@@ -4548,6 +4709,19 @@ export function runHarness(options: RunOptions): RunReport {
           }
         }
       }
+    }
+    // W2-2, PR B — the farming check: the road cart, robbed whenever it is ready and near, with
+    // or without the rest of `engage`. The guard does not rob it.
+    if (
+      roadCartFarm && eventsFought && options.faction !== 'guard' && roadCart.cooldown <= 0 &&
+      Math.hypot(roadCart.x - player.x, roadCart.z - player.z) <= HARNESS_EVENT_DETOUR
+    ) {
+      const escort = livingEscorts()
+        .filter((guard) => guard.hostileToPlayer)
+        .sort((left, right) =>
+          Math.hypot(left.x - player.x, left.z - player.z) - Math.hypot(right.x - player.x, right.z - player.z))[0]
+      if (escort && cartGuarded()) return { point: { x: escort.x, z: escort.z }, actor: escort, pressWithin: null }
+      return { point: roadCart, actor: null, pressWithin: HARNESS_CART_INTERACT_RANGE - 0.5 }
     }
     if (service) return { point: service, actor: null, pressWithin: HARNESS_SITE_REACH - 0.5 }
     return null
@@ -5404,7 +5578,9 @@ export function runHarness(options: RunOptions): RunReport {
     // `time` this is exactly the old assignment, since the clock only rises.
     const clockTier = getThreatTier(elapsed)
     const target = escalation !== 'time'
-      ? getThreatTier(elapsed, countProgressSteps({ graph, objectives }))
+      ? getThreatTier(elapsed, countProgressSteps({
+          graph, objectives, caravanBeatsResolved: beats.progressSteps(),
+        }))
       : clockTier
     if (target > threatTier) {
       tierRises.push({ at: elapsed, tier: target, cause: target > clockTier ? 'progress' : 'time' })
@@ -5837,7 +6013,7 @@ export function runHarness(options: RunOptions): RunReport {
     // Roadmap 1.4 — every ready node, then the pin, then the one the compass follows. The
     // order matters: a policy that pinned after resolving would spend a frame walking to
     // the node it was about to stop caring about.
-    const readyNodes = getReadyObjectiveNodes(blueprint, options.faction, objectives)
+    const readyNodes = getReadyObjectiveNodes(blueprint, options.faction, objectives, beats.gate())
     if (readyNodes.length > contractMetrics.maxReady) {
       contractMetrics.maxReady = readyNodes.length
     }
@@ -5898,6 +6074,7 @@ export function runHarness(options: RunOptions): RunReport {
       options.faction,
       objectives,
       contracts.pinnedNodeId,
+      beats.gate(),
     )
     trackObjective(activeNode?.id ?? null)
     const objectiveSite = activeNode
@@ -5913,6 +6090,12 @@ export function runHarness(options: RunOptions): RunReport {
     }
     // W1-5 — a healer, a contract's fight, an event, the road cart. Null in every pinned arm.
     const goal = chooseGoal(activeNode)
+    // W2-2, PR B — a caravan: one being fought, the camp's choice, or the gate's next when no
+    // objective is left before the finale. Null while `caravanBeats` is off. The camp's own
+    // node is no destination while the camp holds: it is decided at a cart, not reached.
+    const campHeld = beats.holdsCamp() && activeNode?.id === beats.campNodeId()
+    const beatGoal = goal ? null : beats.goal(activeNode !== null && !campHeld)
+    const beatActor = beatGoal?.actorId ? actorById(beatGoal.actorId) ?? null : null
 
     // Roadmap 1.1 — the inbound telegraph the duelist answers, found before anything
     // moves so the answer is a reaction to this frame rather than to the last one.
@@ -5933,7 +6116,7 @@ export function runHarness(options: RunOptions): RunReport {
     }
     const duelTarget =
       policy === 'duelist' ? nearestHostileWithin(actors, player, HARNESS_DUEL_RANGE) : null
-    const fightTarget = duelTarget ?? goal?.actor ?? null
+    const fightTarget = duelTarget ?? goal?.actor ?? beatActor
 
     // Roadmap 1.3 — the detour. `commit` follows its pin and `walk` follows the same square
     // without one, which is the placebo that keeps "the commitment did it" from meaning
@@ -5941,7 +6124,8 @@ export function runHarness(options: RunOptions): RunReport {
     // only; objective completion below still reads `objectiveSite`.
     const steering = steeringRumour()
     const rumourSite = steering ? steeringTarget(steering) : null
-    const travelSite = goal?.point ?? rumourSite ?? objectiveSite
+    const travelSite = goal?.point ?? beatGoal?.point ?? rumourSite ??
+      (campHeld ? undefined : objectiveSite)
 
     if (policy !== 'idle' && (travelSite || fightTarget)) {
       const retreating =
@@ -6346,6 +6530,15 @@ export function runHarness(options: RunOptions): RunReport {
       }
     }
 
+    // 7a. W2-2, PR B — the caravans: staged, fought, chosen, walked or walked away from; then
+    //     the camp's node, which closes on the frame the met cart settles. A no-op while off.
+    beats.step(delta, elapsed)
+    const campId = beats.campNodeId()
+    if (campId && !beats.holdsCamp() && completeObjectiveEntry(objectives, campId)) {
+      settleSkips(campId)
+      finishObjective(campId)
+    }
+
     // 7b. Objective arrival — and the fail-forward path, which is an arrival too.
     const contractFailedForward =
       activeNode !== null &&
@@ -6354,7 +6547,10 @@ export function runHarness(options: RunOptions): RunReport {
         getContractStatus(contracts, activeNode),
         findContractTemplate(activeNode.contract),
       )
-    if (activeNode && objectiveSite && (activeNode.kind === 'arrive' || contractFailedForward)) {
+    if (
+      activeNode && objectiveSite && !campHeld &&
+      (activeNode.kind === 'arrive' || contractFailedForward)
+    ) {
       if (
         isWithinObjectiveArrival(player.x, player.z, objectiveSite.x, objectiveSite.z)
       ) {
@@ -6495,7 +6691,7 @@ export function runHarness(options: RunOptions): RunReport {
   contractMetrics.rewardedObjectives = countRewardedObjectives(objectives)
   contractMetrics.strandedAtEnd =
     !campaignObjectivesComplete(objectives) &&
-    getReadyObjectiveNodes(blueprint, options.faction, objectives).length === 0
+    getReadyObjectiveNodes(blueprint, options.faction, objectives, beats.gate()).length === 0
 
   melee.whiffRate =
     melee.beatsResolved > 0 ? melee.beatsWhiffed / melee.beatsResolved : 0
@@ -6551,6 +6747,7 @@ export function runHarness(options: RunOptions): RunReport {
     contracts: contractBalance,
     rumourFeasibility: feasibility,
     encounters: encounterMetrics,
+    beats: beats.metrics(elapsed),
   }
 
   return {
@@ -6575,6 +6772,8 @@ export function runHarness(options: RunOptions): RunReport {
     escalation,
     regionWindow,
     commanders: commanderModel,
+    caravanBeats: caravanBeatModel,
+    beatPolicy,
     staging: stagingModel,
     hz,
     outcome,
@@ -7262,6 +7461,30 @@ export interface BalanceCell {
   meanGoldSpent: number
   meanHealed: number
   healedBySource: Record<string, number>
+  /** W2-1 — the finale's pacing tier, run by run, as a histogram; `none` when no finale opened. */
+  finaleTiers: Record<string, number>
+  /** W2-2, PR B — the caravans, totalled over the cell's runs; null while the spine is off. */
+  beats: {
+    runs: number
+    /** Settled carts per run (resolved, lost, escaped, unavailable), mean. */
+    settledMean: number
+    endings: Record<string, number>
+    verbs: Record<string, number>
+    /** The camp's offer taken, by where it stood and what it carried, and how those runs went. */
+    openings: Record<string, number>
+    winsByOpening: Record<string, number>
+    robbed: number
+    escorted: number
+    gateOpenedP50: number
+    campClosedP50: number
+    progressStepsMean: number
+    stagingStalls: number
+    stagingStallSeconds: number
+    stagingFailForwards: number
+    recruits: number
+    thinned: number
+    meanGold: number
+  } | null
 }
 
 export interface BalanceSweepReport {
@@ -7422,6 +7645,74 @@ function summarizeCell(
     addInto(healedBySource, balance.sustain.healedBySource, 1 / runs)
   }
   rumours.beyondReachShare = rumours.offered > 0 ? rumours.beyondReach / rumours.offered : 0
+  const finaleTiers: Record<string, number> = {}
+  for (const report of reports) {
+    const key = report.balance.finaleTier === null ? 'none' : String(report.balance.finaleTier)
+    finaleTiers[key] = (finaleTiers[key] ?? 0) + 1
+  }
+  const beatReports = reports.filter((report) => report.balance.beats !== null)
+  const beats: BalanceCell['beats'] = beatReports.length === 0 ? null : (() => {
+    const endings: Record<string, number> = {}
+    const verbs: Record<string, number> = {}
+    const openings: Record<string, number> = {}
+    const winsByOpening: Record<string, number> = {}
+    const gates: number[] = []
+    const camps: number[] = []
+    let settled = 0
+    let robbed = 0
+    let escorted = 0
+    let steps = 0
+    let stalls = 0
+    let stallSeconds = 0
+    let failForwards = 0
+    let recruits = 0
+    let thinned = 0
+    let gold = 0
+    for (const report of beatReports) {
+      const metrics = report.balance.beats as BeatMetrics
+      addInto(endings, metrics.endings)
+      addInto(verbs, metrics.verbs)
+      settled += ['resolved', 'lost', 'escaped', 'unavailable']
+        .reduce((sum, phase) => sum + (metrics.endings[phase] ?? 0), 0)
+      for (const key of metrics.opening
+        ? [metrics.opening.onTrunk ? 'trunk' : 'branch', metrics.opening.tier]
+        : ['none']) {
+        openings[key] = (openings[key] ?? 0) + 1
+        if (report.outcome === 'victory') winsByOpening[key] = (winsByOpening[key] ?? 0) + 1
+      }
+      robbed += report.balance.caravans.robbedBy.caravanBeat ?? 0
+      escorted += report.balance.caravans.escortedBy.caravanBeat ?? 0
+      if (metrics.gateOpenedAt !== null) gates.push(metrics.gateOpenedAt)
+      if (metrics.campClosedAt !== null) camps.push(metrics.campClosedAt)
+      steps += metrics.progressSteps
+      stalls += metrics.stagingStalls
+      stallSeconds += metrics.stagingStallSeconds
+      failForwards += metrics.stagingFailForwards
+      recruits += metrics.recruits
+      thinned += metrics.garrisonThinned ? 1 : 0
+      gold += metrics.goldEarned
+    }
+    const count = beatReports.length
+    return {
+      runs: count,
+      settledMean: settled / count,
+      endings,
+      verbs,
+      openings,
+      winsByOpening,
+      robbed,
+      escorted,
+      gateOpenedP50: percentile(gates, 0.5),
+      campClosedP50: percentile(camps, 0.5),
+      progressStepsMean: steps / count,
+      stagingStalls: stalls,
+      stagingStallSeconds: stallSeconds,
+      stagingFailForwards: failForwards,
+      recruits,
+      thinned,
+      meanGold: gold / count,
+    }
+  })()
   return {
     policy,
     faction,
@@ -7457,5 +7748,7 @@ function summarizeCell(
     meanGoldSpent: goldSpent / runs,
     meanHealed: healed / runs,
     healedBySource,
+    finaleTiers,
+    beats,
   }
 }

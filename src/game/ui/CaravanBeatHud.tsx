@@ -8,12 +8,23 @@ import {
   Package,
   Send,
   Shield,
+  Split,
   Swords,
   UserPlus,
   UsersRound,
   type LucideIcon,
 } from 'lucide-react'
-import type { CaravanBeatOutcome, CaravanBeatView } from '../world/CaravanBeats'
+import {
+  CARAVAN_OFFER_TAKE_LABEL,
+  CARAVAN_OFFER_TAKEN_LABEL,
+  CARAVAN_OPENING_HINT,
+  describeCaravanOpeningLead,
+  describeCaravanOpeningRule,
+  describeCaravanOpeningTitle,
+} from '../content/gameCopy'
+import type { Faction } from '../types'
+import type { CaravanBeatOutcome, CaravanBeatView, CaravanOpeningView } from '../world/CaravanBeats'
+import { ChoicePrice } from './ChoicePrice'
 import './bridge-ambush.css'
 
 const CHOICE_ICONS: Record<CaravanBeatOutcome, LucideIcon> = {
@@ -41,11 +52,29 @@ export function CaravanBeatHud({ view, paused, onChoose, onSquad, onTrack, inJou
   inJournal?: boolean
 }) {
   if (!view) return null
-  if (view.phase === 'unavailable') {
+  if (view.phase === 'unavailable' || view.phase === 'declined') {
     return inJournal ? (
       <section className="journal-consequence" aria-label={view.title}>
         <h3>{view.title}</h3>
         <p>{view.description}</p>
+      </section>
+    ) : null
+  }
+  // PR B — a road beat before the camp's choice is only a line in the journal.
+  if (view.dormant) {
+    return inJournal ? (
+      <section className="bridge-encounter dormant" data-phase="dormant" data-placement={view.placement}
+        aria-label={view.title}>
+        <header>
+          <Package aria-hidden="true" />
+          <h2>{view.title}</h2>
+        </header>
+        <p className="bridge-stage-copy">{view.description}</p>
+        <span className="bridge-route-label">
+          {view.regionLabel} · {view.role === 'defend' ? 'налётчики' : 'охрана'}: {view.escort}
+        </span>
+        <ChoicePrice payout={view.payout} />
+        {view.alternatives ? <p className="bridge-hint caravan-offer-alternatives">{view.alternatives}</p> : null}
       </section>
     ) : null
   }
@@ -75,6 +104,12 @@ export function CaravanBeatHud({ view, paused, onChoose, onSquad, onTrack, inJou
       ) : null}
       {view.phase === 'approach' ? (
         <span className="bridge-route-label">{view.routeLabel ?? 'Направление по прямой, не дорога'}</span>
+      ) : null}
+      {view.phase === 'approach' ? (
+        <>
+          <ChoicePrice payout={view.payout} travel={view.travel} />
+          {view.alternatives ? <p className="bridge-hint caravan-offer-alternatives">{view.alternatives}</p> : null}
+        </>
       ) : null}
       {view.phase === 'fighting' ? (
         <div className="bridge-combat-status">
@@ -115,6 +150,61 @@ export function CaravanBeatHud({ view, paused, onChoose, onSquad, onTrack, inJou
           })}
         </div>
       ) : null}
+    </section>
+  )
+}
+
+/**
+ * W2-2, PR B — «Суть такова: два корована». The run's first decision, in the field while it is
+ * open and in the journal for a longer look. Each offer is priced in W2-3's card language
+ * (`ChoicePrice`: what its first verb pays, the walk, the known danger) with the side's other
+ * verbs said after it. «Взяться» points the compass at one; walking up to either cart is the
+ * same choice. A planning action, so it stays available while the game is paused.
+ */
+export function CaravanOpeningCard({ opening, faction, onTake, inJournal = false }: {
+  opening: CaravanOpeningView | null
+  faction: Faction
+  onTake: (beatId: string) => void
+  inJournal?: boolean
+}) {
+  if (!opening || opening.offers.length === 0) return null
+  const count = opening.offers.length
+  const title = describeCaravanOpeningTitle(count)
+  return (
+    <section className={`bridge-encounter caravan-opening${inJournal ? ' in-journal' : ''}`}
+      data-phase="opening" aria-label={title}>
+      <header>
+        <Split aria-hidden="true" />
+        <h2>{title}</h2>
+      </header>
+      <p className="bridge-stage-copy">
+        {inJournal ? describeCaravanOpeningLead(faction, count) : describeCaravanOpeningRule(faction, count)}
+      </p>
+      <div className="caravan-offers">
+        {opening.offers.map((offer) => {
+          const chosen = opening.chosenId === offer.id
+          return (
+            <article className={`caravan-offer${chosen ? ' chosen' : ''}`} key={offer.id}>
+              <div className="caravan-offer-line">
+                <span className="chronicle-square">{offer.regionLabel}</span>{' '}
+                <strong>{offer.title}</strong>
+              </div>
+              <span className="bridge-route-label">
+                {offer.role === 'defend' ? 'налётчики' : 'охрана'}: {offer.escort}
+              </span>
+              <ChoicePrice payout={offer.payout} travel={offer.travel} />
+              {offer.alternatives ? (
+                <p className="bridge-hint caravan-offer-alternatives">{offer.alternatives}</p>
+              ) : null}
+              <button type="button" className="bridge-squad-button caravan-offer-take"
+                aria-pressed={chosen} onClick={() => onTake(offer.id)}>
+                <Navigation2 aria-hidden="true" /> {chosen ? CARAVAN_OFFER_TAKEN_LABEL : CARAVAN_OFFER_TAKE_LABEL}
+              </button>
+            </article>
+          )
+        })}
+      </div>
+      <p className="bridge-hint">{CARAVAN_OPENING_HINT}</p>
     </section>
   )
 }

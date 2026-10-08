@@ -46,6 +46,7 @@ import {
 import { createChronicleRegions, createChronicleState } from '../src/game/world/Chronicle.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { createBridgeAmbushPlan } from '../src/game/world/BridgeAmbush.ts'
+import { planCaravanSpine } from '../src/game/world/CaravanSpine.ts'
 import type { ActiveRunSaveV3, JsonValue } from '../src/game/run/runTypes.ts'
 import { normalizeActiveRunSaveV3 } from '../src/game/run/storage.ts'
 import { RandomStream } from '../src/game/random/RandomStream.ts'
@@ -408,9 +409,45 @@ test('the reviewed villain leaves the B3 treasure on the C2 bridge road, not tow
   assert.deepEqual(new ExpeditionPlanner(blueprint).buildView(poisoned), view)
 })
 
-test('the launch compass points straight at the camp for every faction and fixed seed', () => {
-  let launches = 0
+/**
+ * A legacy run's launch: a save from before the caravan spine, standing where `view` launched,
+ * with the camp still to reach and no caravans in its director state.
+ */
+function legacyLaunch(
+  blueprint: ReturnType<typeof generateWorld>,
+  config: { seed: number; generatorVersion: number; faction: Faction; selectedBoonId: string },
+  view: ReturnType<typeof buildInitialGameView>,
+): ReturnType<typeof buildInitialGameView> {
+  const start = blueprint.sites.find((site) => site.id === blueprint.starts[config.faction])
+  assert.ok(start)
+  const marker = view.markers[0]
+  const restored: ActiveRunSaveV3 = {
+    version: 3, runId: 'legacy-launch', config: { ...config, generatorVersion: 1 }, status: 'active',
+    startedAt: '2026-09-05T12:00:00.000Z', updatedAt: '2026-09-05T12:00:00.000Z',
+    blueprintFingerprint: blueprint.fingerprint,
+    currentLocation: { regionId: start.regionId, localPosition: [0, 0, 0], worldPosition: [marker.x, 0, marker.z],
+      heading: marker.heading ?? 0 },
+    player: { health: view.health, maxHealth: view.maxHealth, stamina: view.stamina, maxStamina: view.maxStamina,
+      gold: view.gold, kills: 0, damage: view.damage, body: view.body,
+      objectives: createGeneratedObjectives(blueprint, config.faction), upgrades: view.upgrades },
+    discoveredRegionIds: [start.regionId], regionDeltas: {}, directorState: {}, eventState: {},
+    chronicleState: createChronicleState(), rngStates: { combat: 1, event: 2, director: 3, loot: 4 },
+    achievementRunState: { runId: 'legacy-launch', faction: config.faction, startedAt: '2026-09-05T12:00:00.000Z',
+      kills: 0, killsSinceDamage: 0, bestKillStreak: 0, damageTaken: 0, injuries: 0, limbsLost: 0, goldEarned: 0,
+      purchases: 0, objectivesCompleted: 0, eventsCompleted: 0, abilitiesUsed: 0, shieldBlocks: 0, squadCommands: 0,
+      caravansRobbed: 0, zonesVisited: [view.zone], eventKindsCompleted: [], unlockedIds: [], result: null,
+      elapsedAtEnd: 0, healthAtEnd: 0 },
+  }
+  return buildInitialGameView({ blueprint, config, restored })
+}
+
+test('the launch compass leads a spine run to its nearest offer by road and a legacy run straight to its camp', () => {
+  let legacyLaunches = 0
   let roadTurned = 0
+  let offerLaunches = 0
+  let campLaunches = 0
+  let notFirstOffer = 0
+  let crowMisleads = 0
   for (const seed of FIXED_SEEDS) {
     const blueprint = generateWorld(seed)
     const graph = getExpeditionGraph(blueprint)
@@ -418,11 +455,37 @@ test('the launch compass points straight at the camp for every faction and fixed
       const context = `${seed}/${faction}`
       const config = { seed, generatorVersion: blueprint.generatorVersion, faction, selectedBoonId: 'provisions' }
       const view = buildInitialGameView({ blueprint, config, restored: undefined })
-      const { expedition } = view
       const player = { x: view.markers[0].x, z: view.markers[0].z }
       const heading = view.markers[0].heading ?? 0
       const camp = blueprint.objectives[faction].nodes.find((node) => node.siteId === blueprint.starts[faction])
-      assert.ok(camp && expedition.target && expedition.guidance, context)
+      assert.ok(camp, context)
+
+      // W2-2, PR B — a spine run's camp is decided at a cart, so the compass leads to the camp's
+      // nearest offer by road, recomputed here from the plans; ties keep the plan's order.
+      const offers = planCaravanSpine(blueprint, faction).plans.filter((plan) => plan.slot === 'offer')
+      if (offers.length > 0) {
+        const road = offers.map((plan) =>
+          estimateChoiceTravel(blueprint, player, plan.cargoStart, unknown, PLAYER_WALK_SPEED).meters)
+        const nearest = road.indexOf(Math.min(...road))
+        const crow = offers.map((plan) => Math.hypot(plan.cargoStart.x - player.x, plan.cargoStart.z - player.z))
+        if (crow.indexOf(Math.min(...crow)) !== nearest) crowMisleads += 1
+        assert.equal(view.expedition.mode, 'campaign', context)
+        assert.equal(view.expedition.target?.kind, 'caravanBeat', context)
+        assert.equal(view.expedition.target?.id, offers[nearest].id, context)
+        assert.deepEqual(compassProblems(graph, view.expedition, player), [], context)
+        if (nearest > 0) notFirstOffer += 1
+        offerLaunches += 1
+      } else {
+        // A world with no offer has no choice to hold, and launches as it always did.
+        assert.equal(view.expedition.target?.id, camp.id, context)
+        campLaunches += 1
+      }
+
+      // Control: a run saved before the spine keeps W1-3's rule, straight at the camp.
+      const legacy = legacyLaunch(blueprint, config, view)
+      const { expedition } = legacy
+      assert.equal(legacy.caravanBeats.opening ?? null, null, context)
+      assert.ok(expedition.target && expedition.guidance, context)
       assert.equal(expedition.target.id, camp.id, context)
       assert.equal(expedition.route?.status, 'direct', context)
       assert.deepEqual(compassProblems(graph, expedition, player), [], context)
@@ -433,11 +496,17 @@ test('the launch compass points straight at the camp for every faction and fixed
       assert.equal(road.status, 'road', context)
       const detour = buildExpeditionGuidance(graph, road, expedition.target, player, heading)
       if (turnBetween(detour.bearing, straight) > Math.PI / 18) roadTurned += 1
-      launches += 1
+      legacyLaunches += 1
     }
   }
-  assert.equal(launches, 600)
+  assert.equal(legacyLaunches, 600)
   assert.ok(roadTurned >= 400, `the road-only arrow must visibly miss the camp, but missed it in ${roadTurned}`)
+  assert.equal(offerLaunches + campLaunches, 600)
+  assert.ok(offerLaunches >= 590, `a spine launch leads to an offer in almost every world, got ${offerLaunches}`)
+  // Sensitivity: a compass that always took the trunk's offer, or the nearer one as the crow
+  // flies, would fail here.
+  assert.ok(notFirstOffer >= 60, `the nearer offer is often the second one, got ${notFirstOffer}`)
+  assert.ok(crowMisleads >= 50, `the crow's nearest offer is not always the road's, got ${crowMisleads}`)
 })
 
 test('a short target across water keeps a bridge road or a labelled bearing, never a straight approach', () => {
