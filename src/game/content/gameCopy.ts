@@ -1196,8 +1196,26 @@ export const CARAVAN_SPINE_STAKE =
 
 export const CARAVAN_OPENING_TITLE = 'Суть такова: два корована'
 
+/**
+ * The opening card's title for the offers still open. A world without a second road (a few
+ * in a hundred), or one whose other cart could not be staged, has a single caravan to take.
+ */
+export function describeCaravanOpeningTitle(offers: number): string {
+  return offers === 1 ? 'Суть такова: один корован' : CARAVAN_OPENING_TITLE
+}
+
 /** The opening card's first line, in each side's words. */
-export function describeCaravanOpeningLead(faction: Faction): string {
+export function describeCaravanOpeningLead(faction: Faction, offers = 2): string {
+  if (offers === 1) {
+    switch (faction) {
+      case 'elf':
+        return 'Мимо домиков деревяных идёт один корован. С него поход и начнётся.'
+      case 'guard':
+        return 'Командир дал один приказ. С него служба и начнётся.'
+      case 'villain':
+        return 'Сам себе командир: на дороге один корован. С него и начнём.'
+    }
+  }
   switch (faction) {
     case 'elf':
       return 'Мимо домиков деревяных идут два корована. Возьмёшься за один — второй уйдёт своей дорогой.'
@@ -1210,11 +1228,26 @@ export function describeCaravanOpeningLead(faction: Faction): string {
 
 export const CARAVAN_OPENING_HINT =
   'Нажми «Взяться» или просто иди к телеге: к какой подойдёшь, та и выбрана.'
+
+/** The field card's one line, what taking one costs; the journal's card says it at length. */
+export function describeCaravanOpeningRule(faction: Faction, offers = 2): string {
+  if (offers === 1) return faction === 'guard' ? 'Приказ один — с него и начнёшь.' : 'Корован один — с него и начнёшь.'
+  return faction === 'guard' ? 'Возьмёшься за один — второй отдадут.' : 'Возьмёшься за один — второй уйдёт.'
+}
+
 export const CARAVAN_OFFER_TAKE_LABEL = 'Взяться'
 export const CARAVAN_OFFER_TAKEN_LABEL = 'Взялся'
 
-export function describeCaravanOfferChosen(title: string): string {
-  return `Взялся: «${title}». Компас ведёт к телеге.`
+/** «Взяться», with the square: the camp's two carts often share a road's name. */
+export function describeCaravanOfferChosen(title: string, regionLabel: string): string {
+  return `Взялся: «${title}» в ${regionLabel}. Компас ведёт к телеге.`
+}
+
+/** Said once when the launch compass has brought the player to a camp still choosing. */
+export function describeCaravanCampHeld(faction: Faction): string {
+  return faction === 'guard'
+    ? 'Приказ сам себя не выберет: жми «Взяться» в карточке или иди прямо к обозу — к какому подойдёшь, тот и твой.'
+    : 'Суть такова: корован тут не выбирают. Жми «Взяться» в карточке или иди прямо к телеге — к какой подойдёшь, та и твоя.'
 }
 
 export function describeCaravanOffersDeclined(faction: Faction): string {
@@ -2307,7 +2340,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'info',
   },
   caravanSpine: {
-    text: 'Корован выбран, второй ушёл своей дорогой. Штурм откроется после двух корованов, чем бы они ни кончились: следующие ждут на дороге к цели, компас подскажет.',
+    text: 'Корован выбран — поход начался. Штурм откроется после двух корованов, чем бы они ни кончились: следующие ждут на дороге к цели, компас подскажет.',
     tone: 'info',
   },
   bridgeAmbush: {

@@ -203,7 +203,7 @@
 
 .caravan-offer {
   border: 1px solid var(--cp-border-strong);
-  border-radius: 8px;
+  border-radius: 6px;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
@@ -237,6 +237,47 @@
   color: var(--cp-text-soft);
 }
 
+/* The field card is the choice's short form at every size: the other verbs and the how-to
+   line wait in the journal, so both offers and both «Взяться» stand above the fold at 768 px.
+   Titles take the narrow HUD's 0.85rem, and a road's name wraps after its square, not under it. */
+.top-hud-side > .caravan-opening {
+  padding: 0.75rem;
+}
+
+.top-hud-side > .caravan-opening h2,
+.top-hud-side > .caravan-opening .caravan-offer-line strong {
+  font-size: 0.85rem;
+}
+
+.top-hud-side > .caravan-opening .caravan-offer-line {
+  display: block;
+}
+
+.top-hud-side > .caravan-opening .caravan-offer-line .chronicle-square {
+  margin-right: 0.2rem;
+}
+
+.top-hud-side > .caravan-opening .bridge-stage-copy {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  margin-top: 0.5rem;
+}
+
+.top-hud-side > .caravan-opening .caravan-offers {
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.top-hud-side > .caravan-opening .caravan-offer {
+  gap: 0.25rem;
+  padding: 0.5rem;
+}
+
+.top-hud-side > .caravan-opening .caravan-offer-alternatives,
+.top-hud-side > .caravan-opening > .bridge-hint {
+  display: none;
+}
+
 @media (max-width: 720px), (pointer: coarse) {
   /* A narrow field card keeps each offer's name, its pay and its button, and an approach
      card its pay; the walk, the danger and the other verbs wait in the journal. */
@@ -248,5 +289,9 @@
   .top-hud-side > .bridge-encounter[data-phase="approach"] .choice-price-route,
   .top-hud-side > .bridge-encounter[data-phase="approach"] .caravan-offer-alternatives {
     display: none;
+  }
+
+  .top-hud-side > .caravan-opening {
+    padding: 0.6rem;
   }
 }

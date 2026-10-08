@@ -18,8 +18,9 @@ import {
   CARAVAN_OFFER_TAKE_LABEL,
   CARAVAN_OFFER_TAKEN_LABEL,
   CARAVAN_OPENING_HINT,
-  CARAVAN_OPENING_TITLE,
   describeCaravanOpeningLead,
+  describeCaravanOpeningRule,
+  describeCaravanOpeningTitle,
 } from '../content/gameCopy'
 import type { Faction } from '../types'
 import type { CaravanBeatOutcome, CaravanBeatView, CaravanOpeningView } from '../world/CaravanBeats'
@@ -167,21 +168,25 @@ export function CaravanOpeningCard({ opening, faction, onTake, inJournal = false
   inJournal?: boolean
 }) {
   if (!opening || opening.offers.length === 0) return null
+  const count = opening.offers.length
+  const title = describeCaravanOpeningTitle(count)
   return (
     <section className={`bridge-encounter caravan-opening${inJournal ? ' in-journal' : ''}`}
-      data-phase="opening" aria-label={CARAVAN_OPENING_TITLE}>
+      data-phase="opening" aria-label={title}>
       <header>
         <Split aria-hidden="true" />
-        <h2>{CARAVAN_OPENING_TITLE}</h2>
+        <h2>{title}</h2>
       </header>
-      <p className="bridge-stage-copy">{describeCaravanOpeningLead(faction)}</p>
+      <p className="bridge-stage-copy">
+        {inJournal ? describeCaravanOpeningLead(faction, count) : describeCaravanOpeningRule(faction, count)}
+      </p>
       <div className="caravan-offers">
         {opening.offers.map((offer) => {
           const chosen = opening.chosenId === offer.id
           return (
             <article className={`caravan-offer${chosen ? ' chosen' : ''}`} key={offer.id}>
               <div className="caravan-offer-line">
-                <span className="chronicle-square">{offer.regionLabel}</span>
+                <span className="chronicle-square">{offer.regionLabel}</span>{' '}
                 <strong>{offer.title}</strong>
               </div>
               <span className="bridge-route-label">

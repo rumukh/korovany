@@ -59,8 +59,13 @@ What each verb pays and writes is PR A's table (`caravanBeatReward`, `caravanBea
 ## 4. The camp's choice
 
 - A spine run's first objective reads «Суть такова: выбрать корован» and is held: standing at the camp closes nothing.
+  W1-3's launch compass still points there, so the first time the player stands at the camp with no caravan taken, a
+  notice says once where the choice is made instead.
 - The opening card prices both offers in W2-3's language (`ChoicePrice`): what the side's first verb pays, the walk,
-  the known danger, then the side's other verbs as words, so the card never adds alternatives up.
+  the known danger, then the side's other verbs as words, so the card never adds alternatives up. On the field it is
+  the short form: a one-line rule, and for each offer its square, guard, pay, walk and «Взяться», which fits both
+  offers above the fold at 1366×768. The journal's card adds the side's lead, the other verbs and how to choose. A
+  world with one offer left (a single-offer world, or one whose other cart could not be staged) says «один корован».
 - «Взяться» points the compass at one offer. Walking up to either cart is the choice: the cart met first is the one
   taken, and every other offer is declined («за двумя корованами погонишься — ни одного не ограбишь»).
 - The camp's objective closes on the frame the met cart settles, whatever its ending. An offer that cannot be staged
@@ -118,9 +123,10 @@ touched while the camp waits, a chosen offer that is no offer, a stall clock pas
   never-strand simulation, with a gate that counts only robbed carts and an unclamped gate as controls; the camp's
   rules; persistence round trips and refusals; migration and fail-forward.
 - `tests/caravanBeats.test.ts`: the camp, the dormant road, the gate and the finale's spawn, progress steps, the
-  staging seam and the make-way, «Взяться», and the camp's quiet, on the production engine methods. Each guarantee was
-  mutated in the engine and its test failed.
-- `tests/openingInterface.test.ts`: the opening card, the chosen offer, the journal and the gate line.
+  staging seam and the make-way, «Взяться», the held camp's notice, and the camp's quiet, on the production engine
+  methods. Each guarantee was mutated in the engine and its test failed.
+- `tests/openingInterface.test.ts`: the opening card (its short field form, the single-offer copy), the chosen offer,
+  the journal and the gate line.
 - `tests/runHarnessBeats.test.ts` and [the harness](run-harness.md#w2-2-pr-b-the-caravan-spine): in 270 runs a row the
   spine meets about two caravans a run for every side, wins 127 against 134 without it, and lengthens the scripted
   player's median win by 28–55 s. The gate's control never reaches the finale; the walk-away control still does.

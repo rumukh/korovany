@@ -217,6 +217,18 @@ test('PR B — the camp\'s two caravans are priced on the field and in the journ
   assert.equal((card.match(/class="choice-price-payout"/g) ?? []).length, 2)
   assert.match(card, /Плата: \d+ золот/)
   assert.match(card, /Или: \d паёк|Или: \d пайка|Или: \d пайков/)
+  // The field says the rule in one line; the journal's card keeps the side's lead.
+  assert.match(card, /Возьмёшься за один — второй уйдёт\./)
+  assert.doesNotMatch(card, /Мимо домиков деревяных/)
+  // A world with one offer left says one, not two (control: the card above says «второй»).
+  const single = renderToStaticMarkup(createElement(GameScreen, {
+    ...gameProps,
+    view: { ...view, caravanBeats: { ...view.caravanBeats, opening: { ...opening, offers: [opening.offers[0]] } } },
+  }))
+  const lone = single.slice(single.indexOf('class="bridge-encounter caravan-opening"'))
+  assert.match(lone, /Суть такова: один корован/)
+  assert.match(lone, /Корован один — с него и начнёшь\./)
+  assert.doesNotMatch(lone.slice(0, lone.indexOf('</section>')), /второй|два корована/)
   // The finale's line says what it waits on; the gate is the view's, on the finale's own row.
   assert.equal(view.caravanBeats.gate?.open, false)
   assert.match(playing, /Штурм после корованов: 0\/2/)
@@ -236,6 +248,7 @@ test('PR B — the camp\'s two caravans are priced on the field and in the journ
   const missions = journal.slice(journal.indexOf('class="journal-missions"'))
   assert.match(missions, /class="bridge-encounter caravan-opening in-journal"/)
   assert.match(missions, /Идти ~\d+ с/)
+  assert.match(missions, /Мимо домиков деревяных идут два корована/)
 
   // Controls: no choice open, no card; an open gate, no line.
   const settled = renderToStaticMarkup(createElement(GameScreen, {

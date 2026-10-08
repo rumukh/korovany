@@ -154,7 +154,12 @@ with your own side's verb from the letter.
   the walk there, the danger already known, and the side's other verbs. «Взяться» points the
   compass at one, but walking up to either cart is the choice. The cart you meet first is
   the one you took, and the other goes its own way. The camp's objective closes when that
-  cart settles, however it ends.
+  cart settles, however it ends. The launch compass still points at the camp, so standing
+  there with nothing taken says once where the choice is made. The few worlds with one
+  offer, or whose other cart could not be staged, say «один корован», not two. On the
+  field the card is short (the rule, each cart's guard, pay and walk, and «Взяться»), so
+  both offers fit above the fold at 768 px; the journal's card adds the side's lead, its
+  other verbs and how to choose.
 - **The road.** The bridge ambush is always on the road to the finale, and one more cart
   stands on that road past it when the road allows: a forest road in the elves' squares, a
   mountain pass by the villain's fort, an open road elsewhere. Neither is a detour, and

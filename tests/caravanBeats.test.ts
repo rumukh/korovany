@@ -23,6 +23,7 @@ import {
 import {
   CARAVAN_BEAT_PROMPTS,
   describeCaravanBeatOutcome,
+  describeCaravanCampHeld,
   formatPriceFactor,
   formatRegionGridLabel,
 } from '../src/game/content/gameCopy.ts'
@@ -2403,7 +2404,11 @@ test('PR B — «Взяться» points the compass at the chosen caravan, afte
   // Controls first: a road beat is no camp offer.
   assert.equal(invoke<boolean>(value.engine, 'chooseCaravanOffer', crossing.id), false)
   assert.equal(invoke<boolean>(value.engine, 'chooseCaravanOffer', second.id), true)
-  assert.ok(value.notices.some((notice) => notice.startsWith('Взялся:')))
+  // Both offers often share a road's name, so the notice names the square.
+  const square = value.blueprint.regions.find((region) => region.id === second.regionId)
+  assert.ok(square)
+  const label = formatRegionGridLabel(square.coordinate.x, square.coordinate.y)
+  assert.ok(value.notices.some((notice) => notice.startsWith('Взялся:') && notice.includes(`» в ${label}.`)))
   assert.equal(input().leadingCaravanBeatId, second.id)
   const led = planner.buildView(input())
   assert.equal(led.target?.kind, 'caravanBeat')
@@ -2414,6 +2419,39 @@ test('PR B — «Взяться» points the compass at the chosen caravan, afte
   assert.equal(planner.buildView(input()).target?.id, first.id)
   // The dormant bridge is not charted while the camp chooses.
   assert.equal(input().caravanBeats?.some((target) => target.id === crossing.id), false)
+})
+
+test('PR B — standing at the camp closes nothing, and says once where the choice is made', () => {
+  /** The player on the camp's site, on a frame whose zone is the one already recorded. */
+  const atCamp = (value: ReturnType<typeof harness>) => {
+    const camp = invoke<{ siteId: string } | null>(value.engine, 'campNode')
+    assert.ok(camp)
+    const site = getSiteWorldPosition2D(value.blueprint, camp.siteId)
+    assert.ok(site)
+    value.player.position.set(site.x, 0, site.z)
+    Reflect.set(value.engine, 'zoneAtPosition', () => 'neutral')
+    Reflect.set(value.engine, 'lastZone', 'neutral')
+  }
+  const value = harness('elf', 20_260_909, { spine: true })
+  atCamp(value)
+  invoke(value.engine, 'updateMission')
+  invoke(value.engine, 'updateMission')
+  assert.equal(campDone(value), false, 'the launch compass led here, and the camp still waits')
+  assert.equal(value.notices.filter((notice) => notice === describeCaravanCampHeld('elf')).length, 1,
+    'said once, not every frame')
+  // Control: with a caravan taken, the compass leads to its cart; a walk to the camp is the player's own.
+  const taken = harness('elf', 20_260_909, { spine: true })
+  assert.equal(invoke<boolean>(taken.engine, 'chooseCaravanOffer', spineOf(taken).slot('offer')[0].id), true)
+  atCamp(taken)
+  invoke(taken.engine, 'updateMission')
+  assert.equal(campDone(taken), false)
+  assert.equal(taken.notices.includes(describeCaravanCampHeld('elf')), false)
+  // Control: a run without a spine closes its camp on the same arrival and says nothing of it.
+  const legacy = harness('elf')
+  atCamp(legacy)
+  invoke(legacy.engine, 'updateMission')
+  assert.equal(campDone(legacy), true)
+  assert.equal(legacy.notices.includes(describeCaravanCampHeld('elf')), false)
 })
 
 test('PR B — no random event is rolled while the camp chooses its caravan', () => {
