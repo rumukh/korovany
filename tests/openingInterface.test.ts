@@ -166,7 +166,7 @@ const gameProps: ComponentProps<typeof GameScreen> = {
     blueprint: generateWorld(7),
     config: { seed: 7, generatorVersion: 1, faction: 'elf', selectedBoonId: 'provisions' },
   }),
-  worldRef: { current: null }, notices: [], achievementBanner: null, runAchievements: [],
+  worldRef: { current: null }, notices: [], runAchievements: [],
   activeOverlay: null, simulationPaused: false, touchCaptures: new GameplayPointerCaptures(),
   endResult: null, terminalRun: null, onResume: noop, onPause: noop, onSave: noop,
   onAchievements: noop, onMenu: noop, onBuy: noop, onCloseShop: noop,

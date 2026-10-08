@@ -79,7 +79,7 @@ function fixture(mode: HudMode, faction: 'elf' | 'guard' | 'villain' = 'guard'):
       { id: 3, message: 'Предупреждение целиком', tone: 'warning', count: 1 },
       { id: 4, message: 'Опасность целиком', tone: 'danger', count: 1 },
     ],
-    achievementBanner: null, runAchievements: [], activeOverlay: null, simulationPaused: false,
+    runAchievements: [], activeOverlay: null, simulationPaused: false,
     touchCaptures: new GameplayPointerCaptures(), endResult: null, terminalRun: null,
     onResume: noop, onPause: noop, onSave: noop, onAchievements: noop, onMenu: noop,
     onBuy: noop, onCloseShop: noop, onOpenAtlas: noop, onCloseAtlas: noop, onSelectExpedition: noop,
@@ -125,7 +125,7 @@ if (process.env.GFX_NOTICE_COMPONENT_OUTPUT) {
       // W3-6 — the lane depends on the layout, so each case carries the markup for both.
       return { id: `${mode}-${finale ? 'finale' : 'ordinary'}`, mode, finale,
         markup: renderToStaticMarkup(createElement(GameScreen, props)),
-        narrowMarkup: renderToStaticMarkup(createElement(GameScreen, { ...props, narrowHud: true })) }
+        narrowMarkup: renderToStaticMarkup(createElement(GameScreen, { ...props, columnLane: true })) }
     }))
     writeFileSync(output, JSON.stringify({
       kind: 'production-hud-component-layout-v2',
@@ -183,7 +183,7 @@ test('production HUD retains essential combat/navigation/interaction and every n
         assert.ok(side.indexOf('class="notice-stack"') < side.indexOf('compact-hud-disclosure'), 'notices are not buried below optional world news')
       }
       // W3-6 — the narrow layout moves the same single region to the foot of the left column.
-      const narrow = renderToStaticMarkup(createElement(GameScreen, { ...props, narrowHud: true }))
+      const narrow = renderToStaticMarkup(createElement(GameScreen, { ...props, columnLane: true }))
       assert.equal((narrow.match(/class="notice-stack"/g) ?? []).length, 1, `${mode}/${faction}: narrow duplicated the live region`)
       const leftHud = elementSlice(narrow, 'left-hud')
       const mission = elementSlice(narrow, 'mission-hud')
@@ -221,17 +221,48 @@ test('production HUD retains essential combat/navigation/interaction and every n
 })
 
 test('W3-6: a merged notice shows its count to the eye only, in either lane; a single one shows none', () => {
-  for (const narrowHud of [false, true]) {
+  for (const columnLane of [false, true]) {
     const props = fixture('full')
     props.notices = [
       { id: 7, message: 'Нет выносливости.', tone: 'warning', count: 3 },
       { id: 8, message: 'Одна весть.', tone: 'info', count: 1 },
     ]
-    const html = renderToStaticMarkup(createElement(GameScreen, { ...props, narrowHud }))
+    const html = renderToStaticMarkup(createElement(GameScreen, { ...props, columnLane }))
     assert.equal((html.match(/<b class="notice-count" aria-hidden="true">×3<\/b>/g) ?? []).length, 1)
     // Control: the single notice carries no badge, so there is exactly one.
     assert.equal((html.match(/class="notice-count"/g) ?? []).length, 1)
     assert.ok(html.includes('<span>Нет выносливости.</span>'), 'the merged line lost its words')
+  }
+})
+
+test('W3-6b: an achievement and a find are notices in the lane, in every lane, and nothing floats over the HUD', () => {
+  for (const columnLane of [false, true]) {
+    for (const mode of ['full', 'compact'] as const) {
+      const props = fixture(mode)
+      props.notices = [
+        { id: 11, message: 'Достижение открыто · Редкое. Суть такова. Начать первый забег.', tone: 'success', count: 1,
+          art: { kind: 'achievement', rarity: 'rare', label: 'Достижение открыто · Редкое', title: 'Суть такова',
+            detail: 'Начать первый забег.' } },
+        { id: 12, message: 'Легендарная награда. Кошель. +48 золота', tone: 'success', count: 2,
+          art: { kind: 'loot', rarity: 'legendary', label: 'Легендарная награда', title: 'Кошель', detail: '+48 золота' } },
+      ]
+      // The view still carries the latest find, for the hint director; the HUD draws it only
+      // as a notice. Before W3-6b this view alone put a toast over the vitals.
+      props.view.lootToast = { id: 5, rarity: 'legendary', title: 'Кошель', detail: '+48 золота' }
+      const html = renderToStaticMarkup(createElement(GameScreen, { ...props, columnLane }))
+      const stack = elementSlice(html, 'notice-stack')
+      const where = `${mode}/${String(columnLane)}`
+      assert.match(stack, /class="notice success achievement rarity-rare"/, where)
+      assert.match(stack, /class="notice success loot loot-legendary"/, where)
+      assert.ok(stack.includes('<span class="notice-art"><small>Достижение открыто · Редкое</small> ' +
+        '<strong>Суть такова</strong> <span>Начать первый забег.</span></span>'), where)
+      assert.ok(stack.includes('<span class="loot-rarity-shape" aria-hidden="true"><i></i></span>'), where)
+      assert.match(stack, /lucide-trophy/, where)
+      assert.ok(stack.includes('×2'), where)
+      // The words are drawn once, as the art's lines, and not again as the plain message.
+      assert.equal(stack.includes(props.notices[0].message), false, where)
+      assert.doesNotMatch(html, /achievement-banner|loot-toast/, where)
+    }
   }
 })
 

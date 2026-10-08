@@ -3271,53 +3271,65 @@ button {
   }
 }
 
-.loot-toast {
-  --loot-color: var(--cp-text);
-  align-items: center;
-  animation: loot-toast-life 2.4s ease-in-out both;
-  backdrop-filter: blur(14px);
-  background:
-    linear-gradient(
-      120deg,
-      color-mix(in srgb, var(--loot-color) 13%, var(--cp-panel-strong)),
-      var(--cp-panel-strong)
-    );
-  border: 1px solid color-mix(in srgb, var(--loot-color) 58%, var(--cp-border));
-  border-radius: 0.75rem;
-  box-shadow:
-    0 0 22px color-mix(in srgb, var(--loot-color) 16%, transparent),
-    var(--game-card-shadow);
+/* W3-6b — an achievement and a find are notices now, drawn in the lane with the old
+   banner's and toast's three lines, so neither floats over the vitals or the first notice.
+   The tone keeps its border; the rarity colours the icon and the small line. */
+.notice.achievement {
+  --notice-art-color: var(--achievement-color);
+}
+
+.notice.achievement svg {
+  color: var(--achievement-color);
+}
+
+.notice.loot {
+  --notice-art-color: var(--loot-color);
+}
+
+.notice .loot-rarity-shape {
+  flex: 0 0 auto;
+}
+
+.notice-art {
   display: grid;
-  gap: 0.72rem;
-  grid-template-columns: auto 1fr;
-  left: 50%;
-  max-width: min(24rem, calc(100% - 2rem));
-  padding: 0.72rem 0.9rem;
-  pointer-events: none;
-  position: absolute;
-  top: 6.4rem;
-  transform: translateX(-50%);
-  width: max-content;
-  z-index: 32;
+  gap: 0.08rem;
+  min-width: 0;
 }
 
-.game-screen.simulation-paused .loot-toast {
-  animation-play-state: paused;
+.notice-art small {
+  color: var(--notice-art-color);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
-.loot-toast.loot-common {
+.notice-art strong {
+  color: var(--cp-text);
+  font-weight: 800;
+}
+
+.notice-art > span {
+  color: var(--cp-text-muted);
+}
+
+.notice.loot .notice-art > span {
+  font-family: Consolas, "Courier New", Courier, monospace;
+}
+
+.loot-common {
   --loot-color: var(--cp-text);
 }
 
-.loot-toast.loot-uncommon {
+.loot-uncommon {
   --loot-color: var(--cp-success);
 }
 
-.loot-toast.loot-rare {
+.loot-rare {
   --loot-color: var(--cp-link);
 }
 
-.loot-toast.loot-legendary {
+.loot-legendary {
   --loot-color: var(--cp-warning);
 }
 
@@ -3374,47 +3386,6 @@ button {
   clip-path: polygon(50% 0%, 61% 33%, 96% 15%, 74% 50%, 100% 66%, 64% 68%, 50% 100%, 37% 68%, 0% 66%, 26% 50%, 4% 15%, 39% 33%);
   height: 2rem;
   width: 2rem;
-}
-
-.loot-toast-copy {
-  display: grid;
-  gap: 0.08rem;
-  min-width: 0;
-}
-
-.loot-toast-copy small {
-  color: var(--loot-color);
-  font-size: 0.54rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.loot-toast-copy strong {
-  color: var(--cp-text);
-  font-size: 0.78rem;
-}
-
-.loot-toast-copy > span {
-  color: var(--cp-text-muted);
-  font-family: Consolas, "Courier New", Courier, monospace;
-  font-size: 0.64rem;
-}
-
-@keyframes loot-toast-life {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -0.6rem) scale(0.94);
-  }
-  12%,
-  82% {
-    opacity: 1;
-    transform: translate(-50%, 0) scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: translate(-50%, -0.2rem) scale(0.98);
-  }
 }
 
 .crosshair {
@@ -4220,87 +4191,6 @@ kbd {
   margin-top: 1.35rem;
 }
 
-.achievement-banner {
-  align-items: center;
-  animation: achievement-in 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  backdrop-filter: blur(12px);
-  background:
-    linear-gradient(
-      120deg,
-      color-mix(in srgb, var(--achievement-color) 12%, var(--cp-panel-strong)),
-      var(--cp-panel-strong)
-    );
-  border: 1px solid color-mix(in srgb, var(--achievement-color) 55%, var(--cp-border));
-  border-radius: 0.8rem;
-  box-shadow:
-    0 0 24px color-mix(in srgb, var(--achievement-color) 18%, transparent),
-    var(--cp-shadow);
-  color: var(--cp-text);
-  display: grid;
-  gap: 0.85rem;
-  grid-template-columns: auto 1fr;
-  left: 50%;
-  max-width: min(31rem, calc(100% - 2rem));
-  padding: 0.85rem 1rem;
-  /* W3-6 — a trophy is read, not pressed: it never takes the tap meant for a control under it. */
-  pointer-events: none;
-  position: absolute;
-  top: 1rem;
-  transform: translateX(-50%);
-  width: max-content;
-  z-index: 70;
-}
-
-.achievement-banner-icon {
-  align-items: center;
-  background: color-mix(in srgb, var(--achievement-color) 16%, var(--cp-surface));
-  border: 1px solid color-mix(in srgb, var(--achievement-color) 38%, transparent);
-  border-radius: 50%;
-  color: var(--achievement-color);
-  display: flex;
-  height: 3rem;
-  justify-content: center;
-  width: 3rem;
-}
-
-.achievement-banner-icon svg {
-  height: 1.45rem;
-  width: 1.45rem;
-}
-
-.achievement-banner span {
-  color: var(--achievement-color);
-  display: block;
-  font-size: 0.62rem;
-  font-weight: 800;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.achievement-banner strong {
-  display: block;
-  font-size: 1rem;
-  margin-top: 0.12rem;
-}
-
-.achievement-banner p {
-  color: var(--cp-text-muted);
-  font-size: 0.72rem;
-  line-height: 1.35;
-  margin-top: 0.18rem;
-}
-
-@keyframes achievement-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -1rem) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(-50%) scale(1);
-  }
-}
-
 .achievement-backdrop {
   position: fixed;
   z-index: 120;
@@ -4710,11 +4600,6 @@ kbd {
     min-height: 11rem;
   }
 
-  .notice-stack {
-    top: 5.7rem;
-    width: min(26rem, calc(100% - 2rem));
-  }
-
   .left-hud {
     top: 6.1rem;
   }
@@ -4738,7 +4623,6 @@ kbd {
     --mobile-objectives-left: max(0.55rem, env(safe-area-inset-left, 0px));
     --mobile-touch-controls-height: 8.85rem;
     --mobile-prompt-height: 5.5rem;
-    --mobile-notice-status-reserve: 15rem;
   }
 
   .achievement-gallery {
@@ -4764,25 +4648,6 @@ kbd {
 
   .achievement-grid {
     grid-template-columns: 1fr;
-  }
-
-  .achievement-banner {
-    left: 0.55rem;
-    max-width: calc(100% - 1.1rem);
-    top: 5.3rem;
-    transform: none;
-    width: calc(100% - 1.1rem);
-  }
-
-  @keyframes achievement-in {
-    from {
-      opacity: 0;
-      transform: translateY(-0.8rem) scale(0.97);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1);
-    }
   }
 
   .menu-screen {
@@ -5202,52 +5067,6 @@ kbd {
     grid-template-columns: 1fr 1fr;
   }
 
-  /* W3-6 — no lane over this screen is free of controls, and W2-2's cards fill the right
-     column, so both HUD modes keep the one live notice region at the foot of the left
-     column, below the mission panel. The panel yields its height while a notice shows; its
-     content stays put and scrolls. On very short screens the reserve keeps the vitals card
-     and squad strip whole, and the notices scroll instead. At most one notice and one
-     first-time line show, newest on top, so a notice already up never moves. */
-  .game-screen[data-hud] .left-hud > .notice-stack {
-    flex: 0 0 auto;
-    max-height: max(4.5rem, calc(100% - var(--mobile-notice-status-reserve)));
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    pointer-events: auto;
-    position: static;
-    scrollbar-width: thin;
-    touch-action: pan-y;
-    transform: none;
-    width: 100%;
-  }
-
-  /* Empty, the lane leaves the column's flow but stays in the accessibility tree, so the
-     first notice into it is still announced: a live region that is `display: none` until
-     it has content is often missed by screen readers. */
-  .game-screen[data-hud] .left-hud > .notice-stack:empty {
-    clip-path: inset(50%);
-    height: 1px;
-    overflow: hidden;
-    pointer-events: none;
-    position: absolute;
-    width: 1px;
-  }
-
-  .game-screen[data-hud] .left-hud > .notice-stack .notice {
-    overflow-wrap: anywhere;
-    padding: 0.4rem 0.6rem;
-  }
-
-  .game-screen[data-zone] .left-hud:has(> .notice-stack > .notice) > .mission-hud {
-    flex-basis: 0;
-    min-height: 0;
-  }
-
-  .loot-toast {
-    top: 8rem;
-  }
-
   .bottom-hud {
     bottom: 0.55rem;
     left: 50%;
@@ -5392,11 +5211,70 @@ kbd {
   }
 }
 
+/* W3-6, W3-6b — the column lane. A phone, a touch screen and a window up to 1000px wide
+   have no lane over the play area that is free of the HUD: on phones every lane holds a
+   control, and between 721 and 1000px the centred lane reached over the left column. W2-2's
+   cards fill the right column. So both HUD modes keep the one live notice region at the
+   foot of the left column, below the mission panel. The panel yields its height while a
+   notice shows; its content stays put and scrolls. On short screens the reserve keeps the
+   vitals card and squad strip whole, and the notices scroll instead. At most one notice and
+   one first-time line show, newest on top, so a notice already up never moves. */
+@media (max-width: 1000px), (pointer: coarse) {
+  .game-screen {
+    --notice-status-reserve: 15rem;
+  }
+
+  .game-screen[data-hud] .left-hud > .notice-stack {
+    flex: 0 0 auto;
+    max-height: max(4.5rem, calc(100% - var(--notice-status-reserve)));
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    pointer-events: auto;
+    position: static;
+    scrollbar-width: thin;
+    touch-action: pan-y;
+    transform: none;
+    width: 100%;
+  }
+
+  /* Empty, the lane leaves the column's flow but stays in the accessibility tree, so the
+     first notice into it is still announced: a live region that is `display: none` until
+     it has content is often missed by screen readers. */
+  .game-screen[data-hud] .left-hud > .notice-stack:empty {
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    pointer-events: none;
+    position: absolute;
+    width: 1px;
+  }
+
+  .game-screen[data-hud] .left-hud > .notice-stack .notice {
+    overflow-wrap: anywhere;
+    padding: 0.4rem 0.6rem;
+  }
+
+  .game-screen[data-zone] .left-hud:has(> .notice-stack > .notice) > .mission-hud {
+    flex-basis: 0;
+    min-height: 0;
+  }
+}
+
+/* W3-6b — a window 721–1000px wide has the desktop vitals card, 246px with its squad strip
+   and taller than a phone's, so its reserve is larger to keep that card whole. */
+@media (min-width: 721px) and (max-width: 1000px) and (pointer: fine) {
+  .game-screen {
+    --notice-status-reserve: 16rem;
+  }
+}
+
 /* W3-6 — a phone at least 780px tall holds the whole status column, a notice and a
-   first-time line beside a mission panel that yields. There the status column never gives
-   way to the notices; when two long ones meet, the lane scrolls, newest on top, so only
-   the older one is cut short. Shorter phones keep the reserve above instead. */
-@media (max-width: 720px) and (min-height: 780px), (pointer: coarse) and (min-height: 780px) {
+   first-time line beside a mission panel that yields; so does a window up to 1000px wide
+   (W3-6b). There the status column never gives way to the notices; when two long ones
+   meet, the lane scrolls, newest on top, so only the older one is cut short. Shorter
+   screens keep the reserve above instead. */
+@media (max-width: 1000px) and (min-height: 780px), (pointer: coarse) and (min-height: 780px) {
   .game-screen[data-hud] .left-hud:has(> .notice-stack > .notice) > .status-hud {
     flex-shrink: 0;
   }
@@ -5537,10 +5415,6 @@ kbd {
     opacity: 0.24;
   }
 
-  .loot-toast {
-    animation: loot-toast-reduced 2.4s linear both !important;
-  }
-
   .zone-title {
     animation: zone-title-fade 0.01ms linear !important;
   }
@@ -5548,25 +5422,6 @@ kbd {
   .zone-motif::after {
     animation: none !important;
     display: none;
-  }
-}
-
-@keyframes loot-toast-reduced {
-  0%,
-  8% {
-    opacity: 0;
-    transform: translateX(-50%);
-  }
-
-  12%,
-  88% {
-    opacity: 1;
-    transform: translateX(-50%);
-  }
-
-  100% {
-    opacity: 0;
-    transform: translateX(-50%);
   }
 }
 

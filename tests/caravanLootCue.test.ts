@@ -62,7 +62,7 @@ function screen(mode: HudMode, prompt: string, caravanLoot: CaravanLootView | nu
   // Every callback is a no-op: a static render never calls one. The proxy keeps this file
   // about the cue rather than about every callback another feature adds to the screen.
   const props: Record<string, unknown> = {
-    view, worldRef: createRef(), notices: [], achievementBanner: null, runAchievements: [],
+    view, worldRef: createRef(), notices: [], runAchievements: [],
     activeOverlay: null, simulationPaused: false, touchCaptures: new GameplayPointerCaptures(),
     endResult: null, terminalRun: null, onIssueSquadCommand: () => false,
     musicMuted: false, sfxVolume: 0.5, dynamicDayNight: true, weatherEnabled: true,

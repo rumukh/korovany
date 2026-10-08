@@ -99,9 +99,22 @@
 }
 
 @media (min-width: 721px) and (pointer: fine) {
+  .game-screen[data-hud="compact"] .top-hud-side {
+    max-height: var(--hud-side-max-height);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    pointer-events: auto;
+    scrollbar-width: thin;
+  }
+}
+
+/* W1-4 — the same identity-clearing lane as the full HUD, measured inside the top HUD.
+   W3-6b — up to 1000px the lane is the foot of the left column (App.css's column lane),
+   so Compact's own lanes, the finale's included, start at 1001px. */
+@media (min-width: 1001px) and (pointer: fine) {
   .game-screen[data-hud="compact"] .notice-stack {
     top: 0;
-    width: min(28rem, calc(100% - 30rem));
+    width: min(28rem, calc(100% - 50rem));
   }
 
   .game-screen[data-hud="compact"]:has(.finale-hud) .notice-stack {
@@ -112,28 +125,6 @@
     top: auto;
     transform: none;
     width: 19rem;
-  }
-
-  .game-screen[data-hud="compact"] .top-hud-side {
-    max-height: var(--hud-side-max-height);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    pointer-events: auto;
-    scrollbar-width: thin;
-  }
-}
-
-@media (min-width: 721px) and (max-width: 1000px) and (pointer: fine) {
-  .game-screen[data-hud="compact"] .notice-stack {
-    top: 4.7rem;
-    width: min(26rem, 100%);
-  }
-}
-
-/* W1-4 — the same identity-clearing lane as the full HUD, measured inside the top HUD. */
-@media (min-width: 1001px) and (pointer: fine) {
-  .game-screen[data-hud="compact"] .notice-stack {
-    width: min(28rem, calc(100% - 50rem));
   }
 }
 

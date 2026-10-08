@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   ABILITY_BLOCKED_NO_STAMINA_NOTICE,
@@ -15,7 +16,9 @@ import {
 import { HINT_MIN_GAP_SECONDS } from '../src/game/content/hints.ts'
 import type { NoticeOrigin, NoticeTone } from '../src/game/types.ts'
 import {
+  COLUMN_LANE_QUERY,
   HINT_NOTICE_GAP_MS,
+  LOOT_NOTICE_LIFETIME_MS,
   NARROW_NOTICE_LIMITS,
   NOTICE_MAX_LIFETIME_MS,
   NOTICE_MAX_WAITING,
@@ -32,6 +35,8 @@ import {
   noticeLogEnabled,
   noticeViews,
   pushNotice,
+  settingNoticeWanted,
+  type NoticeArt,
   type NoticeLimits,
 } from '../src/game/ui/noticeQueue.ts'
 
@@ -379,4 +384,127 @@ test('an opening on a phone keeps one lesson and one piece of news up, danger at
 
   // Control: the old stack of four puts more than two up at once.
   assert.ok(play(opening, { notices: 4, hints: 1 }).maxShown > 2)
+})
+
+// ---------------------------------------------------------------------------
+// W3-6b — achievements and finds are notices; settings changed in a menu are not
+// ---------------------------------------------------------------------------
+
+const trophy = (name: string): NoticeArt =>
+  ({ kind: 'achievement', rarity: 'rare', label: 'Достижение открыто · Редкое', title: name, detail: 'Описание.' })
+const find = (title: string, detail: string): NoticeArt =>
+  ({ kind: 'loot', rarity: 'common', label: 'Обычная награда', title, detail })
+
+test('W3-6b: an achievement stays up the longest a notice may and survives the cap; untagged it does neither', () => {
+  const achievement = { message: 'Достижение открыто · Редкое. Суть такова. Описание.', tone: 'success' as const }
+  const up = pushNotice(createNoticeQueue(), { ...achievement, origin: 'achievement', art: trophy('Суть такова') },
+    0, NARROW_NOTICE_LIMITS)
+  assert.equal(up.shown[0]?.expiresAt, NOTICE_MAX_LIFETIME_MS)
+  assert.deepEqual(noticeViews(up)[0]?.art, trophy('Суть такова'), 'the view carries the art to draw')
+  // Control: the same short line, untagged, lives by its length.
+  assert.equal(pushNotice(createNoticeQueue(), achievement, 0, NARROW_NOTICE_LIMITS).shown[0]?.expiresAt,
+    noticeLifetimeMs(achievement.message))
+  assert.ok(noticeLifetimeMs(achievement.message) < NOTICE_MAX_LIFETIME_MS)
+
+  // A dense phone burst: a danger holds the place, then the achievement, then a dozen warnings.
+  const burst = (origin: NoticeOrigin | undefined) => {
+    let queue = pushNotice(createNoticeQueue(), { message: 'Опасно.', tone: 'danger' }, 0, NARROW_NOTICE_LIMITS)
+    queue = pushNotice(queue, { ...achievement, ...(origin ? { origin } : {}) }, 10, NARROW_NOTICE_LIMITS)
+    for (let index = 0; index < NOTICE_MAX_WAITING; index += 1) {
+      queue = pushNotice(queue, { message: `Ватага ${String(index)}.`, tone: 'warning' }, 20, NARROW_NOTICE_LIMITS)
+    }
+    return queue.waiting.some((notice) => notice.message === achievement.message)
+  }
+  assert.equal(burst('achievement'), true, 'the cap cut an achievement')
+  assert.equal(burst(undefined), false, 'control: an untagged reward is the first line the cap cuts')
+})
+
+test('W3-6b: a find flashes for the toast\'s 2.4 s, the next find takes its line, and a late one is dropped', () => {
+  const loot = (title: string, detail: string) =>
+    ({ message: `Обычная награда. ${title}. ${detail}`, tone: 'success' as const, origin: 'loot' as const, art: find(title, detail) })
+  let queue = pushNotice(createNoticeQueue(), loot('Монеты', '+5 золота'), 0, NARROW_NOTICE_LIMITS)
+  const first = queue.shown[0]
+  assert.equal(first?.expiresAt, LOOT_NOTICE_LIFETIME_MS)
+  // A second find replaces the first in place: the same line, the new words, a fresh clock.
+  queue = pushNotice(queue, loot('Лекарство', '+20 здоровья'), 500, NARROW_NOTICE_LIMITS)
+  assert.equal(queue.shown.length, 1)
+  assert.equal(queue.shown[0]?.id, first?.id, 'the line moved or a second one opened')
+  assert.equal(queue.shown[0]?.message, loot('Лекарство', '+20 здоровья').message)
+  assert.deepEqual(queue.shown[0]?.art, find('Лекарство', '+20 здоровья'))
+  assert.equal(queue.shown[0]?.count, 1)
+  assert.equal(queue.shown[0]?.expiresAt, 500 + LOOT_NOTICE_LIFETIME_MS)
+  // The same find again is a repeat, counted on the same line.
+  queue = pushNotice(queue, loot('Лекарство', '+20 здоровья'), 800, NARROW_NOTICE_LIMITS)
+  assert.equal(queue.shown[0]?.count, 2)
+  assert.equal(queue.shown[0]?.expiresAt, 800 + LOOT_NOTICE_LIFETIME_MS)
+  // Control: two different plain lines queue as two.
+  let plain = pushNotice(createNoticeQueue(), { message: 'Весть один.', tone: 'success' }, 0, NARROW_NOTICE_LIMITS)
+  plain = pushNotice(plain, { message: 'Весть два.', tone: 'success' }, 500, NARROW_NOTICE_LIMITS)
+  assert.equal(plain.shown.length + plain.waiting.length, 2)
+
+  // Behind a danger, finds wait as one line, the newest, and drop once their moment passed.
+  let busy = pushNotice(createNoticeQueue(), { message: 'Опасно.', tone: 'danger' }, 3000, NARROW_NOTICE_LIMITS)
+  busy = pushNotice(busy, loot('Монеты', '+5 золота'), 3100, NARROW_NOTICE_LIMITS)
+  busy = pushNotice(busy, loot('Монеты', '+7 золота'), 3500, NARROW_NOTICE_LIMITS)
+  busy = pushNotice(busy, { message: 'Весть.', tone: 'info' }, 3500, NARROW_NOTICE_LIMITS)
+  assert.deepEqual(busy.waiting.map((notice) => notice.message), [loot('Монеты', '+7 золота').message, 'Весть.'])
+  assert.equal(nextNoticeDeadline(busy, NARROW_NOTICE_LIMITS, 3500), 3500 + LOOT_NOTICE_LIFETIME_MS)
+  const later = advanceNotices(busy, 3500 + LOOT_NOTICE_LIFETIME_MS, NARROW_NOTICE_LIMITS)
+  assert.deepEqual(later.waiting.map((notice) => notice.message), ['Весть.'], 'the late find was not dropped')
+  assert.equal(later.stats.dropped, 1)
+})
+
+test('W3-6b: a setting changed in a menu raises no notice; the HUD\'s own button mid-game still does', () => {
+  assert.equal(settingNoticeWanted(true, null), true)
+  for (const overlay of ['pause', 'shop', 'atlas', 'orders', 'journal', 'achievements', 'end']) {
+    assert.equal(settingNoticeWanted(true, overlay), false, overlay)
+  }
+  assert.equal(settingNoticeWanted(false, null), false, 'the main menu shows its own state')
+
+  // The App routes every setting's line through that rule, and only those lines.
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const handler = (name: string) => {
+    const start = app.indexOf(`const ${name} = (`)
+    assert.notEqual(start, -1, `Missing ${name}`)
+    return app.slice(start, app.indexOf('\n  }\n', start))
+  }
+  assert.match(handler('announceSetting'),
+    /settingNoticeWanted\(screen === 'game', topGameOverlay\(overlaysRef\.current\)\)\) addNotice\(message, 'info'\)/)
+  for (const name of ['toggleMusic', 'toggleDynamicDayNight', 'toggleInkOutlines', 'toggleWeather']) {
+    assert.match(handler(name), /announceSetting\(/, name)
+    assert.doesNotMatch(handler(name), /addNotice\(/, `${name} bypasses the rule`)
+  }
+  // Control: a purchase is not a setting; its line waits for the shop to close and then shows.
+  assert.match(handler('buyItem'), /addNotice\(result\.message/)
+  assert.doesNotMatch(handler('buyItem'), /announceSetting/)
+})
+
+test('W3-6b: the column lane covers phones, touch screens and windows up to 1000 px', () => {
+  assert.equal(COLUMN_LANE_QUERY, '(max-width: 1000px), (pointer: coarse)')
+  assert.deepEqual(noticeLimitsFor(true), NARROW_NOTICE_LIMITS)
+  assert.equal(noticeLaneFor('full', true), 'column')
+})
+
+test('W3-6b: a find may be dropped only because all it gives is already on the HUD', () => {
+  // The kinds a find can be. A new one that grants something the HUD does not show (an item,
+  // a prosthetic, a doctrine, a quest token) must go out as `origin: 'outcome'` instead.
+  const types = readFileSync(new URL('../src/game/types.ts', import.meta.url), 'utf8')
+  assert.match(types, /export type LootRewardKind = 'coins' \| 'medicine' \| 'whetstone'\n/)
+  // What a find changes: coins pay gold, medicine heals (or pays gold at full health), a
+  // whetstone sharpens the blade (its surplus pays gold). Gold, health and damage, nothing else.
+  const engine = readFileSync(new URL('../src/game/GameEngine.ts', import.meta.url), 'utf8')
+  const apply = engine.slice(engine.indexOf('private applyLootReward('), engine.indexOf('private spawnLootCollectionBurst('))
+  const changed = (source: string) => [...new Set([...source.matchAll(/this\.(\w+) (?:\+=|=)/g)].map((match) => match[1]))].sort()
+  assert.deepEqual(changed(apply), ['damage', 'gold', 'health'])
+  // Control: a find that also granted something else would show up here.
+  assert.deepEqual(changed(`${apply}\n    this.prostheticCount += 1`), ['damage', 'gold', 'health', 'prostheticCount'])
+  // All three are on the HUD in every layout: health in its bar, gold and damage first in the
+  // stat strip, which the narrow layout trims only from its third item on.
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const stripAt = app.indexOf('<div className="stat-strip">')
+  assert.match(app.slice(stripAt, app.indexOf('</div>', stripAt)),
+    /<span>\s*<Coins aria-hidden="true" \/> \{view\.gold\}\s*<\/span>\s*<span>\s*<Sword aria-hidden="true" \/> \{view\.damage\}/)
+  const css = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
+  const hidden = [...css.matchAll(/\.stat-strip span:nth-child\((\d+)\)/g)].map((match) => Number(match[1]))
+  assert.ok(hidden.length > 0 && hidden.every((index) => index >= 3), `the strip hides ${hidden.join(', ')}`)
 })
