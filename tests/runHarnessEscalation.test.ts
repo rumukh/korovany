@@ -45,7 +45,8 @@
  *
  * Everything above was measured before W3-5, with the errand stand-in (`errand: 'clear'`).
  * W3-5 found that those four timeouts were that stand-in waiting out an archer the engine's
- * `E` would have ignored. The shipped arms now press the errand, and the four runs end.
+ * `E` would have ignored. Under the shipped arms' press each of them finishes its errand on
+ * arrival.
  */
 
 import assert from 'node:assert/strict'
@@ -128,9 +129,9 @@ test('a fight that never ends cannot starve a draft: the ceiling opens it 30 s a
   // rest of the run; the ceiling opens each `DOCTRINE_DRAFT_MAX_HOLD_SECONDS` after its tier.
   //
   // W3-5: the fight was the harness's own. Its errand stand-in waited for an archer to leave
-  // the healer the errand sits on, and the engine's `E` finishes that errand at 65 s. The
-  // shipped arms now press it (`errand: 'press'`). The stand-in, kept as the control arm, is
-  // still the deterministic fight that never ends that this rule needs.
+  // the healer the errand sits on, and the engine's `E` finishes that errand when the guard
+  // reaches it, at 87 s. The shipped arms now press it (`errand: 'press'`). The stand-in, kept
+  // as the control arm, is still the deterministic fight that never ends that this rule needs.
   const stuckRun: RunOptions = {
     ...HARNESS_SHIPPED_ARMS,
     errand: 'clear',

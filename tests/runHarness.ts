@@ -999,7 +999,8 @@ export type StagingModel = 'none' | 'friendly'
  * `HARNESS_ERRAND_CLEAR_RADIUS`, and an `E` pressed there for the healer, the trader or the
  * treasure does not complete it. When an archer holds 8–12 m off a healer that is the
  * errand's own site, a player who does not fight it never completes the errand and is
- * healed for ever. That is the guard's timeout on seeds 79191 and 142543.
+ * healed for ever. That is the guard's stall on seeds 79191 and 142543 without the caravan
+ * spine, and on 142543, 197976 and 285085 with it.
  *
  * `press` is the engine's. `interact` → `handleGeneratedInteraction` completes the errand
  * on the press that `chooseGeneratedInteraction` says targets it, after the site's own
