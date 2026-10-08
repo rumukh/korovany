@@ -160,6 +160,7 @@ interface LiveEvent {
   title: string
   timer: number | null
   contractNodeId?: string | null
+  playerContributed?: boolean
   ownedActorIds: string[]
   markerPos: THREE.Vector3
   onKill?(actor: HeadlessActor, context: unknown): void
