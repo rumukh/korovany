@@ -210,16 +210,22 @@ test('control: with the contract arm pinned, the healer heals but the errand wai
 type CaravanBeats = 'shipped' | 'off'
 
 /**
- * Every guard run the shipped arms stalled on, cut to 300 s; the stall begins at 65–87 s.
- * With the caravan spine that is 142543 and 285085; without it, W2-1's 79191 and 142543.
+ * Every guard run the shipped arms stalled on, cut to 360 s; the stall begins at 65–126 s.
+ * With the caravan spine that is 110867, 142543 and 285085; without it, W2-1's 142543.
  * The cautious script never dropped below 35 % in these runs, so its runs are the beeline's.
+ *
+ * W3-4 re-picked them by the same rule. With its remnants and streaming hold in the shipped
+ * arms, the stand-in's stalls move: W2-1's 79191 without the spine finishes its errand at
+ * 67 s, 197976 with it at 238 s, and 110867 now stands at the same healer from 126 s. The cut
+ * grew from 300 s to 360 s so that its stall, too, runs past 200 s.
  */
 const STALLS: ReadonlyArray<readonly [number, InputPolicy, CaravanBeats]> = [
+  [110867, 'beeline', 'shipped'],
+  [110867, 'cautious', 'shipped'],
   [142543, 'beeline', 'shipped'],
   [142543, 'cautious', 'shipped'],
   [285085, 'beeline', 'shipped'],
   [285085, 'cautious', 'shipped'],
-  [79191, 'beeline', 'off'],
   [142543, 'beeline', 'off'],
 ]
 
@@ -236,7 +242,7 @@ test('the harness presses its errand done the way the engine does, and its old s
       faction: FACTION,
       policy,
       hz: 30,
-      timeLimit: 300,
+      timeLimit: 360,
     } as const
     const pressed = runHarness(options)
     const waited = runHarness({ ...options, errand: 'clear' })
@@ -246,7 +252,7 @@ test('the harness presses its errand done the way the engine does, and its old s
 
     // Both reach the errand's site on the same frame: nothing before it differs.
     const reached = pressed.balance.errandSite.reachedAt
-    assert.ok(reached !== null && reached < 100, `${label}: reached at ${reached}`)
+    assert.ok(reached !== null && reached < 130, `${label}: reached at ${reached}`)
     assert.equal(waited.balance.errandSite.reachedAt, reached)
 
     // `press`: the errand completes on the frame the prompt is up, with something hostile
@@ -272,7 +278,7 @@ test('the harness presses its errand done the way the engine does, and its old s
 test('the beeline runs that stalled now end long before the limit', () => {
   // The cautious 142543 runs finish the errand too, and then meet the cautious finale stall,
   // a different class `docs/run-harness.md` names. The beeline runs have no such retreat.
-  for (const [seed, caravanBeats] of [[142543, 'shipped'], [285085, 'shipped'], [79191, 'off'], [142543, 'off']] as const) {
+  for (const [seed, caravanBeats] of [[110867, 'shipped'], [142543, 'shipped'], [285085, 'shipped'], [142543, 'off']] as const) {
     const report = runHarness({
       ...HARNESS_SHIPPED_ARMS,
       combatEconomy: 'legacy',

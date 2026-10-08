@@ -19,59 +19,63 @@
  * ## The documented baseline
  *
  * `HARNESS_SHIPPED_ARMS`, 30 Hz, a 600 s limit, seeds `1 + 7919 n` for n = 0…39, every
- * faction under every policy — 360 runs on W3-5's branch (`main` at 02059ed with the errand
- * press merged), in the engine's streaming window, with W2-2's caravan spine and W3-5's
- * errand press among the shipped arms — reproduced by
+ * faction under every policy — 360 runs on W3-4's branch (`main` at 04c1c7b with W3-4's
+ * two commits), in the engine's streaming window, with W2-2's caravan spine, W3-5's errand
+ * press and W3-4's remnants and streaming hold among the shipped arms — reproduced by
  * `KOROVANY_BALANCE_SEEDS=40 node --experimental-strip-types --test tests/runHarnessBalance.test.ts`
  * (that command uses the committed test's 480 s limit; the table used 600 s through
  * `sweepBalance` directly). Victories are win / defeat / timeout; length is the victories'
- * p10–p50–p90 in seconds. Re-published on 2026-10-08 when the errand press joined the
- * shipped arms; it supersedes the 191cda5 and 29adca3 tables, which `docs/run-harness.md`
- * keeps for the record.
+ * p10–p50–p90 in seconds. Re-published on 2026-10-08 when W3-4 joined the shipped arms; it
+ * supersedes the tables measured with the errand press alone, on 191cda5 and on 29adca3,
+ * which `docs/run-harness.md` keeps for the record.
  *
  * ```text
  * policy · faction    win/def/timeout   won in p10–p50–p90   damage   companions at finale
- * beeline · elf       11 / 29 /  0       89–130–156 s        243      2.5 (37/40 with ≥ 1)
- * beeline · guard     18 / 22 /  0      103–130–219 s        167      2.4 (36/40)
- * beeline · villain   20 / 20 /  0       87–110–140 s        159      3.2 (40/40)
- * cautious · elf      11 /  8 / 21       89–130–156 s        217      2.5 (35/39)
- * cautious · guard    17 / 11 / 12      103–147–219 s        158      2.4 (36/40)
- * cautious · villain  10 / 12 / 18       84– 98–140 s        144      3.2 (40/40)
- * duelist · elf       34 /  6 /  0      102–141–188 s        180      3.4 (37/37)
- * duelist · guard     33 /  7 /  0      111–142–187 s        144      2.6 (38/40)
- * duelist · villain   26 / 14 /  0      101–130–172 s        149      3.3 (38/38)
+ * beeline · elf        9 / 31 /  0       88–129–173 s        245      2.6 (36/39 with ≥ 1)
+ * beeline · guard     18 / 22 /  0      103–140–210 s        169      2.4 (36/40)
+ * beeline · villain   20 / 20 /  0       87–107–138 s        160      3.1 (39/40)
+ * cautious · elf       9 / 10 / 21       88–129–173 s        220      2.6 (35/39)
+ * cautious · guard    13 / 14 / 13      103–147–184 s        160      2.4 (36/40)
+ * cautious · villain  10 / 12 / 18       84– 98–132 s        144      3.1 (39/40)
+ * duelist · elf       36 /  4 /  0      103–141–189 s        187      3.3 (38/38)
+ * duelist · guard     35 /  5 /  0      111–144–186 s        141      2.7 (39/40)
+ * duelist · villain   25 / 15 /  0      102–129–171 s        153      3.3 (38/38)
  * ```
  *
  * What it says, in the review's terms:
  *
- * - **F5, inverted.** Fighting everything within 13 m wins 93 of 120 and walking past it
- *   49 of 120. The review's 0 of 60 was a harness with no squad and no healing: every
+ * - **F5, inverted.** Fighting everything within 13 m wins 96 of 120 and walking past it
+ *   47 of 120. The review's 0 of 60 was a harness with no squad and no healing: every
  *   W1-5 arm off, with the review's `commit` rumours and 1 200 s limit, gives its 88 %
  *   against 0 % again (53/60 against 0/60), and one arm at a time each of the squad and
  *   healing more than halves the fighter's wins when taken away — `docs/run-harness.md`
- *   has the ablation. The spine costs the fighter 14 of its 107 wins, the villain's most.
+ *   has the ablation. The spine costs the fighter 14 of its 110 wins, the villain's most.
  * - **F1, answered.** W2-1 made the tier follow the run's progress, so every cell now
  *   reaches three drafts (median), where the clock alone dealt none in seven cells of nine.
  *   W2-2's caravans made the run itself longer: a cell's median win is 98–147 s, against
- *   77–107 s with the spine off, and 264 of 360 runs end inside three minutes (306 with it
+ *   77–107 s with the spine off, and 264 of 360 runs end inside three minutes (303 with it
  *   off).
- * - **F2, corrected.** 358 of 360 runs reached their contract and started it: 342 kept,
+ * - **F2, corrected.** 359 of 360 runs reached their contract and started it: 343 kept,
  *   none abandoned. The first baseline's 239 `crowded` abandonments came from the harness
  *   simulating the whole 3x3 where the engine simulates only the plus inside it (W1-6's
- *   finding): the 3x3 kept the actor budget full for 45 s a run. NPCs took 23 carts, each
+ *   finding): the 3x3 kept the actor budget full for 45 s a run. NPCs took 29 carts, each
  *   after a full load, and the squad took none.
  * - **F3, measured.** 420 of 1 226 rumours (34 %) were beyond reach when offered, and 490
  *   of 1 268 (39 %) once W2-1 paced the run by progress. W2-3 then offered only rumours the
  *   player can meet: 67 of 451 (15 %) on the same seeds and arms, every one an escort that
  *   this road-only estimate times to the cart's square rather than to where the player
- *   meets the cart. With the spine and the errand press it is 42 of 593 (7 %).
- * - **F4.** At least one companion reached 337 of 354 finales; the finale is still the
- *   single largest killer (53 of 129 defeats).
+ *   meets the cart. With the spine, the errand press and W3-4 it is 37 of 583 (6 %).
+ * - **F4.** At least one companion reached 336 of 354 finales; the finale is still the
+ *   single largest killer (62 of 133 defeats).
  * - **W3-5.** The 191cda5 table's three beeline guard timeouts, and three of the cautious
  *   guard's, were the harness's errand stand-in waiting out an archer at a healer. Under the
  *   press no run stalls at its errand, and threat-wave damage over the 360 runs falls from
  *   2 181 to 801: 1 488 of it was seed 285085's two stalled guards. `tests/errandPress.test.ts`
  *   and `docs/run-harness.md` have the rest.
+ * - **W3-4.** A cautious run spawns 137 encounter bodies against 939 before it, 1.6 times
+ *   a beeline or duelist run's (1.3 on the next forty seeds). Its flee-script thrash on a
+ *   square's edge is masked by the streaming hold, not fixed; `docs/run-harness.md` has
+ *   both seed sets.
  *
  * The committed test below sweeps three seeds per cell and asserts bands that held at forty;
  * `KOROVANY_BALANCE_SEEDS` widens it without changing what it asserts.
@@ -340,7 +344,7 @@ test('W1-1 in whole runs: a random event up at arrival stands down, and the cont
 })
 
 test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never to the squad', () => {
-  // Under `engage`, the elf on seed 118786 and the guard on seed 1 each reach a chronicle
+  // Under `engage`, the elf on seed 118786 and the guard on seed 126705 each reach a chronicle
   // ambush whose raiders load their cart. In the baseline's `ignore` arm no NPC ever starts a
   // load, so these are the runs that show the channel working end to end. The pre-W1-2
   // touch rule would lose a cart without a load (`lost > loads`), and the old squad rule
@@ -364,13 +368,13 @@ test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never 
   // W3-5's errand press was checked against the same rule and moves neither: both seeds still
   // start a load under it, with the same loads and losses.
   //
-  // W3-2 made every ordinary wind-up readable and delayed stamina recovery after offence,
-  // changing which road fights the scripted duelist reaches. With the final 0.55-second
-  // rule and W3-5's press together, the first witnesses are 182138 for the elf (n = 23)
-  // and 142543 for the guard (n = 18), each with one completed load and one cart lost.
+  // W3-4 was checked against it too. Its remnants move neither seed. Its streaming hold moves
+  // the guard's: the window no longer recentres on every step back over an edge, the run meets
+  // its packs and ambushes at other moments, and on seed 1 no raider starts a load. Re-picked
+  // by the same rule: 126705 (n = 16, 1 load, 1 lost). The elf keeps 118786 (3 loads, 1 lost).
   const reports = ([
-    [182138, 'elf'],
-    [142543, 'guard'],
+    [118786, 'elf'],
+    [126705, 'guard'],
   ] as const).map(([seed, faction]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,
@@ -484,6 +488,8 @@ test('the arms leave the pinned run alone, and the shipped kit walks the engine\
     staging: 'none',
     errand: 'clear',
     combatEconomy: 'legacy',
+    encounterMemory: 'fresh',
+    streaming: 'instant',
   })
   assert.deepEqual(explicit, omitted, 'the declared defaults must be the defaults')
   assert.equal(omitted.balance.companions.started, 0)

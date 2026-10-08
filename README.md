@@ -153,7 +153,8 @@ never step back, and neither do the squad, a stronghold's garrison, a unique, an
 finale or anyone an event put down. Stepping back is not losing: the pack is not counted as
 beaten, and it drops and pays nothing. It comes home to its stations once nothing has asked for
 room for 4 seconds and the whole pack fits, at the first moment none of its stations is in view
-and all are at least 60 m from you, or with its square when that streams back in. Walk up to an
+and all are at least 60 m from you, or with its square when that streams back in, without the
+members it lost. Walk up to an
 empty post, within 25 m of one of its stations, and the pack is called home: from then on it
 only waits for you to look away. Seed 1's guard used to lose «Зверьё у домиков», beside the
 palace's two strongholds, as crowded every time.
@@ -316,6 +317,34 @@ defended, never robbed: there is no «Забрать груз», the event is wo
 down with the cargo still on the cart, and the owners pay 90 gold. An emptied road cart says
 who emptied it. The claim and the channel are not saved, so a continue brings an ambush's
 raiders back; the road cart's dead escorts are saved, as described above.
+
+## Packs you leave half-beaten («Недобитые»)
+
+A pack you walk away from stays the way you left it. The generator's packs live with their
+squares, and a square that streamed back in used to field every pack that was not beaten whole
+and at full health: the men you had killed stood up again on their posts and your wounds were
+gone. Now the members who fell stay dead, and a member who left the field hurt comes back to
+its post, calm, with the health it left with and its own maximum. Nobody heals while you are
+away, and a pack is beaten only when its last man falls. Killing two of three, stepping out of
+the square and back in no longer pays for the same two again.
+
+The same holds across a save and a continue: a pack on the field when the run is saved keeps its
+wounds, and its survivors are back on their posts when you continue. A square the chronicle hands
+to another side fields its new owners' people, fresh. A pack of your own side that stepped back
+for a contract comes home without the members it lost. The finale, caravan beats, events, the
+road cart's escort and the soldiers a commander calls keep their own rules. A save from before
+this fields every pack it met whole, as it did then; a damaged record is dropped with a warning,
+and those packs are fielded whole.
+
+The world streams in around the square you stand in, and it no longer jumps back and forth
+with you. Walk on into the next square and it recentres at once, as before; turn back into
+the square you just left and it waits until you are 16 m inside it. Fighting across an edge,
+or walking a road that wanders over one, no longer rebuilds the squares around you or sends
+their packs home and back, and the packs and fights of the squares behind you stay on the
+field for those 16 m instead of vanishing the moment you step back over a line you cannot
+see. A square you step into that is not the one you just left still recentres the world at
+once, so near a corner a pack can still appear when you arrive in its square, as before.
+None of this is saved: a continue centres the world on the square you stand in.
 
 ## Threat, doctrines and night
 
