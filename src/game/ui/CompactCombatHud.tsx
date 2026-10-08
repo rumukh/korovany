@@ -59,7 +59,8 @@ export function CompactWorldNews({ view, mode, children }: {
         {view.rumours.map((rumour) => <span key={rumour.id} className="compact-hud-deadline">
           {rumour.regionLabel} · {rumour.title}
           {rumour.outcome === null
-            ? `: ${describeRumourReach(rumour.travel?.seconds ?? null, rumour.timeRemaining, rumour.reach ?? null)}`
+            ? `: ${describeRumourReach(rumour.travel?.seconds ?? null, rumour.timeRemaining, rumour.reach ?? null,
+              rumour.meetLabel ?? null)}`
             : ` · ${rumour.outcomeText}`}
         </span>)}
       </>

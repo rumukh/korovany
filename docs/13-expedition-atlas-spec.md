@@ -430,3 +430,25 @@ without knowledge, so an offer depends on the player's position and body and not
 shortest itinerary never weighs danger, so the fog cannot move it. The board asks for no walk
 longer than `RUMOUR_OFFER_WALK_SECONDS`, 25 s at the player's own pace; the card's verdict
 leaves that ceiling out, because it judges a rumour already on the board.
+
+No rumour is offered at camp until the player sets out: from several faction starts nothing
+lies within a 25 s walk in the first minutes. That is intended. W2-2 puts the opening caravan
+decision at camp, and a rumour should not compete with it.
+
+### 2026-10-08: the escort compass meets the cart (W2-3 follow-up)
+
+A taken escort's compass, map pin and card walk led to the square its cart was in, which the
+cart had usually rolled out of by the time the player arrived. They now lead to the square the
+cart can be met in, from `findEscortMeeting`: the cart's square at the earliest check the
+player can be there and stay beside it for the checks it still lacks. This uses the walk
+`estimateRumourReach` times, without the offer's margin. The margin decides whether to go,
+and its 8 s would rule out the very next check even for a player already beside the cart.
+When no meeting fits, the target falls back to the cart's square, as before. When the meeting
+square is not the cart's square now, the card names it: «встретить в D2 · идти ~6 с · …».
+
+The engine works the meeting out from the player's exact position on their current legs, once
+per chronicle tick and again when another escort is taken. It keeps the result until the next
+tick, so the planner re-plans when the meeting square changes, not on every frame and not
+whenever the cart crosses into another square. The meeting is derived and never saved. The
+launch view works it out from the restored position at the restored tick, so a continued run's
+first frame agrees with the live compass. An untaken escort still points at its cart.

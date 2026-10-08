@@ -565,13 +565,19 @@ export const RUMOUR_REACH_WORDS: Readonly<Record<'yes' | 'tight' | 'no', string>
   no: 'не успеть',
 }
 
-/** W2-3 — «идти ~30 с · осталось 48 с · успеешь»: the walk the compass charts against the clock. */
+/**
+ * W2-3 — «идти ~30 с · осталось 48 с · успеешь»: the walk the compass charts against the clock.
+ * A taken escort met somewhere other than its cart's square now says where first:
+ * «встретить в D2 · идти ~6 с · …».
+ */
 export function describeRumourReach(
   walkSeconds: number | null,
   remainingSeconds: number,
   reach: 'yes' | 'tight' | 'no' | null,
+  meetLabel: string | null = null,
 ): string {
   const parts: string[] = []
+  if (meetLabel) parts.push(`встретить в ${meetLabel}`)
   if (walkSeconds !== null) {
     parts.push(walkSeconds <= 0 ? 'ты на месте' : `идти ~${String(walkSeconds)} с`)
   }

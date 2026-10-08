@@ -168,6 +168,10 @@ margin left) or «не успеть». Keeping a rumour pays a little, once, whe
 commander and the villain's own purse pay 15 gold, and the elves' wooden houses share a ration. A broken or untaken
 rumour pays nothing, and it still happens without you.
 
+Take an escort and its cart is met rather than chased. The compass, the map pin and the card's walk lead to the
+square where you can first be beside the cart in time, and the card says so: «встретить в D2 · идти ~6 с · …». The
+meeting is worked out again once a chronicle tick, every 8 seconds; when none fits, the compass leads to the cart.
+
 ## Caravan beats
 
 «Можно грабить корованы» is a decision, not scenery. A caravan beat is a gilded cart on a real

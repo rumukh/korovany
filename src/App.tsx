@@ -778,7 +778,8 @@ function RumourBoard({
               {rumour.travel || rumour.reach ? (
                 <p className={`rumour-reach${rumour.reach ? ` ${rumour.reach}` : ''}`}>
                   <Footprints aria-hidden="true" />
-                  {describeRumourReach(rumour.travel?.seconds ?? null, rumour.timeRemaining, rumour.reach ?? null)}
+                  {describeRumourReach(rumour.travel?.seconds ?? null, rumour.timeRemaining, rumour.reach ?? null,
+                    rumour.meetLabel ?? null)}
                 </p>
               ) : null}
               <ChoicePrice payout={rumour.reward} />

@@ -1259,7 +1259,8 @@ export interface RumourReachContext {
 /**
  * W2-3 — where a rumour is met on the map: the depot itself for a sabotage, because the torch
  * needs the player beside it, and the middle of its square otherwise. The map pin, the
- * compass, the card's walk and the offer's reach all read this one rule.
+ * compass, the card's walk and the offer's reach all read this one rule; a taken escort's
+ * pin, compass and walk read it for the square `findEscortMeeting` names.
  */
 export function rumourTargetPoint(
   blueprint: WorldBlueprint,
@@ -1283,8 +1284,9 @@ export function rumourTargetPoint(
  * A defence needs the player inside its square for the ticks it still lacks; a sabotage
  * needs them at the depot before the deadline; an escort needs them in the cart's square on
  * consecutive ticks, wherever the cart will have rolled by then, each timed from where they
- * stand now — which is how the compass leads them, to the square the cart is in. A cart that
- * is lost or delivered on the way cannot be predicted and is not.
+ * stand now. `findEscortMeeting` names the first of those squares, and a taken escort's
+ * compass leads there. A cart that is lost or delivered on the way cannot be predicted and
+ * is not.
  */
 export function estimateRumourReach(
   rumour: ChronicleRumour,
@@ -1353,44 +1355,98 @@ function rumourFinishTicks(
       : Math.max(0, requiredRumourProgressFor(rumour) - rumour.progress)
   if (need === 0) return 0
   if (window < 1) return null
-  const secondsUntilCheck = (check: number): number =>
-    check * CHRONICLE_TICK_SECONDS - sinceTick
-  const arrival = (point: { x: number; z: number } | null): number | null => {
-    if (!point) return null
-    const seconds = travel(point)
-    return seconds === null || !Number.isFinite(seconds) ? null : seconds * factor + slack
-  }
   if (rumour.kind === 'escort') {
-    const caravan = context.state.caravans.find((entry) => entry.id === rumour.caravanId)
-    if (!caravan || !caravan.intact || caravan.regionPath.length === 0) return null
-    const arrivals = new Map<string, number | null>()
-    const arrivalAtCheck = (check: number): number | null => {
-      const regionId = String(caravanRegionAfter(caravan, check))
-      if (!arrivals.has(regionId)) {
-        arrivals.set(regionId, arrival(rumourTargetPoint(context.blueprint, {
-          kind: 'escort', regionId, siteId: null,
-        })))
-      }
-      return arrivals.get(regionId) ?? null
-    }
-    for (let first = 1; first + need - 1 <= window; first += 1) {
-      let met = true
-      for (let check = first; check < first + need; check += 1) {
-        const seconds = arrivalAtCheck(check)
-        if (seconds === null || seconds > secondsUntilCheck(check)) {
-          met = false
-          break
-        }
-      }
-      if (met) return first + need - 1
-    }
-    return null
+    const caravan = escortCaravan(rumour, context)
+    if (!caravan) return null
+    const first = escortFirstCheck(
+      caravan, need, window, sinceTick, squareWalks(context, travel), factor, slack,
+    )
+    return first === null ? null : first + need - 1
   }
-  const seconds = arrival(rumourTargetPoint(context.blueprint, rumour))
-  if (seconds === null) return null
+  const point = rumourTargetPoint(context.blueprint, rumour)
+  const walk = point ? travel(point) : null
+  if (walk === null || !Number.isFinite(walk)) return null
+  const seconds = walk * factor + slack
   const first = Math.max(1, Math.ceil((seconds + sinceTick) / CHRONICLE_TICK_SECONDS))
   const done = rumour.kind === 'defend' ? first + need - 1 : first
   return done <= window ? done : null
+}
+
+/**
+ * W2-3 — the square a taken escort's cart is met in: its square at the earliest check the
+ * player can be there and stay beside it for the checks it still lacks, by the same walk
+ * `estimateRumourReach` times. It is the earliest the walk allows, without the offer's
+ * margin: the margin is for deciding whether to go, and its 8 s would rule out the very next
+ * check even for a player already standing beside the cart. The compass leads here, so the
+ * player walks to where the cart is going rather than after where it was. Null when the
+ * escort is kept already, its cart is gone or no meeting fits the clock; the compass then
+ * leads to the cart's square, as it always did.
+ */
+export function findEscortMeeting(
+  rumour: ChronicleRumour,
+  context: RumourReachContext,
+  travel: RumourTravelEstimate,
+  tick: number,
+  sinceTick = 0,
+): RegionId | null {
+  if (rumour.kind !== 'escort') return null
+  const caravan = escortCaravan(rumour, context)
+  const need = Math.max(0, requiredRumourProgressFor(rumour) - rumour.progress)
+  const window = rumour.deadlineTick - tick
+  if (!caravan || need === 0 || window < 1) return null
+  const first = escortFirstCheck(
+    caravan, need, window, sinceTick, squareWalks(context, travel), 1, 0,
+  )
+  return first === null ? null : caravanRegionAfter(caravan, first)
+}
+
+/** The escort's cart, while it is still on the road to be walked beside. */
+function escortCaravan(rumour: ChronicleRumour, context: RumourReachContext): ChronicleCaravan | null {
+  const caravan = context.state.caravans.find((entry) => entry.id === rumour.caravanId)
+  return caravan && caravan.intact && caravan.regionPath.length > 0 ? caravan : null
+}
+
+/** Unstretched walking seconds to the middle of a square, timed once a square. */
+function squareWalks(
+  context: RumourReachContext,
+  travel: RumourTravelEstimate,
+): (regionId: string) => number | null {
+  const walks = new Map<string, number | null>()
+  return (regionId) => {
+    if (!walks.has(regionId)) {
+      const point = rumourTargetPoint(context.blueprint, { kind: 'escort', regionId, siteId: null })
+      const seconds = point ? travel(point) : null
+      walks.set(regionId, seconds === null || !Number.isFinite(seconds) ? null : seconds)
+    }
+    return walks.get(regionId) ?? null
+  }
+}
+
+/**
+ * The earliest check from which the player is in the cart's square on `need` consecutive
+ * checks, each walk timed from where they stand now and stretched by `factor` and `slack`.
+ */
+function escortFirstCheck(
+  caravan: ChronicleCaravan,
+  need: number,
+  window: number,
+  sinceTick: number,
+  walks: (regionId: string) => number | null,
+  factor: number,
+  slack: number,
+): number | null {
+  for (let first = 1; first + need - 1 <= window; first += 1) {
+    let met = true
+    for (let check = first; check < first + need; check += 1) {
+      const walk = walks(String(caravanRegionAfter(caravan, check)))
+      if (walk === null || walk * factor + slack > check * CHRONICLE_TICK_SECONDS - sinceTick) {
+        met = false
+        break
+      }
+    }
+    if (met) return first
+  }
+  return null
 }
 
 /** The square a cart will be rolling through `ticks` chronicle ticks from now. */
