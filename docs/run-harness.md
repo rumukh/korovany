@@ -217,13 +217,31 @@ Over all 360 runs, against the spine off:
   20 935, rations 20 561, medicine 6 117, loot 4 371, events 220.
 - **Squad.** A companion reached 318 of 342 finales (343 of 351).
 
+The caravans by side, the reference wave 3 tunes against. Timings are the median of each policy's 40 runs, beeline /
+cautious / duelist:
+
+| Side | Verbs over its 120 runs | Camp closed, p50 | Gate opened, p50 | Recruits, guards thinned |
+| --- | --- | --- | --- | --- |
+| Elves | take 104 (44 %), give 131 (56 %) | 25 / 25 / 25 s | 90 / 90 / 97 s | — |
+| Palace guard | confiscate 103 (42 %), deliver 66 (27 %), release 79 (32 %) | 18 / 18 / 18 s | 90 / 90 / 105 s | — |
+| Villain | plunder 95 (38 %), press 47 (19 %), burn 108 (43 %) | 17 / 17 / 19 s | 82 / 82 / 91 s | 47, 75 |
+
+- The verbs are the scripted player's, not a person's: `verbPolicy: 'seeded'` picks uniformly among the verbs a cart
+  offers the side, and never press-gangs into a full squad of four. The guard's split is therefore its carts': a raid
+  can only be confiscated, an escort is delivered or released. The villain presses least because its squad is often
+  full. What each verb is worth in wins, healing and finale damage is in
+  [the spine's section](#w2-2-pr-b-the-caravan-spine).
+- The camp's offer was taken on the road to the finale in 165 runs and on the other road in 189, the light one in 186
+  and the rich one in 168; 6 runs met no offer. The caravans paid about one step of W2-1's progress a run (0.90–1.00
+  by cell), two met carts to a step.
+
 ### Superseded: the baseline on 29adca3
 
 Measured before W2-1's progress tier, W2-2 and W2-3 joined the shipped arms, with the clock-only tier the drafts and
 tier columns show. It is kept as the record that the W1-5 and W1-6 sections compared against; every current number is
 the table above.
 
-HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on `main` at 29adca3, in the
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on `main` at 29adca3, in the
 engine's streaming window. W1-6 added `commanders: 'shipped'` to the shipped arms. The same 360 runs with it are this
 baseline cell for cell: no friendly garrison fought beside a scripted player long enough to call a soldier. W1-6 also
 added `staging: 'friendly'`, which changes no cell of it: on the nearest arm no contract was ever short of room, so no
