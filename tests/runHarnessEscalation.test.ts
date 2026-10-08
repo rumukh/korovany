@@ -135,6 +135,8 @@ test('a fight that never ends cannot starve a draft: the ceiling opens it 30 s a
   const stuckRun: RunOptions = {
     ...HARNESS_SHIPPED_ARMS,
     squadResource: 'legacy',
+    // Isolate W2-1's draft ceiling from later W3-2 combat routing.
+    combatEconomy: 'legacy',
     errand: 'clear',
     seed: 142543,
     faction: 'guard',

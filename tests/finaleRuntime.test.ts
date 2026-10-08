@@ -609,7 +609,7 @@ test('one live save preserves finale wounds, paid evasion, squad orders and the 
   const mastery = normalizeCombatMastery(persisted.directorState.combatMastery, 'villain')
   assert.equal(mastery.state.evadeCooldown, value.combatMastery.evadeCooldown)
   assert.equal(mastery.state.evadeRemaining, value.combatMastery.evadeRemaining)
-  assert.equal(initial.stamina, 75)
+  assert.equal(initial.stamina, 100 - evade.staminaSpent)
   assert.equal(initial.combatMastery.evadeActive, true)
   assert.equal(initial.combatMastery.evadeProtected, false)
   assert.equal(initial.squadCommand.mode, 'hold')

@@ -253,6 +253,83 @@ the first set's five extra finale deaths reverse to seven fewer on the second. D
 is not detouring for the outcome. Villain beeline similarly wins 43/80 against 37/80 across both sets. These paired
 sets show why a +/-4/40 cell band is narrower than this harness's per-cell noise.
 
+### Superseded: W3-2 baseline before the joint W3-1 panel
+
+`HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on W3-2's branch based on
+`6896062`, in the engine's streaming window. The matched control changes only `combatEconomy: 'legacy'`; both arms
+keep `meleeDefence: 'heavy'`, W3-4's remnants and streaming hold, and every other shipped arm. The control reproduces
+main's 360 runs byte for byte when the W3-2-only metrics are left out. This baseline supersedes it.
+With `encounterMemory: 'fresh'` and `streaming: 'instant'`, all 360 normalized report hashes also match main after
+the W3-4 encounter metrics and W3-2 report-only fields are removed.
+
+| Policy · side | Outcome | Prior | Win p10–p50–p90 | Taken / dealt | Whiff | Heavy avoid | Starved mean / rate |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| beeline · elf | 12 / 28 / 0 | 9 / 31 / 0 | 89–118–155 s | 246 / 1250 | 23.8 % | 18.2 % | 0.70 / 4.6 % |
+| beeline · guard | 16 / 24 / 0 | 18 / 22 / 0 | 103–138–217 s | 171 / 1449 | 23.3 % | 19.5 % | 3.08 / 16.7 % |
+| beeline · villain | 17 / 23 / 0 | 20 / 20 / 0 | 87–112–165 s | 166 / 1198 | 27.6 % | 20.7 % | 0.80 / 5.8 % |
+| cautious · elf | 11 / 8 / 21 | 9 / 10 / 21 | 89–118–155 s | 212 / 1121 | 24.3 % | 21.2 % | 0.57 / 4.1 % |
+| cautious · guard | 12 / 17 / 11 | 13 / 14 / 13 | 103–130–172 s | 158 / 1391 | 24.6 % | 26.6 % | 2.55 / 14.4 % |
+| cautious · villain | 9 / 17 / 14 | 10 / 12 / 18 | 84–106–165 s | 150 / 1082 | 28.9 % | 25.0 % | 0.53 / 4.2 % |
+| duelist · elf | 33 / 7 / 0 | 36 / 4 / 0 | 103–141–173 s | 192 / 2190 | 17.6 % | 77.8 % | 3.40 / 13.1 % |
+| duelist · guard | 31 / 9 / 0 | 35 / 5 / 0 | 109–145–196 s | 145 / 2583 | 15.3 % | 78.1 % | 3.50 / 12.9 % |
+| duelist · villain | 27 / 13 / 0 | 25 / 15 / 0 | 101–128–166 s | 150 / 2033 | 19.0 % | 76.2 % | 1.50 / 7.1 % |
+
+| Policy · faction | Squad at finale | Drafts p50/max | Tier p50/max | Contracts s/k/a | Road | Late rumours | Carts |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| beeline · elf | 2.6 (38/40) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.0 | 6 % | 2.05 |
+| beeline · guard | 2.4 (36/40) | 3 / 3 | 4 / 4 | 40 / 35 / 0 | 11.6 | 0 % | 2.15 |
+| beeline · villain | 3.3 (39/39) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.7 | 4 % | 2.08 |
+| cautious · elf | 2.7 (37/37) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 11.2 | 15 % | 2.00 |
+| cautious · guard | 2.4 (36/40) | 3 / 3 | 4 / 4 | 40 / 35 / 0 | 11.2 | 3 % | 2.15 |
+| cautious · villain | 3.3 (38/38) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.7 | 8 % | 2.05 |
+| duelist · elf | 3.2 (37/37) | 3 / 3 | 4 / 4 | 40 / 39 / 0 | 9.9 | 13 % | 2.00 |
+| duelist · guard | 2.6 (40/40) | 3 / 3 | 4 / 4 | 40 / 34 / 0 | 10.5 | 1 % | 2.10 |
+| duelist · villain | 3.3 (38/38) | 3 / 3 | 4 / 4 | 40 / 40 / 0 | 10.9 | 9 % | 2.13 |
+
+Squad at finale is the mean number of companions standing when the finale opened, recruits included, and in brackets
+the finales at least one of them reached. Tier is the highest threat tier reached; every finale fielded was fought at
+pacing tier 4. Contracts are started, kept and abandoned. Road is the mean generated encounter bodies on the field.
+Carts are the spine's caravans a run met: resolved, lost or escaped.
+
+Over all 360 runs, against the matched prior combat:
+
+- **Wins.** 168 against 175. Beeline moves 47→45, cautious stays 32 and duelist moves 96→91. Each policy stays inside
+  its allowed loss, and no faction/policy cell moves by more than 4 of 40.
+- **Combat economy.** Duelists whiff 15.3–19.0 % of their own beats, avoid 76.2–78.1 % of telegraphed heavies and
+  fall back from a finisher for stamina on 7.1–13.1 % of attempts. Damage taken moves +0.7 % overall,
+  63 150 → 63 597, while damage dealt moves −2.2 %, 584 699 → 571 823.
+- **Reaction sensitivity.** At 0.20 s, duelist wins are elf 33, guard 34 and villain 27; guard damage falls from
+  145 to 141 and heavy avoidance rises from 78.1 % to 79.8 %. At 0.30 s the result is the shipped 0.25 s result
+  cell for cell: 33 / 31 / 27. No 0.25 s script answers a 0.18–0.26 s tell it cannot clear.
+- **Villain duelist deaths.** Prior combat: encounters 4, caravan beats 0, bleeding 0, finale 8, other systems 3.
+  Shipped: encounters 3, caravan beats 0, bleeding 1, finale 7, other systems 2.
+- **Run length.** 272 runs end inside three minutes and 46 reach ten minutes.
+- **Deaths.** 146 defeats: the finale 61, road encounters 36, bleeding 23, located fights 22, caravan beats 2,
+  and one each to a random event and a contract fight. The finale deals the most damage (20 960), then encounters
+  (16 513), caravan beats (10 426), located fights (7 579) and contract fights (4 841).
+- **Caravans.** The spine settles 748 carts: 742 resolved, 5 lost and 1 escaped, with no staging stall. Its players
+  rob 594 and escort 148. Including road carts and chronicle ambushes, they rob 679 and escort 196; NPCs take 18
+  after a full load, and the squad none.
+- **Contracts.** All 360 runs start their contract: 343 kept, 16 failed and none abandoned. Random events stand
+  down 112 times for a contract or caravan, and 57 located fights are handed back to make room.
+- **Encounters and events.** The generator fields 20.0 encounters a run, with 11.0 bodies on the road and 0.05 s
+  of actor-budget refusal. There are 490 random events, 3 436 located fights and 334 threat waves.
+- **Rumours.** 39 of 571 offers (7 %) are beyond reach by the independent road-only estimate.
+- **Economy.** A run earns about 441 gold, spends 23 and heals 103 health.
+- **Squad.** A companion reaches 339 of 349 finales.
+
+The caravans by side are regenerated from the same shipped cells. Timings are each policy's p50, beeline / cautious /
+duelist:
+
+| Side | Verbs over its 120 runs | Camp closed, p50 | Gate opened, p50 | Recruits, guards thinned |
+| --- | --- | --- | --- | --- |
+| Elves | take 106 (44 %), give 134 (56 %) | 25 / 25 / 25 s | 88 / 89 / 103 s | — |
+| Palace guard | confiscate 105 (42 %), deliver 69 (27 %), release 79 (31 %) | 18 / 18 / 18 s | 88 / 88 / 104 s | — |
+| Villain | plunder 93 (37 %), press 48 (19 %), burn 108 (43 %) | 17 / 17 / 19 s | 82 / 82 / 90 s | 48, 73 |
+
+The camp's offer is taken on the road to the finale in 165 runs and on the other road in 189, the light one in 186
+and the rich one in 168; 6 runs meet no offer. The scripted verb policy is unchanged from the prior baseline.
+
 ### Superseded: the baseline on 08d0448 with W3-4
 
 `HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0...39: 360 runs on `main` at

@@ -14,12 +14,13 @@ import {
   type PlayerMeleeState,
 } from './CombatResolver.ts'
 
-export const EVADE_STAMINA_COST = 25
+export const EVADE_STAMINA_COST = 19
 export const EVADE_DURATION = 0.30
 export const EVADE_DISTANCE = 4.2
 export const EVADE_WINDOW_START = 0.06
 export const EVADE_WINDOW_END = 0.18
 export const EVADE_COOLDOWN = 0.85
+export const OFFENCE_STAMINA_REGEN_DELAY = 0.50
 export const PERFECT_GUARD_WINDOW = 0.12
 export const PERFECT_GUARD_COST = 12
 export const PERFECT_GUARD_REARM = 0.65
@@ -38,6 +39,7 @@ export interface CombatMasteryState {
   evadeVelocityX: number
   evadeVelocityZ: number
   evadeProtection: boolean
+  staminaRegenDelay: number
   guardWindow: number
   guardRearm: number
   outcome: DefensiveOutcome
@@ -51,6 +53,7 @@ export function createCombatMasteryState(): CombatMasteryState {
     evadeVelocityX: 0,
     evadeVelocityZ: 0,
     evadeProtection: false,
+    staminaRegenDelay: 0,
     guardWindow: 0,
     guardRearm: 0,
     outcome: 'none',
@@ -126,6 +129,10 @@ function remaining(timer: number, delta: number): number {
   return next < TIMER_EPSILON ? 0 : next
 }
 
+export function delayStaminaRegeneration(state: CombatMasteryState): void {
+  state.staminaRegenDelay = OFFENCE_STAMINA_REGEN_DELAY
+}
+
 export function advanceCombatMastery(
   state: CombatMasteryState,
   delta: number,
@@ -139,6 +146,7 @@ export function advanceCombatMastery(
   }
   state.evadeRemaining = remaining(state.evadeRemaining, delta)
   state.evadeCooldown = remaining(state.evadeCooldown, delta)
+  state.staminaRegenDelay = remaining(state.staminaRegenDelay, delta)
   state.guardWindow = remaining(state.guardWindow, delta)
   state.guardRearm = remaining(state.guardRearm, delta)
   state.outcomeRemaining = remaining(state.outcomeRemaining, delta)
@@ -295,9 +303,10 @@ export function serializeCombatMastery(
   const settledMelee = { ...melee }
   settleCombatMastery({ ...state }, settledMelee)
   return {
-    version: 1,
+    version: 2,
     evadeRemaining: state.evadeRemaining,
     evadeCooldown: state.evadeCooldown,
+    staminaRegenDelay: state.staminaRegenDelay,
     guardRearm: state.guardRearm,
     abilityCooldown: Math.max(abilityCooldown, shieldActive ? ABILITY_INFO.guard.cooldownMax : 0),
     attackCooldown,
@@ -334,10 +343,11 @@ export function normalizeCombatMastery(value: unknown, faction: Faction): Restor
     }
     return candidate
   }
-  if (!block || block.version !== 1) {
+  if (!block || (block.version !== 1 && block.version !== 2)) {
     restored.rejected = true
     restored.state.evadeRemaining = EVADE_DURATION
     restored.state.evadeCooldown = EVADE_COOLDOWN
+    restored.state.staminaRegenDelay = OFFENCE_STAMINA_REGEN_DELAY
     restored.state.guardRearm = PERFECT_GUARD_REARM
     restored.abilityCooldown = ABILITY_INFO[faction].cooldownMax
     restored.attackCooldown = 0.52
@@ -346,6 +356,8 @@ export function normalizeCombatMastery(value: unknown, faction: Faction): Restor
   }
   restored.state.evadeRemaining = timer(block.evadeRemaining, EVADE_DURATION)
   restored.state.evadeCooldown = timer(block.evadeCooldown, EVADE_COOLDOWN)
+  restored.state.staminaRegenDelay =
+    block.version === 1 ? 0 : timer(block.staminaRegenDelay, OFFENCE_STAMINA_REGEN_DELAY)
   if (restored.state.evadeRemaining > 0 &&
       restored.state.evadeCooldown + TIMER_EPSILON <
         restored.state.evadeRemaining + EVADE_COOLDOWN - EVADE_DURATION) restored.rejected = true
@@ -371,6 +383,7 @@ export function normalizeCombatMastery(value: unknown, faction: Faction): Restor
   if (restored.state.evadeRemaining > 0 && isPlayerMeleeCommitted(restored.melee)) restored.rejected = true
   if (restored.rejected) {
     restored.state.evadeCooldown = EVADE_COOLDOWN
+    restored.state.staminaRegenDelay = OFFENCE_STAMINA_REGEN_DELAY
     restored.state.guardRearm = PERFECT_GUARD_REARM
     restored.abilityCooldown = ABILITY_INFO[faction].cooldownMax
     restored.attackCooldown = 0.52

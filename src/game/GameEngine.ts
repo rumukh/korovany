@@ -546,6 +546,7 @@ import {
   actionCooldown,
   actionRecovery,
   actionWindup,
+  actorTelegraphSpec,
   actorBaseHealth,
   actorMaxPoise,
   actorStaggerDuration,
@@ -559,6 +560,7 @@ import {
   isLargeBody,
   isPlayerMeleeCommitted,
   isWithinContact,
+  isWithinLockedMeleeShape,
   killReward,
   knockbackMagnitude,
   playerArmor,
@@ -572,6 +574,7 @@ import {
   type CombatAttackKind,
   type CombatHitWeight,
   type CombatOutcome,
+  type ActorTelegraphKind,
   type MeleeArcCandidate,
   type PlayerBeatSpec,
 } from './world/CombatResolver'
@@ -581,6 +584,7 @@ import {
   applyPerfectGuardOpening,
   beginEvade,
   createCombatMasteryState,
+  delayStaminaRegeneration,
   missingPlayerLegs,
   normalizeCombatMastery,
   PLAYER_WALK_SPEED,
@@ -900,7 +904,6 @@ type ActorActionKind = 'meleePlayer' | 'meleeActor' | 'eventProp' | 'arrow'
 type ActorActionPhase = 'windup' | 'recovery'
 type HitReactionKind = 'none' | 'flinch' | 'stagger'
 type DeathStyle = 'sideFall' | 'backFall' | 'spinFall' | 'launchFall'
-type TelegraphKind = 'tick' | 'aim' | 'commander' | 'wedge'
 
 /**
  * Layer 4 — what a commander tells the people around him to do. `hold` keeps a garrison
@@ -938,6 +941,9 @@ interface ActorAction {
     | { kind: 'actor'; id: string }
     | { kind: 'eventProp'; id: string }
   targetPosition: THREE.Vector3
+  headingX: number
+  headingZ: number
+  headingLocked: boolean
   contactRange: number
 }
 
@@ -953,8 +959,7 @@ interface CharacterPose {
 interface TelegraphEntry {
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>
   ownerId: string | null
-  priority: number
-  kind: TelegraphKind
+  kind: ActorTelegraphKind
 }
 
 interface Actor {
@@ -2459,7 +2464,7 @@ export class GameEngine {
   private readonly projectiles: Projectile[] = []
   private readonly eventPropTargets = new Map<string, EventPropTarget>()
   private readonly telegraphPool: TelegraphEntry[] = []
-  private readonly telegraphGeometries = new Map<TelegraphKind, THREE.BufferGeometry>()
+  private readonly telegraphGeometries = new Map<ActorTelegraphKind, THREE.BufferGeometry>()
   private readonly damageNumberFx: DamageNumberFx[] = []
   private readonly comicCalloutFx: ComicCalloutFx[] = []
   private readonly impactRayFx: ImpactRayFx[] = []
@@ -3820,6 +3825,7 @@ export class GameEngine {
     this.resumeAudio()
     this.stamina -= ability.staminaCost
     this.abilityCooldown = ability.cooldownMax
+    delayStaminaRegeneration(this.combatMastery)
     this.menacePlayer()
     if (ability.id === 'bow') this.fireArrow()
     else this.cleave()
@@ -3932,6 +3938,7 @@ export class GameEngine {
   private legacyAttack(): void {
     if (this.attackCooldown > 0 || isPlayerMeleeCommitted(this.melee)) return
     this.attackCooldown = 0.52
+    delayStaminaRegeneration(this.combatMastery)
     this.attackAnimation = 1
     this.activePlayerAttackKind = 'melee'
 
@@ -4002,6 +4009,7 @@ export class GameEngine {
     if (step.startedBeat > 0) {
       const spec = playerBeatSpec(step.startedBeat)
       this.stamina = Math.max(0, this.stamina - step.staminaSpent)
+      delayStaminaRegeneration(this.combatMastery)
       this.attackAnimation = 1
       this.activePlayerAttackKind = spec.attackKind
       const aim = this.getAimDirection()
@@ -7950,6 +7958,7 @@ export class GameEngine {
     const forward = this.getAimDirection()
     const movement = cameraRelativeMovement(this.keys, this.cameraYaw)
     const move = new THREE.Vector3(movement.x, 0, movement.z)
+    const staminaRegenDelayed = this.combatMastery.staminaRegenDelay > 0
     const evadeMotion = advanceCombatMastery(this.combatMastery, delta)
     const evading = evadeMotion.activeSeconds > 0
 
@@ -7997,7 +8006,11 @@ export class GameEngine {
       if (!this.doctrineEffects.forcedMarch) {
         this.stamina = Math.max(0, this.stamina - delta * 24)
       }
-    } else if (!evading && (!this.doctrineEffects.forcedMarch || move.lengthSq() > 0)) {
+    } else if (
+      !evading &&
+      !staminaRegenDelayed &&
+      (!this.doctrineEffects.forcedMarch || move.lengthSq() > 0)
+    ) {
       // The same doctrine's other half: standing still returns nothing, so the run cannot be
       // rested through. Walking still does, which is what keeps it a sidegrade rather than a
       // tax on staying alive.
@@ -9117,6 +9130,7 @@ export class GameEngine {
         this.callbacks.onNotice(SQUAD_COMMAND_COPY.regrouped, 'success')
       }
     }
+    this.syncActorTelegraphs()
   }
 
   /**
@@ -9649,6 +9663,10 @@ export class GameEngine {
     if (!canStartAction(actor)) return
     actor.attackCooldown = this.actorAttackInterval(actor, actionCooldown(kind, actor.role))
     actor.velocity.set(0, 0, 0)
+    const heading = targetPosition.clone().sub(actor.mesh.position)
+    heading.y = 0
+    if (heading.lengthSq() > 0.0001) heading.normalize()
+    else heading.set(Math.sin(actor.mesh.rotation.y), 0, Math.cos(actor.mesh.rotation.y))
     const action: ActorAction = {
       kind,
       phase: 'windup',
@@ -9656,11 +9674,13 @@ export class GameEngine {
       duration: actionWindup(actor.role),
       target,
       targetPosition: targetPosition.clone(),
+      headingX: heading.x,
+      headingZ: heading.z,
+      headingLocked: false,
       contactRange,
     }
     actor.action = action
     this.faceActorToward(actor, targetPosition, 1)
-    this.acquireActorTelegraph(actor)
     this.playActorActionSound(actor, action, 'attackTell')
   }
 
@@ -9678,16 +9698,50 @@ export class GameEngine {
       }
     }
     const livePosition = this.resolveActorActionTarget(actor, action)
-    if (livePosition) action.targetPosition.copy(livePosition)
-    this.faceActorToward(actor, action.targetPosition, delta)
+    const previousElapsed = action.elapsed
+    const nextElapsed = previousElapsed + delta
+    let contactPosition = livePosition
+    if (livePosition) {
+      if (!action.headingLocked) {
+        const spec = actorTelegraphSpec(actor.role)
+        const ordinaryMelee =
+          action.phase === 'windup' &&
+          (action.kind === 'meleePlayer' || action.kind === 'meleeActor') &&
+          spec !== null &&
+          spec.lockShare > 0
+        const lockAt = ordinaryMelee
+          ? action.duration * (1 - spec.lockShare)
+          : Number.POSITIVE_INFINITY
+        if (ordinaryMelee && nextElapsed >= lockAt) {
+          const fraction = delta > 0
+            ? THREE.MathUtils.clamp((lockAt - previousElapsed) / delta, 0, 1)
+            : 1
+          const lockPosition = action.targetPosition.clone().lerp(livePosition, fraction)
+          this.updateActorActionHeading(actor, action, lockPosition)
+          action.headingLocked = true
+        } else {
+          this.updateActorActionHeading(actor, action, livePosition)
+        }
+      }
+      if (
+        action.phase === 'windup' &&
+        (action.kind === 'meleePlayer' || action.kind === 'meleeActor') &&
+        nextElapsed >= action.duration
+      ) {
+        const fraction = delta > 0
+          ? THREE.MathUtils.clamp((action.duration - previousElapsed) / delta, 0, 1)
+          : 1
+        contactPosition = action.targetPosition.clone().lerp(livePosition, fraction)
+      }
+      action.targetPosition.copy(livePosition)
+    }
+    this.faceActorHeading(actor, action.headingX, action.headingZ, delta)
 
-    action.elapsed += delta
+    action.elapsed = nextElapsed
     if (action.phase === 'windup') {
-      this.acquireActorTelegraph(actor)
-      this.updateActorTelegraph(actor, action)
       if (action.elapsed < action.duration) return
       this.releaseActorTelegraph(actor.id)
-      this.resolveActorActionContact(actor, action)
+      this.resolveActorActionContact(actor, action, contactPosition)
       if (!actor.alive || actor.reaction === 'stagger' || actor.action !== action) return
       if (actor.role === 'scout') actor.retreatTimer = SCOUT_RETREAT_DURATION
       action.phase = 'recovery'
@@ -9720,7 +9774,11 @@ export class GameEngine {
     return target && target.hp > 0 ? target.position : null
   }
 
-  private resolveActorActionContact(actor: Actor, action: ActorAction): void {
+  private resolveActorActionContact(
+    actor: Actor,
+    action: ActorAction,
+    sampledTargetPosition: THREE.Vector3 | null = null,
+  ): void {
     if (finaleOwnsActor(this.finale.identity, actor)) {
       const target = this.resolveActorActionTarget(actor, action)
       if (!this.finaleWithinArena() || !target || !this.finaleLineClear(actor.mesh.position, target)) {
@@ -9736,13 +9794,31 @@ export class GameEngine {
     }
 
     const livePosition = this.resolveActorActionTarget(actor, action)
-    if (
-      !livePosition ||
-      !isWithinContact(
-        actor.mesh.position.distanceTo(livePosition),
-        action.contactRange,
-      )
-    ) {
+    const shapePosition = sampledTargetPosition ?? livePosition
+    const targetActorId = action.target.kind === 'actor' ? action.target.id : null
+    const targetActor = targetActorId
+      ? this.actors.find((candidate) => candidate.id === targetActorId)
+      : null
+    const targetRadius =
+      action.target.kind === 'player'
+        ? PLAYER_COLLIDER_RADIUS
+        : targetActor
+          ? this.actorColliderRadiusForRole(targetActor.role)
+          : 0
+    const connected = livePosition && shapePosition && (
+      action.kind === 'meleePlayer' || action.kind === 'meleeActor'
+        ? isWithinLockedMeleeShape({
+            role: actor.role,
+            offsetX: shapePosition.x - actor.mesh.position.x,
+            offsetZ: shapePosition.z - actor.mesh.position.z,
+            headingX: action.headingX,
+            headingZ: action.headingZ,
+            contactRange: action.contactRange,
+            targetRadius,
+          })
+        : isWithinContact(actor.mesh.position.distanceTo(livePosition), action.contactRange)
+    )
+    if (!connected) {
       this.playActorActionSound(actor, action, 'whiff')
       return
     }
@@ -9787,7 +9863,25 @@ export class GameEngine {
     const offset = position.clone().sub(actor.mesh.position)
     offset.y = 0
     if (offset.lengthSq() <= 0.0001) return
-    const yaw = Math.atan2(offset.x, offset.z)
+    this.faceActorHeading(actor, offset.x, offset.z, delta)
+  }
+
+  private updateActorActionHeading(
+    actor: Actor,
+    action: ActorAction,
+    position: THREE.Vector3,
+  ): void {
+    const offsetX = position.x - actor.mesh.position.x
+    const offsetZ = position.z - actor.mesh.position.z
+    const length = Math.hypot(offsetX, offsetZ)
+    if (length <= 0.0001) return
+    action.headingX = offsetX / length
+    action.headingZ = offsetZ / length
+  }
+
+  private faceActorHeading(actor: Actor, headingX: number, headingZ: number, delta: number): void {
+    if (Math.hypot(headingX, headingZ) <= 0.0001) return
+    const yaw = Math.atan2(headingX, headingZ)
     actor.mesh.rotation.y =
       delta >= 1 ? yaw : dampAngle(actor.mesh.rotation.y, yaw, 13, delta)
   }
@@ -9859,64 +9953,85 @@ export class GameEngine {
     return actor.knockbackVelocity.length()
   }
 
-  private telegraphKindForRole(role: ActorRole): TelegraphKind | null {
-    if (role === 'archer') return 'aim'
-    if (role === 'commander') return 'commander'
-    if (role === 'brute' || role === 'champion') return 'wedge'
-    if (role === 'soldier' || role === 'captive') return 'tick'
-    return null
-  }
-
   private telegraphPriorityForRole(role: ActorRole): number {
     if (role === 'brute' || role === 'champion' || role === 'commander') return 3
     if (role === 'archer') return 2
     return 1
   }
 
-  private acquireActorTelegraph(actor: Actor): void {
+  private syncActorTelegraphs(): void {
     if (
-      actor.action?.phase !== 'windup' ||
       this.paused ||
       this.ended ||
       document.hidden ||
       !document.hasFocus()
     ) {
+      this.releaseAllTelegraphs()
       return
     }
-    const kind = this.telegraphKindForRole(actor.role)
-    if (!kind || this.telegraphPool.some((entry) => entry.ownerId === actor.id)) return
-    const priority = this.telegraphPriorityForRole(actor.role)
-    let entry = this.telegraphPool.find((candidate) => candidate.ownerId === null)
-    if (!entry && this.telegraphPool.length < TELEGRAPH_MAX) {
-      const material = new THREE.MeshBasicMaterial({
-        color: this.palette.warning,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      })
-      const mesh = new THREE.Mesh(this.telegraphGeometry(kind), material)
-      mesh.visible = false
-      mesh.renderOrder = 2
-      this.scene.add(mesh)
-      entry = { mesh, ownerId: null, priority: 0, kind }
-      this.telegraphPool.push(entry)
-    }
-    if (!entry) {
-      const lowest = this.telegraphPool.reduce((best, candidate) =>
-        candidate.priority < best.priority ? candidate : best,
+    const selected = this.actors
+      .filter((actor) =>
+        actor.alive &&
+        actor.action?.phase === 'windup' &&
+        actorTelegraphSpec(actor.role) !== null,
       )
-      if (lowest.priority >= priority) return
-      entry = lowest
+      .sort((left, right) => {
+        const leftDirect = left.action?.target.kind === 'player'
+        const rightDirect = right.action?.target.kind === 'player'
+        if (leftDirect !== rightDirect) return leftDirect ? -1 : 1
+        const distance =
+          left.mesh.position.distanceToSquared(this.player.position) -
+          right.mesh.position.distanceToSquared(this.player.position)
+        if (Math.abs(distance) > 1e-9) return distance
+        const severity =
+          this.telegraphPriorityForRole(right.role) -
+          this.telegraphPriorityForRole(left.role)
+        if (severity !== 0) return severity
+        return left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+      })
+      .slice(0, TELEGRAPH_MAX)
+    const selectedIds = new Set(selected.map((actor) => actor.id))
+    for (const entry of this.telegraphPool) {
+      if (entry.ownerId !== null && !selectedIds.has(entry.ownerId)) {
+        this.releaseActorTelegraph(entry.ownerId)
+      }
     }
-    entry.ownerId = actor.id
-    entry.priority = priority
-    entry.kind = kind
-    entry.mesh.geometry = this.telegraphGeometry(kind)
-    entry.mesh.material.color.copy(
-      actor.role === 'archer' ? this.palette.warning : this.palette.danger,
-    )
-    entry.mesh.visible = true
+    for (const actor of selected) {
+      const spec = actorTelegraphSpec(actor.role)
+      const action = actor.action
+      if (!spec || !action) continue
+      let entry = this.telegraphPool.find((candidate) => candidate.ownerId === actor.id)
+      if (!entry) entry = this.telegraphPool.find((candidate) => candidate.ownerId === null)
+      if (!entry && this.telegraphPool.length < TELEGRAPH_MAX) {
+        entry = this.createActorTelegraph(spec.kind)
+      }
+      if (!entry) continue
+      entry.ownerId = actor.id
+      entry.kind = spec.kind
+      entry.mesh.geometry = this.telegraphGeometry(spec.kind)
+      entry.mesh.material.color.copy(
+        actor.role === 'archer' ? this.palette.warning : this.palette.danger,
+      )
+      entry.mesh.visible = true
+      this.updateActorTelegraph(actor, action)
+    }
+  }
+
+  private createActorTelegraph(kind: ActorTelegraphKind): TelegraphEntry {
+    const material = new THREE.MeshBasicMaterial({
+      color: this.palette.warning,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+    const mesh = new THREE.Mesh(this.telegraphGeometry(kind), material)
+    mesh.visible = false
+    mesh.renderOrder = 2
+    this.scene.add(mesh)
+    const entry = { mesh, ownerId: null, kind }
+    this.telegraphPool.push(entry)
+    return entry
   }
 
   private updateActorTelegraph(actor: Actor, action: ActorAction): void {
@@ -9924,19 +10039,9 @@ export class GameEngine {
     if (!entry) return
     const progress = THREE.MathUtils.clamp(action.elapsed / action.duration, 0, 1)
     const eased = 1 - (1 - progress) * (1 - progress)
-    const offset = action.targetPosition.clone().sub(actor.mesh.position)
-    offset.y = 0
-    const yaw = offset.lengthSq() > 0.0001 ? Math.atan2(offset.x, offset.z) : actor.mesh.rotation.y
-    const width =
-      entry.kind === 'aim'
-        ? 0.16
-        : entry.kind === 'tick'
-          ? 0.34
-          : entry.kind === 'commander'
-            ? 2.1
-            : actor.role === 'champion'
-              ? 2.8
-              : 2.5
+    const lengthProgress = this.reducedMotion ? 1 : eased
+    const yaw = Math.atan2(action.headingX, action.headingZ)
+    const width = actorTelegraphSpec(actor.role)?.width ?? 0
     entry.mesh.position.set(
       actor.mesh.position.x,
       this.groundHeightAt(actor.mesh.position.x, actor.mesh.position.z) +
@@ -9947,7 +10052,7 @@ export class GameEngine {
     entry.mesh.scale.set(
       width,
       1,
-      Math.max(0.08, action.contactRange * (entry.kind === 'aim' ? 1 : eased)),
+      Math.max(0.08, action.contactRange * (entry.kind === 'aim' ? 1 : lengthProgress)),
     )
     entry.mesh.material.opacity = 0.34 + eased * 0.48
   }
@@ -9956,7 +10061,6 @@ export class GameEngine {
     const entry = this.telegraphPool.find((candidate) => candidate.ownerId === actorId)
     if (!entry) return
     entry.ownerId = null
-    entry.priority = 0
     entry.mesh.visible = false
     entry.mesh.material.opacity = 0
   }
@@ -9964,19 +10068,18 @@ export class GameEngine {
   private releaseAllTelegraphs(): void {
     for (const entry of this.telegraphPool) {
       entry.ownerId = null
-      entry.priority = 0
       entry.mesh.visible = false
       entry.mesh.material.opacity = 0
     }
   }
 
-  private telegraphGeometry(kind: TelegraphKind): THREE.BufferGeometry {
+  private telegraphGeometry(kind: ActorTelegraphKind): THREE.BufferGeometry {
     const existing = this.telegraphGeometries.get(kind)
     if (existing) return existing
     const geometry = new THREE.BufferGeometry()
     const positions =
       kind === 'wedge'
-        ? [-0.5, 0, 0, 0.5, 0, 0, 0, 0, 1]
+        ? [0, 0, 0, -0.5, 0, 1, 0.5, 0, 1]
         : kind === 'commander'
           ? [
               -0.5, 0, 0.08, 0.5, 0, 0.08, 0, 0, 0.42,

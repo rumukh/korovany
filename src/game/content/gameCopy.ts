@@ -1,4 +1,5 @@
 import { SITE_PRESENTATIONS } from './registry.ts'
+import { EVADE_STAMINA_COST } from '../world/CombatMastery.ts'
 import { getDoctrineDefinition } from '../run/doctrine.ts'
 import {
   RUN_COMPLETION_REWARD,
@@ -1109,7 +1110,7 @@ export const COMBAT_MASTERY_COPY = {
 
 export function describeEvadeRefused(reason: import('../world/CombatMastery.ts').EvadeReadiness): string {
   switch (reason) {
-    case 'stamina': return 'На уворот нужно 25 выносливости.'
+    case 'stamina': return `На уворот нужно ${String(EVADE_STAMINA_COST)} выносливости.`
     case 'legs': return 'Без обеих ног не отшагнуть. Нужен протез.'
     case 'committed': return 'Добивание уже пошло — из него не выйти.'
     case 'active': return 'Шаг уже идёт.'
@@ -2642,7 +2643,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'info',
   },
   evade: {
-    text: 'C и направление — шаг из-под удара за 25 выносливости; без направления — назад. Защищает лишь середина шага. Стена остановит ноги, а кровь всё равно идёт.',
+    text: `C и направление — шаг из-под удара за ${String(EVADE_STAMINA_COST)} выносливости; без направления — назад. Защищает лишь середина шага. Стена остановит ноги, а кровь всё равно идёт.`,
     tone: 'info',
   },
   perfectGuard: {

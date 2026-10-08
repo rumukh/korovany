@@ -73,6 +73,9 @@ function audit(trace: readonly EncounterTraceEvent[]): Audit {
 function run(encounterMemory: 'remnants' | 'fresh') {
   return CASES.map((entry) => runHarness({
     ...HARNESS_SHIPPED_ARMS,
+    // Hold later W3-2 combat tuning still so this test isolates W3-4's memory arm.
+    combatEconomy: 'legacy',
+    meleeDefence: 'heavy',
     encounterMemory,
     encounterTrace: true,
     seed: entry.seed,

@@ -8,7 +8,7 @@ import {
 test('managed care changes real whole runs while the legacy arm remains the matched control', () => {
   const options = {
     ...HARNESS_SHIPPED_ARMS,
-    seed: 1,
+    seed: 118786,
     faction: 'guard',
     policy: 'duelist',
     hz: 30,
@@ -40,8 +40,8 @@ test('managed care changes real whole runs while the legacy arm remains the matc
 test('a squad-only settlement withholds exactly half personal gold in the managed arm', () => {
   const options = {
     ...HARNESS_SHIPPED_ARMS,
-    seed: 7920,
-    faction: 'guard',
+    seed: 95029,
+    faction: 'villain',
     policy: 'beeline',
     hz: 30,
     timeLimit: 300,

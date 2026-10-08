@@ -858,7 +858,7 @@ test('the live view carries every field the HUD reads', () => {
   assert.equal(view.shopPriceMultiplier, 1.2)
   assert.equal(view.pointerLocked, true)
   assert.equal(view.combatMastery.cameraMode, 'locked')
-  assert.equal(view.combatMastery.evadeCost, 25)
+  assert.equal(view.combatMastery.evadeCost, 19)
   assert.equal(view.chronicle.length, 1)
   assert.deepEqual(view.upgrades, { blade: 1, vitality: 0, endurance: 2 })
   assert.equal(view.worldMap.regions.length, blueprint.regions.length)
@@ -917,7 +917,7 @@ test('initial and live mastery views share settled save state rather than invent
     assert.equal(initial.combatMastery.evadeActive, true)
     assert.equal(initial.combatMastery.evadeProtected, false)
     assert.equal(initial.combatMastery.evadeReady, false)
-    assert.equal(initial.stamina, 75)
+    assert.equal(initial.stamina, 100 - action.staminaSpent)
     assert.equal(initial.ability.ready, false)
     assert.equal(initial.ability.cooldown, 0.2)
   }
