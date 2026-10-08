@@ -2809,8 +2809,8 @@ export class GameEngine {
       // so a queued line survives a checkpoint and continue instead of dying with the
       // engine that queued it.
       pending: readSerializableStringArray(restoredRun?.directorState, 'pendingHints'),
-      emit: (message, tone) => {
-        this.callbacks.onNotice(message, tone)
+      emit: (message, tone, origin) => {
+        this.callbacks.onNotice(message, tone, origin)
       },
       onSeen: (hintId) => {
         this.callbacks.onHintSeen(hintId)
@@ -5885,7 +5885,7 @@ export class GameEngine {
     }
     if (runtime) cancelCaravanLoot(runtime.lootSite.claim)
     this.updateCaravanBeatCartAppearance(entry)
-    this.callbacks.onNotice(state.consequence, 'danger')
+    this.callbacks.onNotice(state.consequence, 'danger', 'outcome')
     this.playSound('event')
     this.emitView(true)
   }
@@ -5916,7 +5916,7 @@ export class GameEngine {
     const market = this.writeCaravanBeatMarket(entry, 'escaped')
     state.consequence = describeCaravanBeatEscaped(market)
     this.sendCaravanBeatOnItsWay(entry)
-    this.callbacks.onNotice(state.consequence, 'warning')
+    this.callbacks.onNotice(state.consequence, 'warning', 'outcome')
     this.emitView(true)
   }
 
@@ -6056,7 +6056,9 @@ export class GameEngine {
     // Sent on alone, the cart leaves the road with the soldier who was walking beside it.
     if (outcome === 'release') this.sendCaravanBeatOnItsWay(entry)
     this.updateCaravanBeatCartAppearance(entry)
-    this.callbacks.onNotice(state.consequence, unattended ? 'info' : 'success')
+    // W3-6 — a cart's ending moves the finale gate's count, so its line is never dropped; one
+    // that finished without the player is still a delivery or a release, not flavour.
+    this.callbacks.onNotice(state.consequence, 'success', 'outcome')
     this.playSound(gold > 0 ? 'coin' : 'objective')
     this.emitView(true)
   }
@@ -10944,7 +10946,8 @@ export class GameEngine {
       runtime.stagingRefused = false
     }
     this.eventPropTargets.delete(caravanBeatCargoTargetId(plan.id))
-    this.callbacks.onNotice(state.unavailableReason, 'warning')
+    // W3-6 — it still counts for the gate, so its line is an outcome the queue never drops.
+    this.callbacks.onNotice(state.unavailableReason, 'warning', 'outcome')
     this.emitView(true)
   }
 
